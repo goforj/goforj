@@ -15,7 +15,7 @@ Example:
 ```yaml
 render:
   module_replaces:
-    github.com/goforj/web: /Users/cmiles/code/web
+    github.com/goforj/web: ../web
 ```
 
 ## Standard Release Flow
@@ -34,7 +34,7 @@ The console README and API index are generated from source-comment examples, so
 package validation includes documentation regeneration:
 
 ```bash
-cd /workspace/code/console
+cd ../console
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go generate .
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go vet ./...
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go -C docs vet ./...
@@ -60,7 +60,7 @@ console version, a GoForj module bump, and focused GoForj tests.
 Typical local validation:
 
 ```bash
-cd /workspace/code/web
+cd ../web
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./...
 ```
 
@@ -71,7 +71,7 @@ Then point the rendered app at local `web` until release is ready.
 Typical local validation:
 
 ```bash
-cd /workspace/code/queue
+cd ../queue
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./driver/redisqueue -count=1
 ```
 
@@ -82,16 +82,16 @@ Then tag/push modules before relying on those versions in GoForj.
 Typical validation now includes both unit/contract coverage and real integration coverage:
 
 ```bash
-cd /Users/cmiles/code/filesystem
+cd ../filesystem
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./...
-cd /Users/cmiles/code/filesystem/integration
+cd integration
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test -tags=integration ./all -count=1
 ```
 
 If storage changes affect docs/examples, also regenerate them before release:
 
 ```bash
-cd /Users/cmiles/code/filesystem
+cd ..
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./docs/examplegen/main.go
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./docs/readme/main.go
 ```
@@ -100,9 +100,9 @@ GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./docs/readme/main.go
 
 For local replaces:
 
-- use absolute paths
+- use paths relative to the rendered project's `go.mod`
 - do not use `~`
-- do not assume relative paths work from every rendered app location
+- preserve the same sibling layout when moving the project between environments
 
 ## Temporary State Is Fine
 
@@ -131,16 +131,16 @@ In practice:
 Typical validation now includes both unit coverage and real integration coverage:
 
 ```bash
-cd /workspace/code/cache
+cd ../cache
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./...
-cd /workspace/code/cache/integration
+cd integration
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test -tags=integration ./all -count=1
 ```
 
 If new cache APIs were added, also regenerate docs/examples before release:
 
 ```bash
-cd /workspace/code/cache
+cd ..
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./docs/examplegen/main.go
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./docs/readme/main.go
 ```

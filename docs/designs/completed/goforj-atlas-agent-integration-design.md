@@ -16,7 +16,7 @@ The working GoForj name remains `Atlas`.
 ## Reference material
 
 - Local GoForj MCP design: `docs/designs/completed/go-mcp-server-design.md`
-- Implementation spec: `/workspace/code/atlas/IMPLEMENTATION.md`
+- Implementation spec: `goforj/atlas` repository `IMPLEMENTATION.md`
 
 The implementation spec in `github.com/goforj/atlas` is the execution source of
 truth. This design explains the product and architecture; the Atlas repo spec
@@ -461,7 +461,7 @@ format. For VS Code GitHub Copilot, that means workspace JSON:
     "goforj-atlas": {
       "command": "forj",
       "args": ["atlas:mcp"],
-      "cwd": "/absolute/path/to/project"
+      "cwd": "."
     }
   }
 }
@@ -555,7 +555,7 @@ MVP sources, in priority order:
 Development override:
 
 ```bash
-GOFORJ_DOCS_PATH=/workspace/code/goforj-docs forj atlas:mcp
+GOFORJ_DOCS_PATH=../goforj-docs forj atlas:mcp
 ```
 
 That lets framework and docs development use the live docs repo while normal
