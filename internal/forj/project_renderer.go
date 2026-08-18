@@ -73,6 +73,7 @@ func (e *wireGenerateError) Unwrap() error {
 type ComponentRenderInput struct {
 	components         project.Components
 	renderAll          bool
+	initializeProject  bool
 	root               string
 	resourcePlan       project.ResourcePlan
 	localServiceIntent project.LocalServiceIntent
@@ -505,6 +506,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				p.stats.recordCreated("bin/")
 				return nil
 			},
+		},
+		{
+			title:               "Project Documentation Initialization",
+			enabled:             input.initializeProject,
+			renderOnceTemplates: []string{"README.md.tmpl"},
 		},
 		{
 			title:   "Core Components Rendering",
