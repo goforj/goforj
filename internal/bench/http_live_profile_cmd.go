@@ -583,7 +583,11 @@ func (cmd *HTTPLiveProfileCmd) customizeRenderedHTTPApp(dir string) error {
 
 // applyLocalWebReplace includes sibling web changes when maintainers profile an uncommitted local checkout.
 func (cmd *HTTPLiveProfileCmd) applyLocalWebReplace(dir string) error {
-	const localWebPath = "/workspace/code/web"
+	repoRoot, err := testkit.RepoRoot()
+	if err != nil {
+		return fmt.Errorf("resolve GoForj repo root: %w", err)
+	}
+	localWebPath := filepath.Join(filepath.Dir(repoRoot), "web")
 	info, err := os.Stat(localWebPath)
 	if err != nil {
 		if os.IsNotExist(err) {

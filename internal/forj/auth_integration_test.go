@@ -294,9 +294,10 @@ func renderAuthIntegrationApp(t *testing.T, tc authRenderedIntegrationCase) stri
 					if !tc.components.Mail {
 						return nil
 					}
+					mailRoot := testkit.LocalSiblingRepoPath(t, "mail")
 					return map[string]string{
-						"github.com/goforj/mail":         "/workspace/code/mail",
-						"github.com/goforj/mail/mailses": "/workspace/code/mail/mailses",
+						"github.com/goforj/mail":         mailRoot,
+						"github.com/goforj/mail/mailses": filepath.Join(mailRoot, "mailses"),
 					}
 				}(),
 			},

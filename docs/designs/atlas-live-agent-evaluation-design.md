@@ -18,7 +18,7 @@
 - Related design: `docs/designs/completed/goforj-atlas-agent-integration-design.md`
 - Cross-repository execution plan: this checked-in design is normative until
   Atlas has a checked-in implementation plan or tracked issues that reference
-  it. The ignored local `/workspace/code/atlas/IMPLEMENTATION.md` is not a
+  it. The ignored local `IMPLEMENTATION.md` in the Atlas repository is not a
   reviewable source of truth and must not direct this work in its current form.
 
 ## Summary
