@@ -5,7 +5,6 @@ This repo includes a hidden CLI command for measuring framework-owned metrics ov
 Run it from the repo root:
 
 ```bash
-cd /workspace/code/goforj
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
 go run ./cmd/forj bench:metrics-overhead --iterations=5000 --auth-iterations=500 --rounds=3
 ```
@@ -38,7 +37,6 @@ Useful flags:
 Example smaller shakeout run:
 
 ```bash
-cd /workspace/code/goforj
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache \
 go run ./cmd/forj bench:metrics-overhead --iterations=500 --auth-iterations=50 --rounds=3
 ```

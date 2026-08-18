@@ -24,7 +24,7 @@ GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./internal/build -count=
 
 Typical loop:
 
-1. change the reusable behavior in `/workspace/code/console`
+1. change the reusable behavior in the `console` repository
 2. keep package-level and `*Console` forms aligned
 3. add source-comment examples with expected output
 4. regenerate the README and run package, docs, and example tests
@@ -51,7 +51,7 @@ Typical loop:
 Common check:
 
 ```bash
-cd /workspace/code/web
+cd ../web
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./...
 ```
 

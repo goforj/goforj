@@ -24,7 +24,6 @@ The commands are exposed at the root CLI as `category:action`:
 Run them with:
 
 ```sh
-cd /workspace/code/goforj
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./cmd/forj <command>
 ```
 

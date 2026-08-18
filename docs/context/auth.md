@@ -39,15 +39,15 @@ Component model:
 
 Main files:
 
-- [service.go.tmpl](/workspace/code/goforj/templates/internal/auth/service.go.tmpl)
-- [controller.go.tmpl](/workspace/code/goforj/templates/internal/auth/controller.go.tmpl)
-- [user.go.tmpl](/workspace/code/goforj/templates/internal/auth/user.go.tmpl)
-- [session.go.tmpl](/workspace/code/goforj/templates/internal/auth/session.go.tmpl)
-- [password_reset.go.tmpl](/workspace/code/goforj/templates/internal/auth/password_reset.go.tmpl)
-- [email_verification.go.tmpl](/workspace/code/goforj/templates/internal/auth/email_verification.go.tmpl)
-- [login_attempt.go.tmpl](/workspace/code/goforj/templates/internal/auth/login_attempt.go.tmpl)
-- [identity.go.tmpl](/workspace/code/goforj/templates/internal/auth/identity.go.tmpl)
-- [service_integration_test.go.tmpl](/workspace/code/goforj/templates/internal/auth/service_integration_test.go.tmpl)
+- [service.go.tmpl](../../templates/internal/auth/service.go.tmpl)
+- [controller.go.tmpl](../../templates/internal/auth/controller.go.tmpl)
+- [user.go.tmpl](../../templates/internal/auth/user.go.tmpl)
+- [session.go.tmpl](../../templates/internal/auth/session.go.tmpl)
+- [password_reset.go.tmpl](../../templates/internal/auth/password_reset.go.tmpl)
+- [email_verification.go.tmpl](../../templates/internal/auth/email_verification.go.tmpl)
+- [login_attempt.go.tmpl](../../templates/internal/auth/login_attempt.go.tmpl)
+- [identity.go.tmpl](../../templates/internal/auth/identity.go.tmpl)
+- [service_integration_test.go.tmpl](../../templates/internal/auth/service_integration_test.go.tmpl)
 
 ## HTTP Surface
 
@@ -523,8 +523,8 @@ Rendered generated-app integration currently verifies the end-to-end contract ac
 
 Primary files:
 
-- [service_integration_test.go.tmpl](/workspace/code/goforj/templates/internal/auth/service_integration_test.go.tmpl)
-- [auth_integration_test.go](/workspace/code/goforj/internal/forj/auth_integration_test.go)
+- [service_integration_test.go.tmpl](../../templates/internal/auth/service_integration_test.go.tmpl)
+- [auth_integration_test.go](../../internal/forj/auth_integration_test.go)
 
 Recent rendered-app validation:
 
