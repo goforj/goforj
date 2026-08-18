@@ -2366,14 +2366,10 @@ func main() { _, _ = frontend.ReadFile("frontend/dist/index.html") }
 			if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
 				return "", err
 			}
-			// A cold fixture cache can otherwise exhaust the Windows process loader before publication is exercised.
+			// Reusing the invoking test's content-addressed cache avoids rebuilding the Windows standard library;
+			// serial compilation still bounds fixture-owned compiler fan-out on constrained runners.
 			command := exec.Command("go", "build", "-p=1", "-o", binary, "./cmd/app")
 			command.Dir = stepRoot
-			command.Env = append(
-				os.Environ(),
-				"GOCACHE="+filepath.Join(stepRoot, ".cache", "go-build"),
-				"GOMODCACHE="+filepath.Join(stepRoot, ".cache", "go-mod"),
-			)
 			output, err := command.CombinedOutput()
 			if err != nil {
 				return "", fmt.Errorf("go build: %w\n%s", err, output)
