@@ -443,8 +443,14 @@ GoForj should install one project-level MCP server by default:
 [mcp_servers.goforj-atlas]
 command = "forj"
 args = ["atlas:mcp"]
-cwd = "/absolute/path/to/project"
+cwd = "."
+required = true
 ```
+
+The relative working directory keeps committed project configuration portable
+across clones. Codex must treat Atlas as required so a failed MCP handshake is
+reported when a thread starts or resumes instead of silently removing the
+framework tools from the session.
 
 Adapters should write the same server shape using each agent's native config
 format. For VS Code GitHub Copilot, that means workspace JSON:

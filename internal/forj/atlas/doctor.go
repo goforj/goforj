@@ -9,7 +9,9 @@ import (
 )
 
 // DoctorCmd reports local Atlas install health.
-type DoctorCmd struct{}
+type DoctorCmd struct {
+	probe func(context.Context, string) mcpProbeResult
+}
 
 // NewDoctorCmd creates a DoctorCmd.
 func NewDoctorCmd() *DoctorCmd {
@@ -22,8 +24,9 @@ func (*DoctorCmd) Signature() string {
 }
 
 // Run executes the Atlas install status check.
-func (*DoctorCmd) Run() error {
-	status, err := install.Status(context.Background(), install.StatusOptions{
+func (c *DoctorCmd) Run() error {
+	ctx := context.Background()
+	status, err := install.Status(ctx, install.StatusOptions{
 		Root:    ".",
 		Project: Project("."),
 	})
@@ -43,8 +46,21 @@ func (*DoctorCmd) Run() error {
 		fmt.Fprint(os.Stdout, " (stale)")
 	}
 	fmt.Fprintln(os.Stdout)
+	mcpConfigured := false
 	for _, agent := range status.Agents {
-		fmt.Fprintf(os.Stdout, "Agent %s: configured=%t guidelines=%t mcp=%t skills=%t\n", agent.Name, agent.Configured, agent.GuidelinesPresent, agent.MCPPresent, agent.SkillsPresent)
+		fmt.Fprintf(os.Stdout, "Agent %s: configured=%t guidelines=%t mcp_config=%t skills=%t\n", agent.Name, agent.Configured, agent.GuidelinesPresent, agent.MCPPresent, agent.SkillsPresent)
+		mcpConfigured = mcpConfigured || (agent.Configured && agent.MCPPresent)
+	}
+	if mcpConfigured {
+		probe := c.probe
+		if probe == nil {
+			probe = probeMCP
+		}
+		result := probe(ctx, ".")
+		fmt.Fprintf(os.Stdout, "MCP server: executable=%t protocol=%t tools=%d ready=%t\n", result.Executable, result.Protocol, result.Tools, result.Ready)
+		if result.Err != nil {
+			status.Warnings = append(status.Warnings, "Atlas MCP is not ready: "+result.Err.Error())
+		}
 	}
 	for _, warning := range status.Warnings {
 		fmt.Fprintf(os.Stdout, "Warning: %s\n", warning)

@@ -43,5 +43,6 @@ func (c *InstallCmd) Run() error {
 		return nil
 	}
 	printResult("Installed Atlas", result)
+	printActivationHint(result)
 	return nil
 }
