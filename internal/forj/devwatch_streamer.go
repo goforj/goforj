@@ -549,7 +549,6 @@ type devwatchWriter struct {
 	orchestrationOut      io.Writer
 	stream                string
 	watcher               string
-	command               string
 	appName               string
 	appNameWidth          int
 	showAppColumn         bool
@@ -687,8 +686,8 @@ func legacyRestartExpected(watches []string) map[string]struct{} {
 var devwatchOutputMu sync.Mutex
 
 // newDevwatchWriter creates a writer that mirrors output to the devwatch websocket while still writing to the original writer.
-func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string, watcher string, command string, lifecycle *devwatchLifecycleState) io.Writer {
-	return newDevwatchWriterForApp(out, streamer, stream, watcher, command, "", 0, false, lifecycle, nil)
+func newDevwatchWriter(out io.Writer, streamer *devwatchStreamer, stream string, watcher string, lifecycle *devwatchLifecycleState) io.Writer {
+	return newDevwatchWriterForApp(out, streamer, stream, watcher, "", 0, false, lifecycle, nil)
 }
 
 // newDevwatchWriterForApp creates a writer that can add dev-only app context to runtime logs.
@@ -697,7 +696,6 @@ func newDevwatchWriterForApp(
 	streamer *devwatchStreamer,
 	stream string,
 	watcher string,
-	command string,
 	appName string,
 	appNameWidth int,
 	showAppColumn bool,
@@ -713,7 +711,6 @@ func newDevwatchWriterForApp(
 		streamer:         streamer,
 		stream:           stream,
 		watcher:          watcher,
-		command:          command,
 		appName:          appName,
 		appNameWidth:     appNameWidth,
 		showAppColumn:    showAppColumn,
@@ -767,7 +764,7 @@ func (w *devwatchWriter) Write(p []byte) (int, error) {
 		if isDevBuildWatcher(w.watcher) && hasDevStatusLine(w.out) {
 			clearDevStatusLine(w.out)
 		}
-		outLine := decorateWatcherLine(rawLine, w.watcher, w.command)
+		outLine := decorateWatcherLine(rawLine, w.watcher, timestamp)
 		outLine = decorateDevAppLogAppColumn(outLine, w.appName, w.appNameWidth, w.showAppColumn)
 		restartSeparator := ""
 		shutdownSeparator := false
@@ -904,27 +901,38 @@ func truncateDevApp(appName string, width int) string {
 }
 
 // decorateWatcherLine centralizes decorate watcher line behavior so callers follow the same contract.
-func decorateWatcherLine(line, watcher string, command string) string {
+func decorateWatcherLine(line, watcher string, timestamp time.Time) string {
 	if watcher == "" {
 		return line
 	}
 	if isWatcherTriggerLine(line) {
-		cmd := str.Of(command).Trim().String()
-		if cmd == "" {
-			cmd = "(unknown command)"
-		}
-		return fmt.Sprintf(
-			"%s %s %s - %s",
-			console.ActionMark(),
-			console.Colorize(console.ColorBoldWhite, "Starting"),
-			console.Colorize(console.ColorBoldWhite, watcher),
-			console.Colorize(console.ColorGray, cmd),
-		)
+		return formatDevWatcherTrigger(timestamp, watcher)
 	}
 	if strings.Contains(line, "Starting ") {
 		return line
 	}
 	return line
+}
+
+// formatDevWatcherTrigger presents process narration as part of the timestamped runtime log stream.
+func formatDevWatcherTrigger(timestamp time.Time, watcher string) string {
+	watcher = strings.TrimSpace(watcher)
+	switch {
+	case watcher == "Run App":
+		watcher = "App"
+	case strings.HasPrefix(watcher, "Run "):
+		watcher = "App"
+	}
+	const componentWidth = 12
+	if len(watcher) > componentWidth {
+		watcher = watcher[:componentWidth]
+	}
+	return fmt.Sprintf(
+		"%s %s %s",
+		console.Colorize(console.ColorGray, timestamp.Format("15:04:05.000")),
+		console.Colorize(console.ColorWhite, fmt.Sprintf("%-*s", componentWidth, watcher)),
+		console.Colorize(console.ColorWhite, "Starting"),
+	)
 }
 
 // isWatcherTriggerLine centralizes the is watcher trigger line decision for its callers.
