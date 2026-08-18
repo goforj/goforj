@@ -116,6 +116,58 @@ func TestGeneratedGitignoreCoversProjectLocalArtifacts(t *testing.T) {
 	}
 }
 
+// TestGeneratedProjectReadmeBrandsNewProjectsWithoutReplacingOwnerDocumentation verifies the initial guide is useful while remaining project-owned.
+func TestGeneratedProjectReadmeBrandsNewProjectsWithoutReplacingOwnerDocumentation(t *testing.T) {
+	root := t.TempDir()
+	workspace, err := resolveProjectRenderWorkspace(root)
+	if err != nil {
+		t.Fatalf("resolve render workspace: %v", err)
+	}
+	renderer := &ProjectRenderer{
+		workspace: workspace,
+		config: &project.Config{
+			ProjectName: "Parcel Pilot",
+		},
+		stats: &renderStats{},
+	}
+
+	if err := renderer.writeTemplatesOnce([]string{"README.md.tmpl"}); err != nil {
+		t.Fatalf("render project README: %v", err)
+	}
+	readmePath := filepath.Join(root, "README.md")
+	readme, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read project README: %v", err)
+	}
+	for _, expected := range []string{
+		"twitter-banner.png",
+		"# Parcel Pilot",
+		"forj dev",
+		"forj build",
+		"go test ./...",
+		"https://goforj.dev",
+	} {
+		if !strings.Contains(string(readme), expected) {
+			t.Errorf("generated project README missing %q", expected)
+		}
+	}
+
+	const ownerContent = "# Parcel Pilot\n\nTeam-owned deployment notes.\n"
+	if err := os.WriteFile(readmePath, []byte(ownerContent), 0o644); err != nil {
+		t.Fatalf("write owner README: %v", err)
+	}
+	if err := renderer.writeTemplatesOnce([]string{"README.md.tmpl"}); err != nil {
+		t.Fatalf("rerender project README: %v", err)
+	}
+	preserved, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read preserved project README: %v", err)
+	}
+	if string(preserved) != ownerContent {
+		t.Fatalf("owner README changed:\n%s", preserved)
+	}
+}
+
 // TestDeveloperServiceGuideUsesDedicatedGeneratedPath preserves an existing generic container README.
 func TestDeveloperServiceGuideUsesDedicatedGeneratedPath(t *testing.T) {
 	root := t.TempDir()

@@ -2536,6 +2536,7 @@ func (c *NewProjectCmd) createProject(m model) error {
 	}
 	i := ComponentRenderInput{
 		renderAll:          true,
+		initializeProject:  true,
 		root:               targetPath,
 		resourcePlan:       preparation.plan,
 		localServiceIntent: preparation.serviceIntent,
