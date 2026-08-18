@@ -212,14 +212,14 @@ Example:
 ```yaml
 render:
   module_replaces:
-    github.com/goforj/web: /Users/cmiles/code/web
+    github.com/goforj/web: ../web
 ```
 
 Important:
 
-- use absolute paths
+- use paths relative to the rendered project's `go.mod`
 - do not use `~`
-- do not assume relative paths are stable
+- preserve the same sibling layout when moving the project between environments
 - if a sibling repo is multi-module, make sure all relevant submodules are replaced or released consistently
 
 Recent lesson from `storage`:

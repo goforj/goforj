@@ -1136,4 +1136,4 @@ release into an ecosystem-wide redesign.
 - [Go module version numbering](https://go.dev/doc/modules/version-numbers)
 - [Go major-version guidance](https://go.dev/doc/modules/major-version)
 - [Go modules reference: minimum Go version](https://go.dev/ref/mod#go-mod-file-go)
-- Local API audit of GoForj-owned modules under `/workspace/code`, 2026-07-13
+- Local API audit of GoForj-owned sibling modules, 2026-07-13
