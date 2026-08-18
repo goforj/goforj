@@ -60,5 +60,6 @@ func (c *UpdateCmd) Run() error {
 		return err
 	}
 	printResult("Updated Atlas", result)
+	printActivationHint(result)
 	return nil
 }

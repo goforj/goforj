@@ -1,6 +1,8 @@
 package atlas
 
 import (
+	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -500,12 +502,39 @@ render:
 	}
 
 	output := captureStdout(t, func() {
-		if err := (&DoctorCmd{}).Run(); err != nil {
+		cmd := &DoctorCmd{probe: func(context.Context, string) mcpProbeResult {
+			return mcpProbeResult{Executable: true, Protocol: true, Tools: 29, Ready: true}
+		}}
+		if err := cmd.Run(); err != nil {
 			t.Fatalf("run doctor: %v", err)
 		}
 	})
-	if !strings.Contains(output, "Atlas installed: true") || !strings.Contains(output, "Agent codex: configured=true") || !strings.Contains(output, "Skills:") {
+	if !strings.Contains(output, "Atlas installed: true") || !strings.Contains(output, "Agent codex: configured=true") || !strings.Contains(output, "mcp_config=true") || !strings.Contains(output, "ready=true") || !strings.Contains(output, "Skills:") {
 		t.Fatalf("unexpected doctor output:\n%s", output)
+	}
+}
+
+// TestDoctorCmdReportsMCPProbeFailure keeps configuration presence distinct from runtime readiness.
+func TestDoctorCmdReportsMCPProbeFailure(t *testing.T) {
+	root := t.TempDir()
+	withWorkingDir(t, root)
+	writeFile(t, ".goforj.yml", "project_name: demo\n")
+	if err := (&InstallCmd{Agent: []string{"codex"}, NoInteraction: true}).Run(); err != nil {
+		t.Fatalf("run install: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		cmd := &DoctorCmd{probe: func(context.Context, string) mcpProbeResult {
+			return mcpProbeResult{Executable: true, Err: errors.New("handshake failed")}
+		}}
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("run doctor: %v", err)
+		}
+	})
+	for _, want := range []string{"mcp_config=true", "ready=false", "Warning: Atlas MCP is not ready: handshake failed"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, output)
+		}
 	}
 }
 
@@ -563,6 +592,30 @@ func captureStdout(t *testing.T, run func()) string {
 	content, err := io.ReadAll(read)
 	if err != nil {
 		t.Fatalf("read stdout pipe: %v", err)
+	}
+	return string(content)
+}
+
+// captureStderr centralizes stderr capture so command guidance remains testable without changing production writers.
+func captureStderr(t *testing.T, run func()) string {
+	t.Helper()
+	previous := os.Stderr
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stderr: %v", err)
+	}
+	os.Stderr = write
+	t.Cleanup(func() {
+		os.Stderr = previous
+	})
+
+	run()
+	if err := write.Close(); err != nil {
+		t.Fatalf("close stderr pipe: %v", err)
+	}
+	content, err := io.ReadAll(read)
+	if err != nil {
+		t.Fatalf("read stderr pipe: %v", err)
 	}
 	return string(content)
 }
