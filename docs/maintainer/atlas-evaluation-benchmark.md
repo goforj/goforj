@@ -111,9 +111,9 @@ reported the framework version as `(devel)` with no commit. Later runner changes
 corrected that provenance gap. The next complete benchmark must use a runner
 built by `make eval-runner` and record an exact GoForj revision.
 
-## Updating this benchmark
+## Extending this benchmark
 
-Run the complete paired suite with a clean, revision-stamped runner:
+Run the next adjacent paired comparison with a clean, revision-stamped runner. Start with the smoke tier before expanding to the complete promoted portfolio:
 
 ```sh
 make eval-runner EVAL_RUNNER=/tmp/forj-eval
@@ -130,16 +130,16 @@ make eval-runner EVAL_RUNNER=/tmp/forj-eval
   --artifact-key /secure/path/to/evaluation-artifact.key
 ```
 
-Before replacing the table:
+Before publishing another scorecard:
 
 1. authenticate every completed attempt with its external artifact key;
-2. require one `none` and one `agents` attempt for every promoted evaluation;
+2. require the same number of attempts from each selected profile for every included evaluation;
 3. exclude cancelled, incomplete, or mixed-revision attempts rather than
    silently changing the denominator;
 4. record the exact agent, model, Atlas, GoForj, catalog, and backend identities;
 5. keep framework outcome, workflow conformance, and diagnostic contract checks
    distinct; and
-6. preserve the previous report in Git history rather than combining attempts
-   from different benchmark protocols.
+6. keep each comparison labeled with its own treatments and protocol instead of combining unlike attempts into one score; and
+7. preserve the previous report in Git history.
 
 Run the smoke tier first to catch treatment and verifier regressions without paying for the complete portfolio. Increase `--trials` when measuring treatment reliability. A single paired trial is useful for broad framework coverage, but it is not enough to estimate model variance or confidence intervals.
