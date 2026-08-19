@@ -3,10 +3,12 @@
 package atlaseval
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"go/format"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,6 +60,7 @@ func TestPreparerMaterializesEveryPromotedStartingState(t *testing.T) {
 			if project.Result().BaselineTree == "" || project.Result().ForjDigest == "" {
 				t.Fatalf("preparation result = %#v", project.Result())
 			}
+			assertPreparedGoSourcesCanonical(t, project.Result().ProjectRoot)
 			if id == "add-http-controller" {
 				controller := filepath.Join(project.Result().ProjectRoot, "internal", "invoices", "controller.go")
 				if _, err := os.Stat(controller); !os.IsNotExist(err) {
@@ -65,6 +68,43 @@ func TestPreparerMaterializesEveryPromotedStartingState(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// assertPreparedGoSourcesCanonical prevents agent formatting from appearing as task behavior in retained diffs.
+func assertPreparedGoSourcesCanonical(t *testing.T, root string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", "_data", "bin", "build", "node_modules":
+				if path != root {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		formatted, err := format.Source(body)
+		if err != nil {
+			return fmt.Errorf("format %s: %w", path, err)
+		}
+		if !bytes.Equal(body, formatted) {
+			return fmt.Errorf("prepared Go source %s is not canonical", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

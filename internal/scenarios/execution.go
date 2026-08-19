@@ -121,6 +121,9 @@ func (execution scenarioExecution) execute(plan scenarioPlan, includeTarget bool
 	if err := execution.applyPlannedSteps(plan.spec.ID, "preparation", plan.preparationSteps); err != nil {
 		return err
 	}
+	if err := execution.canonicalizeGoSources(); err != nil {
+		return err
+	}
 	if err := execution.runChecks(plan.startingChecks, "verify starting state"); err != nil {
 		return err
 	}
@@ -130,7 +133,49 @@ func (execution scenarioExecution) execute(plan scenarioPlan, includeTarget bool
 	if err := execution.applyPlannedSteps(plan.spec.ID, "target", plan.targetSteps); err != nil {
 		return err
 	}
+	if err := execution.canonicalizeGoSources(); err != nil {
+		return err
+	}
 	return execution.runChecks(plan.finalChecks, "verify")
+}
+
+// canonicalizeGoSources prevents textual scenario composition from turning formatter cleanup into an agent-owned change.
+func (execution scenarioExecution) canonicalizeGoSources() error {
+	return filepath.WalkDir(execution.workspace.root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := execution.contextErr(); err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", "_data", "bin", "build", "node_modules":
+				if path != execution.workspace.root {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read scenario Go source %q: %w", path, err)
+		}
+		formatted, err := format.Source(body)
+		if err != nil {
+			return fmt.Errorf("format scenario Go source %q: %w", path, err)
+		}
+		if bytes.Equal(body, formatted) {
+			return nil
+		}
+		if err := os.WriteFile(path, formatted, 0o644); err != nil {
+			return fmt.Errorf("write scenario Go source %q: %w", path, err)
+		}
+		return nil
+	})
 }
 
 // createScenarioWorkspace creates an isolated directory only after the scenario ID is known to be path-safe.
