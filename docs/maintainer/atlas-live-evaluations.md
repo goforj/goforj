@@ -68,7 +68,7 @@ The guidance profiles isolate different parts of the developer experience:
 | `agents-skills` | yes | yes | — |
 | `atlas` | yes | yes | yes |
 
-The published 60-session scorecard measured `none` against `agents`. It says nothing yet about the incremental value of native skills or Atlas MCP. Measure those surfaces through adjacent comparisons before making a claim about them:
+The published scorecard includes all four profiles for all 32 promoted evaluations. Use adjacent comparisons when a new measurement is intended to attribute a change to one guidance surface:
 
 ```sh
 /tmp/forj-eval atlas:eval suite core \
@@ -83,7 +83,7 @@ The published 60-session scorecard measured `none` against `agents`. It says not
   --artifact-key /secure/path/to/evaluation-artifact.key
 ```
 
-Repeat with `agents-skills` and `atlas` after the first adjacent comparison is complete. Run `none` against `atlas` only to measure the combined experience. The CLI prints the number of provider sessions, maximum wall time, and scratch estimate before it loads provider authority; review those values before continuing.
+Run `none` against `atlas` only to measure the combined experience. The CLI prints the number of provider sessions, maximum wall time, and scratch estimate before it loads provider authority; review those values before continuing. The current matrix is a coverage-complete diagnostic snapshot assembled from exact revision cohorts and targeted reruns. It is not a confidence interval or a claim that one attempt predicts future reliability.
 
 ## Adding an Evaluation
 
@@ -95,19 +95,14 @@ Prefer one realistic task that crosses related surfaces over several narrow test
 4. Add structural contracts only for durable framework and application boundaries.
 5. Add a supervisor-owned behavior probe when the outcome cannot be established from compilation and registration.
 6. Calibrate the golden Project and at least one compiling semantic mutant in `internal/forj/atlaseval/preparer_integration_test.go`.
-7. Run all relevant modules with `GOWORK=off`, using an exact remote Atlas pseudo-version or release and no local replacement.
+7. Run at least one fresh provider attempt after deterministic calibration. A golden Project proves the verifier accepts reviewed code; it does not prove an agent can discover the workflow.
+8. Run all relevant modules with `GOWORK=off`, using a released Atlas version and no local replacement for final evidence.
 
 Render scenario Projects only under `/tmp`. Keep unrelated worktree files out of commits, and validate the root, `integration`, and `tools/renderwarm` modules independently when their dependency boundary is affected.
 
 ## What Remains
 
-Resume measurement in this order:
-
-1. Rebuild a clean revision-stamped runner and remeasure corrected contracts in `none` versus `agents`.
-2. Run multiple paired smoke trials for `agents` versus `agents-skills`.
-3. Run the same smoke protocol for `agents-skills` versus `atlas`.
-4. Inspect per-capability failures and treatment attribution before expanding to the complete portfolio.
-5. Replace the checked-in benchmark only with a complete, identity-pinned measurement whose denominator is explicit.
+The next measurement should answer a specific regression or guidance question with repeated paired trials, beginning with the smoke tier. Do not pay for another complete matrix merely to replace stochastic failures with green cells. Publish a new scorecard only when its protocol, denominator, and revision identities are explicit.
 
 The next architectural phase is an authoritative container or VM backend with negative isolation tests. Until that backend exists, local results remain diagnostic: unavailable trusted command, isolation, and cleanup evidence must remain ineligible rather than being promoted into a pass.
 
