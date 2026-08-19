@@ -381,6 +381,30 @@ func TestApplyStepStopsBeforeMutationAfterCancellation(t *testing.T) {
 	}
 }
 
+// TestCanonicalizeGoSourcesStabilizesComposedFixtures keeps harmless formatter cleanup outside candidate diffs.
+func TestCanonicalizeGoSourcesStabilizesComposedFixtures(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "app", "wire", "inject_services_app.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package wire\nvar providers=[]string{\"one\",\"two\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	execution := scenarioExecution{context: context.Background(), workspace: scenarioWorkspace{root: root}}
+	if err := execution.canonicalizeGoSources(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "package wire\n\nvar providers = []string{\"one\", \"two\"}\n"
+	if string(body) != want {
+		t.Fatalf("canonical source = %q, want %q", body, want)
+	}
+}
+
 // TestRunCommandRejectsUnboundExecutable prevents later PATH lookup from changing a resolved scenario.
 func TestRunCommandRejectsUnboundExecutable(t *testing.T) {
 	execution := scenarioExecution{workspace: scenarioWorkspace{root: t.TempDir()}, logger: logger.NewSilentLogger()}
