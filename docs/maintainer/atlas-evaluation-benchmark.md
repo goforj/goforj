@@ -42,6 +42,81 @@ The treatment ladder is cumulative:
 | `agents-skills` | yes | yes | - |
 | `atlas` | yes | yes | yes |
 
+## What the portfolio proves
+
+The benchmark is designed around work an application developer would actually
+delegate. Each evaluation begins with a rendered, disposable GoForj Project and
+a natural request. The agent must discover the framework workflow, change the
+real Project, and leave behind an application that satisfies an independent
+verifier.
+
+The verifier does not grade prose or compare the candidate against one golden
+patch. It accepts reviewed implementation families and combines several kinds
+of evidence:
+
+| Evidence | What it establishes |
+| --- | --- |
+| Change ownership | The agent changed the intended application surface without rewriting unrelated generated or App-owned code. |
+| Structural contract | Required types, methods, configuration, context flow, and package boundaries exist in a valid Go shape. |
+| Framework registration | Routes, Wire providers, commands, jobs, schedules, subscribers, resources, and additional Apps are connected where the runtime can discover them. |
+| Build and framework commands | The resulting Project compiles, its tests pass, generated wiring remains valid, and framework inspection commands expose the expected surface. |
+| Supervisor-owned behavior probe | Independent tests exercise observable behavior such as transaction rollback, cache hits, queue dispatch, conditional HTTP responses, or cancellation propagation. |
+| Workflow attribution | Generator and tool usage is reported separately from correctness so a preferred workflow is measurable but cannot make broken code pass. |
+| Quality observation | Evaluations that warrant regression coverage report whether the agent added a focused test without conflating that signal with runtime correctness. |
+
+### Framework generation and composition
+
+| Evaluation | Application task | What the verifier requires |
+| --- | --- | --- |
+| add-app-command | Add `invoices:show` around existing invoice behavior. | A generated command shape, App command and Wire registration, caller context propagation, and correct output for two invoice IDs. |
+| add-event-subscriber | React to a typed invoice-paid event. | Typed event identity, subscriber registration, context-aware service delegation, executable success and missing-invoice behavior, and a focused-test observation. |
+| add-http-controller | Add an invoice HTTP endpoint. | Controller generation, route and Wire registration, service delegation, route visibility, and supervisor-owned HTTP behavior. |
+| add-job | Queue typed receipt work. | An invoice-ID payload, job registration, context-aware dispatch and binding, and executable handling of present and missing invoices. |
+| add-migration | Add invoice status storage. | A matching timestamped up/down migration pair that adds and removes the expected column. |
+| add-named-app-route | Add an audit route to the admin App. | Controller and route registration in `admin`, visible admin routing, and proof that the default App was not mutated. |
+| add-named-cache | Add a profiles cache. | Environment configuration, generated accessor, service injection, Wire registration, and a real write through the configured named cache. |
+| add-named-resource | Add a reports queue. | Queue configuration, generated accessor, service injection, Wire registration, and real dispatch through the configured reports queue. |
+| add-named-storage | Add avatar storage. | Storage configuration, generated accessor, service injection, Wire registration, and a byte round trip through the configured disk. |
+| add-schedule | Reconcile invoices hourly. | Generated schedule shape, recurring registration, one-hour cadence, caller context propagation, and executable service behavior. |
+| create-additional-app | Add a separately runnable status page App. | Project configuration, entrypoint, routes, Wire graph, independent build, and isolation from the default App. |
+| create-model | Build a user model from the database. | Schema-derived fields, context-aware repository methods, table mapping, and repository Wire registration. |
+| model-relationships | Model users and posts. | Explicit relationship metadata, generated models and repositories, relationship accessors, registration, and a focused-test observation. |
+
+### Application behavior and boundaries
+
+| Evaluation | Application task | What the verifier requires |
+| --- | --- | --- |
+| add-cached-repository | Cache user lookup behind a repository boundary. | Cache-aside semantics, named-cache use, context propagation, cache-hit behavior, and a focused-test observation. |
+| add-database-transaction | Transfer funds atomically. | A transaction-bound repository, both balance changes inside one transaction, rollback behavior, service and repository registration, and a focused test. |
+| add-mail-workflow | Send an invoice receipt. | Generated mail-manager use rather than provider SDK code, service lookup, App registration, and one correctly addressed invoice-derived delivery. |
+| add-outbound-http-integration | Fetch a typed tax rate. | A typed client, Wire provider, escaped paths, decoded responses, caller cancellation, and a focused-test observation. |
+| add-route-middleware | Protect an invoice route with an application token. | App-owned middleware, environment-resolved dependency injection, correct route composition, allow/deny behavior, and a focused test. |
+| add-upload-workflow | Store validated uploads. | Request binding, safe filename normalization, base64 decoding, context-bound named storage, route and Wire registration, and executable byte persistence. |
+| add-validated-write-endpoint | Create invoices through a stable API contract. | Distinct malformed and invalid responses, normalized valid input, repository persistence, route registration, runtime behavior, and a focused test. |
+| build-json-api-feature | Build a complete user lookup feature. | Controller, service or query boundary, repository use, route and Wire registration, correct JSON behavior, and route visibility. |
+| choose-storage-for-files | Add durable invoice attachments. | Recognition that files belong behind named storage, generated configuration and accessor, a context-aware service, Wire registration, and byte round-trip behavior. |
+| protect-route-with-auth | Move invoices behind generated Auth. | Correct public/protected route partitioning, generated Auth middleware composition, and route-list proof of the protected policy. |
+| publish-domain-event | Publish and handle user-created events. | A typed event, context-aware publication after persistence, lifecycle-managed subscription, executable delivery, and a focused-test observation. |
+| serve-cacheable-image | Serve avatars without repeat transfers. | Named-storage access, cache headers and ETag handling, empty `304` behavior, route and Wire registration, and a focused test. |
+
+### Lifecycle, resilience, operations, and judgment
+
+| Evaluation | Application task | What the verifier requires |
+| --- | --- | --- |
+| add-app-lifecycle-hook | Add an application-readiness check. | Registration in the lifecycle boundary, caller context propagation, successful startup, surfaced readiness failure, and a focused test. |
+| add-resilient-job | Generate reports with retries safely. | A typed identity-only payload, repository reload, idempotent storage write, retry and timeout policy, cancellation propagation, registration, and executable retry-safe behavior. |
+| dispatch-event-followup-job | Queue report work from an event reaction. | Typed event-to-job handoff, identity-only payload, service lookup in the handler, queue and service registration, and executable dispatch behavior. |
+| repair-wire-provider | Repair a missing report provider. | The smallest Wire registration repair, a compiling graph, and the restored report route without unrelated changes. |
+| runtime-observability | Restore local Lighthouse capture. | The correct local configuration, intact metrics and inspect surfaces, visible `/metrics`, and executable local capture behavior. |
+| schedule-existing-job | Dispatch existing report work daily. | Repository-backed target discovery, recurring schedule registration, job dispatch per target, context propagation, and executable schedule behavior. |
+| unknown-framework-shape | Respond to an underspecified reconciliation request. | A safe clarifying question instead of invented framework code or speculative Project changes. |
+
+Together these evaluations measure more than whether an agent can generate a
+controller. They ask whether a fresh agent can navigate the same boundaries a
+maintainer cares about: application ownership, framework composition, runtime
+behavior, cancellation, durable data, operational visibility, and judgment
+when the correct shape is not yet knowable.
+
 ## Results by evaluation
 
 `Pass` means the latest retained attempt completed with no failed core
