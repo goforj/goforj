@@ -1,0 +1,102 @@
+schema_version: 2
+id: create-photo-data-resource
+title: Add a Database-Backed Resource
+description: Follow the schema-first workflow from migration through a generated model, registered repository, and application-owned query.
+app:
+  module_name: example.com/photoeval
+  doc_module_name: your/module
+  components:
+    cli: true
+    database_sqlite: true
+markdown:
+  estimated_minutes: 15
+  intro: |
+    This scenario uses photos as a concrete example of adding a database-backed resource without hand-writing the persistence layer.
+
+    The order matters. The database schema must exist before `make:model` can inspect it and generate the matching model, repository, and Wire registration. Application-specific queries are added only after that framework-owned shape exists.
+  what_you_build:
+    - "A reversible migration creates the domain-native `photos` table."
+    - "`forj make:model` derives `Photo` and `PhotoRepo` from the applied schema."
+    - "The generated repository constructor is registered with the App through Wire."
+    - "`FindReady` extends the repository package with application-specific lookup behavior."
+  prerequisites: |
+    Start from a GoForj App with SQLite database support enabled. Run the workflow from the Project root so `forj migrate` and `make:model` use the App's configured database.
+  before: |
+    the App has database support but no photos table, model, repository, or repository registration.
+  after: |
+    the App has an applied photos schema, a schema-derived model and repository, Wire registration, and an application-owned query that propagates context into the database operation.
+  files:
+    - migrations/2026_08_20_000001_create_photos.up.sql
+    - migrations/2026_08_20_000001_create_photos.down.sql
+    - internal/photos/photo.go
+    - app/wire/inject_repositories_app.go
+  file_groups:
+    - title: Database schema
+      files:
+        - migrations/2026_08_20_000001_create_photos.up.sql
+        - migrations/2026_08_20_000001_create_photos.down.sql
+    - title: Photos data boundary
+      files:
+        - internal/photos/photo.go
+    - title: App wiring
+      files:
+        - app/wire/inject_repositories_app.go
+  common_mistakes:
+    - Do not hand-create a GORM model or repository when `make:model` applies.
+    - Do not run `make:model` before applying the migration; the command derives its output from the live schema.
+    - Do not prefix `photos` with the Project name unless an existing schema or explicit requirement calls for that convention.
+    - Do not move application queries into controllers or services; keep persistence access inside the repository package.
+  next_steps:
+    - "Add relationships in `.db-relationships.yaml` before regenerating models that depend on related tables."
+    - "[Repositories](/data/repositories) explains schema-derived generation and application-owned query methods in depth."
+    - "[Database Migrations](/data/migrations) covers connection-specific migration workflows."
+prepare:
+  checks:
+    - command: [forj, build]
+steps:
+  - id: add-photos-migration
+    title: Add the photos schema
+    write:
+      path: migrations/2026_08_20_000001_create_photos.up.sql
+      language: sql
+      content: |
+        CREATE TABLE photos (
+            id INTEGER PRIMARY KEY,
+            storage_key TEXT NOT NULL,
+            created_at DATETIME NOT NULL
+        );
+  - id: add-photos-rollback
+    title: Add the photos rollback
+    write:
+      path: migrations/2026_08_20_000001_create_photos.down.sql
+      language: sql
+      content: |
+        DROP TABLE photos;
+  - id: migrate-photos-table
+    title: Apply the photos schema
+    command: [forj, migrate]
+  - id: generate-photo-model
+    title: Generate the photo model and repository
+    command: [forj, make:model, photos, --package, photos, --no-open]
+  - id: extend-photo-repository
+    title: Add the application query
+    append:
+      path: internal/photos/photo.go
+      language: go
+      content: |
+
+        // FindReady returns photos available to application workflows in newest-first order.
+        func (r *PhotoRepo) FindReady(ctx context.Context) ([]Photo, error) {
+                connection, err := r.WithContext(ctx).Builder()
+                if err != nil {
+                        return nil, err
+                }
+                var photos []Photo
+                if err := connection.Order("created_at DESC").Find(&photos).Error; err != nil {
+                        return nil, err
+                }
+                return photos, nil
+        }
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./...]
