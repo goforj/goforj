@@ -553,6 +553,11 @@ func TestCreateModelVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "create-model", scenario: "create-user-model", path: "internal/models/user.go", old: "Email", mutant: "EmailAddress", wantFailed: "model-shape"})
 }
 
+// TestCreateDataResourceVerifierCalibration proves schema-first generation, repository registration, and App-owned extension remain one contract.
+func TestCreateDataResourceVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "create-data-resource", scenario: "create-photo-data-resource", path: "internal/photos/photo.go", old: "func (r *PhotoRepo) FindReady", mutant: "func (r *PhotoRepo) FindAvailable", wantFailed: "photo-model-repository"})
+}
+
 // TestModelRelationshipsVerifierCalibration proves the generated relationship remains attached to its schema key contract.
 func TestModelRelationshipsVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "model-relationships", scenario: "user-post-relationships", path: ".db-relationships.yaml", old: "1-many id->posts:user_id", mutant: "1-many id->posts:id", wantFailed: "relationship-contract"})
