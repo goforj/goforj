@@ -184,6 +184,22 @@ The remaining 26 Atlas attempts completed without an MCP call. An `atlas`
 profile therefore measures availability of the complete surface, not proof that
 the agent used MCP or that MCP caused the result.
 
+## Post-benchmark checkpoint
+
+Atlas `v0.4.13` at `5c9fe023` and GoForj `main` at `d40562ee` promote
+`create-data-resource` as a thirty-third evaluation after the matrix above was
+published. The evaluation captures a regression discovered in a realistic
+application build: an agent hand-authored persistence types instead of applying
+a migration and deriving the model and repository through `make:model`.
+
+One fresh `atlas`-profile attempt used the intended generators, preserved Wire
+registration, produced formatted Go, and passed seven outcome checks plus the
+formatting observation. It is not included in the table because it did not
+compare treatments and its temporary artifacts and external key were not
+retained. Rerun it with retained authenticated artifacts before adding it to a
+scorecard. Do not change the 32-evaluation denominators above to imply that the
+new evaluation was measured across all four profiles.
+
 ## Variance and contract correction
 
 The retained corpus contains 207 authenticated provider attempts: 128 cells in
@@ -249,9 +265,11 @@ cohort and must not be included in later aggregation.
 
 ## Capability coverage
 
-The versioned Atlas catalog maps 40 of 57 named capabilities to promoted
-evaluations. The other 17 remain planned rather than being represented by weak
-source-token checks.
+The catalog recorded by this benchmark mapped 40 of 57 named capabilities to
+promoted evaluations. At GoForj `d40562ee` with Atlas `v0.4.13`, the current
+catalog maps 41 of 57 capabilities and leaves 16 planned rather than
+representing them with weak source-token checks. Run the report from the
+revision being evaluated instead of carrying either checkpoint forward.
 
 ```sh
 forj atlas:eval coverage
