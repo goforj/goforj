@@ -2,7 +2,7 @@
 
 ## Status
 
-- Design status: implemented in the library adoption branches
+- Design status: implemented and merged in the sibling libraries
 - Research date: 2026-07-13; stable revalidation: 2026-08-23
 - Language status: shipped in stable Go 1.27.0 on 2026-08-19
 - Scope: GoForj-owned sibling libraries with receiver-owned generic operations
@@ -11,8 +11,13 @@
 - Generated-application adoption is deferred consumer work, not a release gate
   for the library APIs
 
-Implementation pull requests: [ship#3](https://github.com/goforj/ship/pull/3),
+Merged rollout pull requests: [ship#3](https://github.com/goforj/ship/pull/3),
 [collection#5](https://github.com/goforj/collection/pull/5),
+[collection#6](https://github.com/goforj/collection/pull/6),
+[collection#7](https://github.com/goforj/collection/pull/7),
+[collection#8](https://github.com/goforj/collection/pull/8),
+[collection#9](https://github.com/goforj/collection/pull/9),
+[collection#10](https://github.com/goforj/collection/pull/10),
 [cache#9](https://github.com/goforj/cache/pull/9),
 [httpx#10](https://github.com/goforj/httpx/pull/10),
 [execx#10](https://github.com/goforj/execx/pull/10), and
@@ -20,26 +25,29 @@ Implementation pull requests: [ship#3](https://github.com/goforj/ship/pull/3),
 
 ## Decision Summary
 
-GoForj should adopt generic methods only where a
-concrete receiver already owns the operation.
+GoForj adopts generic methods only where a concrete receiver already owns the
+operation.
 
-The first adoption wave migrates the 33 public generic functions that
-exist primarily because Go could not previously attach their type parameters to
-a method:
+The first adoption wave delivers 33 public generic method surfaces:
 
-- 9 functions in `cache`
-- 10 functions in `collection`
-- 14 functions in `httpx`
+- 9 additive methods in `cache`
+- 10 methods on the redesigned `collection/v4.Slice`
+- 14 additive methods in `httpx`
 
-Ship also has one internal receiver-style generic function that is a useful
+Ship also converted one internal receiver-style generic function as the
 low-risk canary.
 
-The migrations are additive:
+The cache and HTTPX migrations are additive:
 
 - add the generic method
 - keep the current package function as a compatibility entry point
 - preserve behavior, error contracts, and encoding policy
 - update documentation generators to distinguish package functions from methods
+
+Collection is the deliberate exception. Its pre-Go-1.27 pointer wrapper and
+mutation contracts were already candidates for a major cleanup, so v2 remains
+available while v4 provides a coherent named-slice API rather than preserving
+two competing surfaces inside one major version.
 
 Generic methods should not be forced onto interface-first APIs. In particular:
 
@@ -52,11 +60,11 @@ Generic methods should not be forced onto interface-first APIs. In particular:
 not migrations of existing generic package functions. They use the same
 result-owned method capability to remove caller-side destination pointers.
 
-The Go 1.27 floor does not by itself trigger new major module paths. Public
-generic methods are additive, and the existing functions remain compatible.
-Affected `v0`, `v1`, and `v2` modules should use their next minor release and
-announce the new floor prominently. Patch releases must not raise the minimum
-Go version.
+The Go 1.27 floor does not by itself trigger new major module paths. Additive
+adopters should use their next minor release and announce the new floor
+prominently. Collection uses a major version because its slice-backed redesign
+changes source APIs and ownership behavior, not merely because it requires Go
+1.27. Patch releases must not raise the minimum Go version.
 
 ## Why This Fits GoForj
 
@@ -172,7 +180,8 @@ functions use today.
 - Improve discoverability through completion on concrete values.
 - Remove the repeated instance parameter from APIs that already require a
   concrete instance.
-- Preserve existing behavior and compatibility during migration.
+- Preserve existing behavior and compatibility for additive migrations, and use
+  a major-version boundary when a broader redesign is intentional.
 - Keep GoForj's interface and driver boundaries intact.
 - Record explicit no-change decisions for every audited primary GoForj module.
 
@@ -185,7 +194,8 @@ functions use today.
 - Promise performance improvements; the main benefits are organization,
   composition, discoverability, and compile-time result typing.
 - Remove JSON, codec, or reflection work that remains semantically necessary.
-- Remove current package functions in the first adoption wave.
+- Remove current package functions from additive migrations in the first
+  adoption wave.
 - Raise the Go version of sibling modules that receive no useful generic method.
 
 ## Adoption Test
@@ -218,7 +228,7 @@ select an affected Go 1.27 dependency.
 | Repository | Audited Go | Generic receiver-style audit | Stable decision |
 |---|---:|---:|---|
 | `cache` | 1.24.4 | 9 | Implemented as methods; function entry points remain. |
-| `collection` | 1.24.4 | 10 viable, 1 stable-compiler rejection, 10 false positives | Implemented the 10 viable methods; retain `Zip` and constrained functions. |
+| `collection` | 1.24.4 | 11 direct candidates, 10 false positives | Implemented 10 generic methods on `Slice`; returning `[]Pair[T, U]` makes `Zip` viable. |
 | `httpx/v2` | 1.24.4 | 14 | Implemented `Client` methods; package verbs and `Do[T]` remain. |
 | `ship` | 1.26.1 | 1 internal | Implemented as the stable compiler canary. |
 | `execx` | 1.24.4 | 0 | Implemented `DecodeChain.As[T]` as new API. |
@@ -238,13 +248,13 @@ select an affected Go 1.27 dependency.
 | `scheduler/v2` | 1.24.4 | 0 | No change. |
 | `wgo` | 1.24.0 | 0 | No change. |
 
-The public receiver-migration count is therefore 33, concentrated in three
-repos. That concentration is useful: the rollout should be deliberate, not a
+The public generic-method count is therefore 33, concentrated in three repos.
+That concentration kept the rollout deliberate rather than turning it into a
 mechanical all-repo Go version bump.
 
 ## Direct Migration: Cache
 
-### Current workaround
+### Previous workaround
 
 `cache.Cache` is concrete, but typed operations are package functions because
 their `T` changes per key and call:
@@ -361,158 +371,82 @@ with today's typed functions, which already require `*Cache` rather than
 Do not add new typed batch or codec variants merely to expand the method set.
 Evaluate those from real use cases.
 
-## Direct Migration: Collection
+## Direct Migration: Collection v4
 
-### Current workaround
+### Final API boundary
 
-`Collection[T]` already has methods that only use `T`. Operations that introduce
-a different result, key, or peer type are package functions:
+The initial additive implementation proved the Go 1.27 method syntax on the v2
+pointer wrapper. The final design went further: collection v4 replaces
+`*Collection[T]` with `Slice[T]`, a named slice that works directly with `len`,
+indexing, slicing, `range`, standard-library helpers, and iterator adapters.
+
+The old workaround required package functions or specialized names for
+type-changing operations:
 
 ```go
 names := collection.MapTo(
 	collection.New(users).Filter(active),
 	func(user User) string { return user.Name },
 )
-
-groups := collection.GroupBy(
-	names,
-	func(name string) int { return len(name) },
-)
 ```
 
-### Implemented methods
-
-```go
-func (c *Collection[T]) MapTo[R any](
-	fn func(T) R,
-) *Collection[R]
-
-func (c *Collection[T]) MinBy[K Number | ~string](
-	keyFn func(T) K,
-) (T, bool)
-
-func (c *Collection[T]) MaxBy[K Number | ~string](
-	keyFn func(T) K,
-) (T, bool)
-
-func (c *Collection[T]) ToMap[K comparable, V any](
-	keyFn func(T) K,
-	valueFn func(T) V,
-) map[K]V
-
-func (c *Collection[T]) GroupBy[K comparable](
-	keyFn func(T) K,
-) map[K]*Collection[T]
-
-func (c *Collection[T]) GroupBySlice[K comparable](
-	keyFn func(T) K,
-) map[K][]T
-
-func (c *Collection[T]) CountBy[K comparable](
-	keyFn func(T) K,
-) map[K]int
-
-func (c *Collection[T]) UniqueBy[K comparable](
-	keyFn func(T) K,
-) *Collection[T]
-
-func (c *Collection[T]) Pipe[R any](
-	fn func(*Collection[T]) R,
-) R
-
-func (c *Collection[T]) ZipWith[U, R any](
-	other *Collection[U],
-	fn func(T, U) R,
-) *Collection[R]
-```
-
-These methods restore the fluent surface that the collection package is trying
-to provide:
+The v4 surface uses ordinary fluent methods:
 
 ```go
 groups := collection.New(users).
 	Filter(active).
-	MapTo(func(user User) string { return user.Name }).
+	Map(func(user User) string { return user.Name }).
 	UniqueBy(strings.ToLower).
 	GroupBy(func(name string) int { return len(name) })
 ```
 
-All current functions remain as wrappers.
-
-### Stable compiler exception: `Zip`
-
-The Go 1.27.0 compiler rejects the natural method shape:
+### Implemented generic methods
 
 ```go
-func (c *Collection[T]) Zip[U any](
-    other *Collection[U],
-) *Collection[Tuple[T, U]]
+func (c Slice[T]) Map[R any](fn func(T) R) Slice[R]
+func (c Slice[T]) MinBy[K Number | ~string](keyFn func(T) K) (T, bool)
+func (c Slice[T]) MaxBy[K Number | ~string](keyFn func(T) K) (T, bool)
+func (c Slice[T]) ToMap[K comparable, V any](keyFn func(T) K, valueFn func(T) V) map[K]V
+func (c Slice[T]) GroupBy[K comparable](keyFn func(T) K) map[K][]T
+func (c Slice[T]) CountBy[K comparable](keyFn func(T) K) map[K]int
+func (c Slice[T]) UniqueBy[K comparable](keyFn func(T) K) Slice[T]
+func (c Slice[T]) ZipWith[U, R any](other []U, fn func(T, U) R) Slice[R]
+func (c Slice[T]) Reduce[R any](initial R, fn func(R, T) R) R
+func (c Slice[T]) Zip[U any](other []U) []Pair[T, U]
 ```
 
-Instantiating the result recursively requires methods for
-`Collection[Tuple[T, U]]`, which in turn requires another `Zip` result method
-set. The compiler reports an instantiation cycle. The corresponding Go issue
-was closed as not planned because this method-set expansion is intentionally
-rejected rather than bounded heuristically. `Zip` therefore remains a package
-function. This is a stable language constraint, not postponed implementation
-work.
+`Map` and `Filter` are pure, while `Transform` and `Retain` make in-place work
+explicit. `Reduce` accepts a heterogeneous accumulator directly. Built-in slice
+results mark collection boundaries without another wrapper type.
 
-### Preserve `MapTo`
+### Why `Zip` became viable
 
-Do not rename `MapTo` to `Map` during the additive migration. The package
-already has a same-type mutable `Collection.Map(func(T) T)`. Go cannot overload
-that method with a type-changing `Map[R]`, and changing the existing method's
-semantics would be a separate breaking design.
+The stable compiler rejected the intermediate pointer-wrapper shape because
+returning `*Collection[Tuple[T, U]]` recursively expanded a method set containing
+`Zip` again. The final slice-backed design returns `[]Pair[T, U]`, so the result
+does not recursively instantiate the receiver's generic method set. `Zip` is
+therefore a valid v4 method rather than a permanent package-function exception.
 
-### Adjacent addition
+### Compatibility and module path
 
-A heterogeneous accumulator becomes possible and would fill a real gap:
+This is not an additive change inside v2. Collection v4 changes type names,
+method names, mutation behavior, ownership contracts, and the semantic import
+path to `github.com/goforj/collection/v4`. Existing consumers can remain on v2;
+the v4 migration guide provides method-by-method before-and-after examples.
 
-```go
-func (c *Collection[T]) ReduceTo[R any](
-	initial R,
-	fn func(R, T) R,
-) R
-```
-
-Use a new name such as `ReduceTo` or `Fold`. Do not silently change the existing
-same-type `Reduce` method in the compatibility release.
-
-### Functions that must remain functions
-
-The following functions require the receiver element itself to be comparable:
-
-- `Contains`
-- `CountByValue`
-- `Difference`
-- `Intersect`
-- `SymmetricDifference`
-- `TakeUntil`
-- `Union`
-- `UniqueComparable`
-
-`Collection[T]` declares `T any`. A method-specific parameter cannot restate or
-strengthen that receiver parameter as `comparable`, so Go 1.27 does not make
-these valid methods.
-
-`ToMapKV` must also remain a function. A method on `Collection[T]` cannot express
-that it exists only when `T` is exactly `Pair[K, V]`, nor can it extract fresh
-`K` and `V` parameters from that equality.
-
-`Window` can become a method for consistency, but it could already have been a
-method before Go 1.27 because it introduces no new type parameter. Track it as
-ordinary API cleanup, not as a generic-method migration.
-
-Constructors such as `New`, `NewNumeric`, `FromMap`, and `Times` naturally remain
-functions.
+Functions whose receiver element must itself be comparable remain package
+functions, including `CountByValue`, `Difference`, `Intersect`,
+`SymmetricDifference`, `Union`, and `UniqueComparable`. Constructors and map
+boundaries such as `New`, `FromMap`, and `Times` also remain functions where the
+receiver shape would not improve the API.
 
 ## Direct Migration: HTTPX
 
-### Current workaround
+### Previous workaround
 
 `httpx.Client` is concrete and one client intentionally decodes many unrelated
-response types. Today all typed verbs therefore take the client as their first
-argument:
+response types. Before this rollout, all typed verbs therefore took the client
+as their first argument:
 
 ```go
 response, err := httpx.Post[CreateUser, CreateUserResponse](
@@ -614,13 +548,14 @@ package-level escape hatch.
 
 ## Internal Canary: Ship
 
-Ship has one internal instance-passing generic function:
+Before the canary change, Ship had one internal instance-passing generic
+function:
 
 ```go
 func Decode[T any](cmd Command) (T, error)
 ```
 
-It has 27 production call sites and can become:
+Its 27 production call sites were converted to:
 
 ```go
 func (cmd Command) Decode[T any]() (T, error)
@@ -634,14 +569,14 @@ request, err := lighthouse.Decode[BenchmarkRunRequest](cmd)
 request, err := cmd.Decode[BenchmarkRunRequest]()
 ```
 
-Because the package is internal, Ship can migrate atomically without a public
-compatibility wrapper. This is a useful post-stable canary for compiler, editor,
-lint, documentation, and CI readiness before public sibling releases.
+Because the package is internal, Ship migrated atomically without a public
+compatibility wrapper. It served as the post-stable canary for compiler, editor,
+lint, documentation, and CI readiness before the public sibling changes merged.
 
 ## Adjacent Addition: Execx
 
-Execx has no receiver-passing generic function today. Its decode chain instead
-ends in a caller-owned pointer:
+Before this addition, Execx had no receiver-passing generic function. Its decode
+chain instead ended in a caller-owned pointer:
 
 ```go
 var payload Payload
@@ -677,8 +612,8 @@ through an interface.
 
 ## Adjacent Addition: Queue
 
-Queue has no receiver-passing generic function today, but its concrete payload
-owners expose pointer-based binding:
+Before this addition, Queue had no receiver-passing generic function, while its
+concrete payload owners exposed pointer-based binding:
 
 ```go
 var payload EmailPayload
@@ -729,7 +664,8 @@ func (q *Queue) RegisterPayload[T any](
 
 That work needs decisions about binding-error wrapping, job metadata, GoForj's
 generated queue manager, and whether a typed job descriptor should connect
-dispatch to registration. Pilot `PayloadAs` first.
+dispatch to registration. Keep it separate from the completed `PayloadAs`
+addition.
 
 ## Interface-First Repositories
 
@@ -815,7 +751,8 @@ Unaffected repos should retain their existing Go version floors.
 
 ### Keep package functions
 
-For public direct migrations, the old and new forms should coexist:
+For additive public migrations in cache and HTTPX, the old and new forms
+coexist:
 
 ```go
 httpx.Get[User](client, url)
@@ -828,6 +765,11 @@ compatibility entry point backed by the same implementation where practical.
 Do not immediately deprecate the functions. The method form is an ergonomic
 improvement, not a correctness fix. Reconsider deprecation only after real usage
 and migration data, and only under each module's compatibility policy.
+
+Collection does not use compatibility wrappers inside v4. Its old API remains
+available on v2, while v4 presents only the final slice-backed surface. Keeping
+both collection designs in the same major version would undermine the clean
+boundary that justified the breaking release.
 
 ### Minimum Go version
 
@@ -849,8 +791,9 @@ The GoForj release policy is:
   previous minor line
 
 This policy must be published in the affected sibling repos before, or as part
-of, the first Go 1.27 release. README Go-version badges and CI matrices must be
-updated at the same time; several currently disagree with their `go.mod` files.
+of, the first Go 1.27 release. README Go-version badges, CI matrices, and
+`go.mod` directives must remain aligned; the merged rollout changes updated
+them together.
 
 Do not bump every sibling module in lockstep. Modules that declare the new
 methods, plus modules that select dependencies requiring Go 1.27, need the new
@@ -860,10 +803,10 @@ GoForj itself imports several affected modules. Consuming their new releases and
 emitting calls to the methods therefore requires a coordinated GoForj minimum-Go
 update and updated generated project metadata.
 
-`collection` has a separate release blocker: its module path is currently
-unsuffixed while the repository has `v2` tags. Resolve that semantic import
-versioning mismatch before choosing or publishing the generic-method release
-tag. Do not create another major solely to work around the existing mismatch.
+Collection resolved its existing semantic-import-versioning mismatch by
+publishing the redesigned API at `github.com/goforj/collection/v4`. That major
+version is justified by the source, ownership, and mutation changes in the
+slice-backed API; the Go 1.27 floor alone would not have justified it.
 
 ### No conditional public API
 
@@ -880,16 +823,18 @@ The additive strategy creates a package function and method with the same bare
 name. Documentation tooling must use receiver-qualified identities such as
 `Get` and `Client.Get`.
 
-The adoption branches update the affected generators before regenerating docs:
+The merged implementations updated the affected generators before regenerating
+docs:
 
 - `collection/docs/readme`
 - `collection/docs/gen`
 - `httpx/docs/readme`
 - `httpx/docs/examplegen`
 
-Those generators now use receiver-qualified identities and paths. `cache` and
-`queue` already had receiver-aware identity logic and generated their new method
-entries without collisions.
+Those generators now use receiver-qualified identities and paths. Collection's
+v4 generator also understands the named-slice receiver and the final generic
+method signatures. `cache` and `queue` already had receiver-aware identity logic
+and generated their new method entries without collisions.
 
 `execx/docs/readme` and `execx/docs/examplegen` also key by bare name, but the
 implemented `DecodeChain.As` has no current name collision, so no generator
@@ -920,33 +865,35 @@ the runtime check unnecessary, as with `execx.As[T]` caller destinations.
 ## Stable Revalidation Outcome
 
 The 2026-08-23 revalidation confirmed the final syntax, inference, interface,
-and reflection rules against Go 1.27.0. It also found two repository-level
-changes that this document now incorporates:
+and reflection rules against Go 1.27.0. The completed implementations also
+settled two repository-level design questions:
 
-1. `Collection.Zip` is not a viable generic method because the stable compiler
-   rejects its recursively expanding result method set as an instantiation
-   cycle. The package function remains canonical.
+1. Collection's intermediate pointer wrapper could not support `Zip` as a
+   generic method because its result recursively expanded the receiver method
+   set. The final slice-backed v4 API returns `[]Pair[T, U]`, so `Slice.Zip` is
+   valid and the exception is no longer necessary.
 2. Queue retired the public `bus.Context` alias arrangement. Payload result
    methods belong directly to concrete root `Job` and `Message` values.
 
-Each public-library branch updates its relevant module floors, installation
-guidance, CI, tests, benchmarks, and generated documentation in the same change.
-No interface boundary is replaced to obtain method syntax.
+Each public-library change updated its relevant module floors, installation
+guidance, CI, tests, benchmarks, and generated documentation. No interface
+boundary was replaced merely to obtain method syntax.
 
-Paired benchmarks found allocation parity between compatibility and method
-forms across collection, cache, and HTTP hot paths, and between the old and new
-execx and queue result forms. Collection retains a direct `ZipWith` function
-body because delegating it through the method would exceed the compiler's inline
-budget on an established hot path.
+Cache and HTTPX benchmarks found allocation parity between their compatibility
+functions and method forms. Execx and queue likewise preserved the costs of
+their prior result paths. Collection v4 was benchmarked against the previous
+implementation and `lo`; its generated comparison table distinguishes
+equivalent work from explicitly labeled ownership and API trade-offs, and
+dedicated regression benchmarks track its mutable zero-allocation paths.
 
 ## Rollout Plan
 
 ### Phase 1: stable compiler canary — complete
 
-Ship's internal `lighthouse.Decode[T](cmd)` is converted to `cmd.Decode[T]()`,
+Ship's internal `lighthouse.Decode[T](cmd)` was converted to `cmd.Decode[T]()`,
 with production call sites and method value/expression coverage updated.
 
-### Phase 2: direct public migrations — implemented in PR branches
+### Phase 2: direct public migrations — implementations merged
 
 Implemented in this order:
 
@@ -954,29 +901,33 @@ Implemented in this order:
 2. `cache`
 3. `httpx`
 
-For each repo:
+The additive cache and HTTPX implementations:
 
-1. make docs tooling receiver-aware first
-2. add methods over the existing shared implementation
-3. retain package-function wrappers
-4. add behavior-parity tests for both call forms
-5. regenerate documentation and examples
-6. run unit, contract, integration, vet, and lint checks appropriate to the repo
-7. publish according to the repo's minimum-Go release policy
+1. made docs tooling receiver-aware first
+2. added methods over the existing shared implementation
+3. retained package-function wrappers
+4. added behavior-parity tests for both call forms
+5. regenerated documentation and examples
+6. ran unit, contract, integration, vet, and lint checks appropriate to each repo
 
-The order starts with the broadest language/API exercise, then the context-bound
-cache surface, then the larger HTTP verb family.
+Collection used the same documentation, test, and performance disciplines, but
+shipped its broader slice-backed redesign behind the v4 module boundary rather
+than retaining v2 wrappers.
 
-### Phase 3: focused new APIs — implemented in PR branches
+### Phase 3: focused new APIs — implementations merged
 
-1. Add `execx.DecodeChain.As[T]`.
-2. Add queue `Job.PayloadAs[T]` and `Message.PayloadAs[T]`.
-3. Evaluate `collection.ReduceTo` or `Fold` independently.
-4. Consider `web.Bind[T]` and related helpers independently of Go 1.27.
+1. Added `execx.DecodeChain.As[T]`.
+2. Added queue `Job.PayloadAs[T]` and `Message.PayloadAs[T]`.
+
+`web.Bind[T]` and related helpers remain an independent API-design question.
+
+Collection v4 is published. Cache, HTTPX, execx, and queue still need releases
+from their merged commits according to each repository's minimum-Go release
+policy.
 
 ### Deferred: GoForj generated consumers
 
-After sibling releases are available:
+In a later generated-consumer change:
 
 1. bump GoForj dependencies and its Go version together
 2. replace generated cache helper calls with receiver methods
@@ -997,10 +948,13 @@ Every adopting repo should validate:
 - type inference from values and callbacks
 - method values and method expressions
 - pointer and value receivers as applicable
-- nil-receiver behavior where the existing function accepted a nil pointer
-- exact parity between method and compatibility function results/errors
-- allocation-count and timing comparisons between method and compatibility
-  forms, with an established main-branch baseline for hot paths
+- nil-receiver behavior where an existing compatibility function accepted a nil
+  pointer
+- exact result and error parity where method and compatibility-function forms
+  coexist
+- allocation-count and timing comparisons between compatibility forms, or
+  equivalent old/new operations for a major redesign, with an established
+  main-branch baseline for hot paths
 - documentation identity for same-named functions and methods
 - reflection-dependent code paths do not expect the generic method
 - lint, vet, static analysis, and generated examples
@@ -1035,15 +989,17 @@ API tiers. Avoid that in event, web, storage, and driver contracts.
 
 ### Baseline churn
 
-The API additions are source-additive, but the Go 1.27 module floor may exclude
-consumers on older toolchains. Treat the floor change as an explicit release
-decision.
+Cache, HTTPX, execx, and queue are source-additive, but their Go 1.27 module
+floors may exclude consumers on older toolchains. Collection v4 separately has
+source, module-path, ownership, and mutation compatibility changes. Treat each
+kind of compatibility event explicitly rather than attributing the collection
+major version to the toolchain floor.
 
 ### Documentation collisions
 
-Keeping functions and methods with the same name is the right compatibility
-strategy, but bare-name generators can silently merge their docs. Receiver-aware
-identity is a hard prerequisite.
+Where functions and methods coexist, bare-name generators can silently merge
+their docs. Receiver-aware identity is a hard prerequisite. Collection v4 does
+not carry duplicate compatibility entry points inside the new major version.
 
 ### Generic novelty
 
@@ -1061,25 +1017,29 @@ Methods and wrappers should share one implementation.
 An additive method can still make a compatibility function exceed the compiler's
 inline budget or add a wrapper frame to a hot path. Preserve allocation counts,
 benchmark both call forms, and retain a direct implementation when delegation
-measurably regresses an established performance-sensitive entry point. The
-`collection.ZipWith` compatibility function follows that exception.
+measurably regresses an established performance-sensitive entry point. For a
+breaking redesign such as Collection v4, benchmark equivalent operations against
+the previous major and relevant alternatives, including allocation-sensitive
+in-place paths.
 
 ## Final Recommendation
 
-Adopt generic methods as a focused API correction for the receiver-first
-workarounds already present in `cache`, `collection`, and `httpx`.
+The merged implementations use generic methods as a focused API correction for
+the receiver-first workarounds in `cache` and `httpx`, and as a core capability
+of Collection's clean slice-backed v4 API.
 
 The feature's best GoForj outcome is not “put generics everywhere.” It is:
 
 - concrete resources read naturally from left to right
 - type-changing collection pipelines remain fluent
 - HTTP calls live on the client that performs them
-- old function calls keep working
+- old cache and HTTPX function calls keep working
+- collection v2 remains available while v4 exposes one coherent API
 - interface-led primitives keep their abstraction strength
 - generated applications can adopt the new syntax in a separate consumer change
 
-That gives GoForj a materially cleaner public surface without turning a language
-release into an ecosystem-wide redesign.
+That gives GoForj a materially cleaner public surface while keeping unrelated
+interface-led libraries and generated applications out of the language rollout.
 
 ## Sources
 
@@ -1090,4 +1050,4 @@ release into an ecosystem-wide redesign.
 - [Go major-version guidance](https://go.dev/doc/modules/major-version)
 - [Go modules reference: minimum Go version](https://go.dev/ref/mod#go-mod-file-go)
 - Local API audit of GoForj-owned sibling modules, revalidated 2026-08-23
-- [Stable compiler rejection for generic `Zip`, golang/go#80109](https://github.com/golang/go/issues/80109)
+- [Intermediate pointer-wrapper `Zip` instantiation cycle, golang/go#80109](https://github.com/golang/go/issues/80109)
