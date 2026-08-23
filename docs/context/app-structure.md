@@ -21,6 +21,19 @@ internal/  # what the app does
 
 Do not move business logic into `app/`. The `app/` package should compose and expose behavior; it should not become the domain layer.
 
+## Project README Ownership
+
+`forj new` seeds the root `README.md` from `templates/README.md.tmpl`. The template supplies the GoForj banner, project identity, first-run commands, and framework links, but the rendered file becomes entirely Project-owned.
+
+The initialization contract is intentionally narrow:
+
+- only new-Project creation requests README initialization
+- creating inside an allowed non-empty directory preserves an existing `README.md`
+- later `forj render`, `forj generate`, `forj build`, and `forj dev` flows do not create, refresh, or replace the root README
+- changes to `templates/README.md.tmpl` affect future Projects only
+
+Keep this separate from generated component READMEs under `internal/`, which may remain framework-owned and refresh during rendering. Coverage belongs in the new-Project creation path and must verify both the initial content and owner-file preservation.
+
 ## Default App Entry Point
 
 The default app binary lives at:
