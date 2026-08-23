@@ -2,35 +2,42 @@
 
 ## Status
 
-- Design status: proposed
-- Research date: 2026-07-13
-- Language status: accepted for Go 1.27; available in Go 1.27 RC1; not yet stable
-- Expected stable release: August 2026, according to the draft release notes
-- Scope: GoForj-owned sibling libraries and the generated App surface that consumes them
+- Design status: implemented in the library adoption branches
+- Research date: 2026-07-13; stable revalidation: 2026-08-23
+- Language status: shipped in stable Go 1.27.0 on 2026-08-19
+- Scope: GoForj-owned sibling libraries with receiver-owned generic operations
 - Release policy decision: a minimum-Go increase ships in a minor release, never
   a patch; a major is reserved for incompatible API or behavior changes
-- Revalidation required: refresh the release and repository facts before implementation
+- Generated-application adoption is deferred consumer work, not a release gate
+  for the library APIs
+
+Implementation pull requests: [ship#3](https://github.com/goforj/ship/pull/3),
+[collection#5](https://github.com/goforj/collection/pull/5),
+[cache#9](https://github.com/goforj/cache/pull/9),
+[httpx#10](https://github.com/goforj/httpx/pull/10),
+[execx#10](https://github.com/goforj/execx/pull/10), and
+[queue#13](https://github.com/goforj/queue/pull/13).
 
 ## Decision Summary
 
-GoForj should adopt generic methods after Go 1.27 is stable, but only where a
+GoForj should adopt generic methods only where a
 concrete receiver already owns the operation.
 
-The first adoption wave should migrate the 34 public generic functions that
+The first adoption wave migrates the 33 public generic functions that
 exist primarily because Go could not previously attach their type parameters to
 a method:
 
 - 9 functions in `cache`
-- 11 functions in `collection`
+- 10 functions in `collection`
 - 14 functions in `httpx`
 
 Ship also has one internal receiver-style generic function that is a useful
 low-risk canary.
 
-The migrations should be additive:
+The migrations are additive:
 
 - add the generic method
-- keep the current package function as a forwarding compatibility wrapper
+- keep the current package function as a compatibility entry point
 - preserve behavior, error contracts, and encoding policy
 - update documentation generators to distinguish package functions from methods
 
@@ -41,12 +48,9 @@ Generic methods should not be forced onto interface-first APIs. In particular:
 - keep `storage.Storage` byte-oriented and unchanged
 - keep cache's interface contracts non-generic
 
-`execx.DecodeChain.As[T]` and queue payload result methods are strong adjacent
-additions, but they are new API rather than migrations of existing generic
-package functions. They should follow the direct receiver migrations.
-
-Do not publish any production module using the new syntax before Go 1.27 is
-stable and the GoForj tooling gates in this design pass.
+`execx.DecodeChain.As[T]` and queue payload result methods are adjacent additions,
+not migrations of existing generic package functions. They use the same
+result-owned method capability to remove caller-side destination pointers.
 
 The Go 1.27 floor does not by itself trigger new major module paths. Public
 generic methods are additive, and the existing functions remain compatible.
@@ -56,23 +60,23 @@ Go version.
 
 ## Why This Fits GoForj
 
-GoForj separates generated App policy from reusable sibling primitives:
+GoForj separates generated application policy from reusable sibling primitives:
 
 - sibling repos own reusable cache, collection, HTTP, queue, web, events, and
   storage behavior
 - `goforj` owns templates, generated composition, wiring, and developer workflow
 
 Generic methods do not change that ownership. The method belongs in the sibling
-repo that owns the concrete type. GoForj should consume the released method in
-generated templates only after the sibling API is stable.
+repo that owns the concrete type. Generated consumers can adopt released methods
+later without blocking the libraries that declare them.
 
-This matters most where generated Apps already expose concrete objects:
+This matters most where generated applications already expose concrete objects:
 
 - cache managers return `*cache.Cache`
 - HTTP clients are `*httpx.Client`
-- job handlers receive `queue.Message`, an alias of concrete `bus.Context`
+- job handlers receive concrete `queue.Message` values
 
-It matters much less where generated Apps intentionally depend on abstractions:
+It matters much less where generated applications intentionally depend on abstractions:
 
 - events expose `events.API`
 - storage accessors return `storage.Storage`
@@ -211,14 +215,14 @@ Examples include the cache, events, storage, and mail auxiliary modules. Their
 Go directives and release tags may still need coordinated updates when they
 select an affected Go 1.27 dependency.
 
-| Repository | Current Go | Generic receiver-style audit | Decision |
+| Repository | Audited Go | Generic receiver-style audit | Stable decision |
 |---|---:|---:|---|
-| `cache` | 1.24.4 | 9 | Adopt methods; keep function wrappers. |
-| `collection` | 1.24.4 | 11 direct, 10 false positives | Adopt the 11 direct methods; retain constrained functions. |
-| `httpx/v2` | 1.24.4 | 14 | Adopt `Client` methods; keep `Do[T]` free. |
-| `ship` | 1.26.1 | 1 internal | Use as a post-stable canary. |
-| `execx` | 1.24.4 | 0 | Add `DecodeChain.As[T]` as new API. |
-| `queue` | 1.24.4 | 0 | Add payload result methods as new API; retain `Bind`. |
+| `cache` | 1.24.4 | 9 | Implemented as methods; function entry points remain. |
+| `collection` | 1.24.4 | 10 viable, 1 stable-compiler rejection, 10 false positives | Implemented the 10 viable methods; retain `Zip` and constrained functions. |
+| `httpx/v2` | 1.24.4 | 14 | Implemented `Client` methods; package verbs and `Do[T]` remain. |
+| `ship` | 1.26.1 | 1 internal | Implemented as the stable compiler canary. |
+| `execx` | 1.24.4 | 0 | Implemented `DecodeChain.As[T]` as new API. |
+| `queue` | 1.24.4 | 0 | Implemented `Job.PayloadAs[T]` and `Message.PayloadAs[T]`; retain `Bind`. |
 | `events` | 1.24.0 | 0 | Do not put generic methods on the interface-led surface. |
 | `web` | 1.25.0 | 0 | Prefer generic package helpers, which are legal today. |
 | `storage` | 1.24.4 | 0 | No core change; keep raw-byte interface. |
@@ -233,9 +237,8 @@ select an affected Go 1.27 dependency.
 | `metrics` | 1.25.0 | 0 | No change. |
 | `scheduler/v2` | 1.24.4 | 0 | No change. |
 | `wgo` | 1.24.0 | 0 | No change. |
-| `wire` | 1.19 | 0 | No API migration; parser readiness is a release gate. |
 
-The public receiver-migration count is therefore 34, concentrated in three
+The public receiver-migration count is therefore 33, concentrated in three
 repos. That concentration is useful: the rollout should be deliberate, not a
 mechanical all-repo Go version bump.
 
@@ -263,7 +266,7 @@ err = cache.Set(
 GoForj templates use this shape repeatedly in auth, inspections, application
 settings, notifications, and monitoring code.
 
-### Proposed methods
+### Implemented methods
 
 ```go
 func (c *Cache) GetJSON[T any](key string) (T, bool, error)
@@ -377,7 +380,7 @@ groups := collection.GroupBy(
 )
 ```
 
-### Proposed methods
+### Implemented methods
 
 ```go
 func (c *Collection[T]) MapTo[R any](
@@ -417,10 +420,6 @@ func (c *Collection[T]) Pipe[R any](
 	fn func(*Collection[T]) R,
 ) R
 
-func (c *Collection[T]) Zip[U any](
-	other *Collection[U],
-) *Collection[Tuple[T, U]]
-
 func (c *Collection[T]) ZipWith[U, R any](
 	other *Collection[U],
 	fn func(T, U) R,
@@ -439,6 +438,24 @@ groups := collection.New(users).
 ```
 
 All current functions remain as wrappers.
+
+### Stable compiler exception: `Zip`
+
+The Go 1.27.0 compiler rejects the natural method shape:
+
+```go
+func (c *Collection[T]) Zip[U any](
+    other *Collection[U],
+) *Collection[Tuple[T, U]]
+```
+
+Instantiating the result recursively requires methods for
+`Collection[Tuple[T, U]]`, which in turn requires another `Zip` result method
+set. The compiler reports an instantiation cycle. The corresponding Go issue
+was closed as not planned because this method-set expansion is intentionally
+rejected rather than bounded heuristically. `Zip` therefore remains a package
+function. This is a stable language constraint, not postponed implementation
+work.
 
 ### Preserve `MapTo`
 
@@ -511,7 +528,7 @@ There are 14 direct candidates:
 - `GetCtx`, `PostCtx`, `PutCtx`, `PatchCtx`, `DeleteCtx`, `HeadCtx`, and
   `OptionsCtx`
 
-### Proposed methods
+### Implemented methods
 
 ```go
 func (c *Client) Get[Out any](
@@ -667,18 +684,16 @@ if err := msg.Bind(&payload); err != nil {
 }
 ```
 
-Add methods to both concrete payload values:
+Add methods to both public concrete payload values:
 
 ```go
-// In package queue.
 func (j Job) PayloadAs[T any]() (T, error)
-
-// In package bus.
-func (c Context) PayloadAs[T any]() (T, error)
+func (m Message) PayloadAs[T any]() (T, error)
 ```
 
-`queue.Message` is an alias of `bus.Context`, so generated handlers receive the
-method through the existing root API:
+The queue API changed after the initial audit: `queue.Message` is now a concrete
+root type rather than an alias of `bus.Context`. The method belongs directly on
+that public type:
 
 ```go
 payload, err := msg.PayloadAs[EmailPayload]()
@@ -690,10 +705,9 @@ if err != nil {
 `PayloadAs` avoids collisions with the existing `Job.Payload(any)` setter and
 the existing `Bind(any)` methods.
 
-Queue's generated documentation must account for the alias: the declaration is
-physically `bus.Context.PayloadAs`, while users encounter it as
-`queue.Message.PayloadAs`. Add an alias-aware root entry or an explicit root
-example so the preferred API is discoverable.
+Queue's receiver-aware documentation tooling can index both methods directly as
+`Job.PayloadAs` and `Message.PayloadAs`; no alias-specific documentation path is
+needed.
 
 Keep `Bind(any)` permanently. Lower-level queue interfaces and adapters rely on
 it, and a generic method cannot replace an interface method.
@@ -751,9 +765,9 @@ func Value[T any](ctx Context, key string) (T, bool)
 func ReadJSON[T any](conn WebSocketConn) (T, error)
 ```
 
-These helpers are also legal before Go 1.27. They can improve generated handler
-code without weakening the web abstraction, but they need the `webindex`
-readiness work described below.
+These helpers are also legal before Go 1.27. They could improve generated
+handler code without weakening the web abstraction, but they are independent of
+this migration.
 
 Do not add a `web.Typed(ctx)` wrapper solely to recover method syntax.
 
@@ -805,8 +819,8 @@ httpx.Get[User](client, url)
 client.Get[User](url)
 ```
 
-The method becomes the preferred documentation form. The function becomes a
-thin compatibility wrapper.
+The method becomes the preferred documentation form. The function remains a
+compatibility entry point backed by the same implementation where practical.
 
 Do not immediately deprecate the functions. The method form is an ergonomic
 improvement, not a correctness fix. Reconsider deprecation only after real usage
@@ -863,88 +877,31 @@ The additive strategy creates a package function and method with the same bare
 name. Documentation tooling must use receiver-qualified identities such as
 `Get` and `Client.Get`.
 
-Fix before adding same-named compatibility functions and methods:
+The adoption branches update the affected generators before regenerating docs:
 
 - `collection/docs/readme`
 - `collection/docs/gen`
 - `httpx/docs/readme`
 - `httpx/docs/examplegen`
 
-The current generators key declarations by the bare function name and can merge,
-overwrite, or generate colliding paths. `cache`, `queue`, `web`, `storage`,
-`mail`, and `crypt` already have receiver-aware identity logic and are useful
-references.
+Those generators now use receiver-qualified identities and paths. `cache` and
+`queue` already had receiver-aware identity logic and generated their new method
+entries without collisions.
 
 `execx/docs/readme` and `execx/docs/examplegen` also key by bare name, but the
-proposed `DecodeChain.As` has no current name collision. Treat receiver-qualified
-identity there as tooling hardening rather than a blocker for `As[T]`.
+implemented `DecodeChain.As` has no current name collision, so no generator
+identity change is required for that API.
 
 After every public API change, regenerate and verify README, examples, and any
 API indexes as part of the release—not as follow-up work.
 
-### Webindex and Forj API indexing
+### Deferred generated consumers
 
-An instantiated generic call wraps its selector in `ast.IndexExpr` or
-`ast.IndexListExpr`. An analyzer that assumes `CallExpr.Fun` is directly an
-`ast.SelectorExpr` misses calls such as:
+These library PRs declare and call ordinary receiver methods. GoForj template
+adoption is outside this release wave and is not a library release gate.
 
-```go
-web.Bind[CreateMonitorInput](ctx)
-controller.Handle[Payload]
-controller.Routes[Config]()
-```
-
-Before generic helpers or generic handler values appear in generated web code:
-
-- centralize unwrapping of parentheses, `IndexExpr`, and `IndexListExpr`
-- normalize the declared selector name separately from its type arguments
-- teach request-body inference about `web.Bind[T](ctx)`
-- test instantiated handlers, middleware, and route providers
-- test runtime route names produced by `runtime.FuncForPC`
-- preserve type arguments separately when they help schema inference
-
-`webindex` is the source-indexing engine; GoForj's API index runner delegates to
-it. Repair the callable handling in `webindex`, then validate it through
-GoForj's integration and API-index tests. Generic instantiation must not make a
-route or request body disappear from generated metadata.
-
-### GoForj Wire fork
-
-The GoForj Wire fork is a release gate:
-
-- provider parsing currently recognizes method expressions only as plain
-  `ast.SelectorExpr`
-- instantiated functions and methods introduce `IndexExpr` or `IndexListExpr`
-- the AST copier omits function and type declaration type parameters
-- the copier handles `IndexExpr` but not multi-argument `IndexListExpr`
-- the fork still targets Go 1.19 and uses an older `x/tools`
-
-The Go 1.19 directive is inventory, not by itself the parser failure when Wire
-runs under a Go 1.27 toolchain. The concrete blockers are the outdated tooling
-dependency, narrow provider-expression handling, and incomplete AST copying. A
-directive bump may follow the dependency update but is not the fix on its own.
-
-Add coverage for:
-
-- an instantiated generic function provider
-- an instantiated generic method expression provider
-- one and multiple type arguments
-- copied generic function and type declarations
-- packages that declare generic methods even when the provider itself is
-  non-generic
-
-Release the repaired Wire fork and update GoForj's pinned tool before generated
-Apps consume generic-method sibling releases.
-
-### Generated set rewriters
-
-GoForj's generated `make:model` analyzer, mirrored in Ship, preserves Wire
-providers only when they are plain selectors. A provider such as
-`pkg.Provider[T]` or an instantiated generic method expression may be silently
-dropped when a set is rewritten.
-
-Teach those rewriters to unwrap and preserve indexed callables before the
-feature is allowed in provider sets.
+Any later generated-consumer change should be designed and validated separately.
+It should not be bundled into the reusable-library API correction.
 
 ### Reflection
 
@@ -957,51 +914,38 @@ handlers, or inspects input shapes does not automatically disappear when a
 method becomes generic. Remove reflection only where the new API actually makes
 the runtime check unnecessary, as with `execx.As[T]` caller destinations.
 
-## Resume Checklist
+## Stable Revalidation Outcome
 
-This design captures decisions as of 2026-07-13. Before implementation resumes:
+The 2026-08-23 revalidation confirmed the final syntax, inference, interface,
+and reflection rules against Go 1.27.0. It also found two repository-level
+changes that this document now incorporates:
 
-1. Replace the draft/RC language status with the final Go 1.27 release notes and
-   verify that syntax, interface, inference, and reflection rules are unchanged.
-2. Refresh every affected repo's latest tag, module path, `go` directive, README
-   Go badge, and CI toolchain matrix.
-3. Re-run the receiver-style API scan in case sibling surfaces changed after the
-   research date.
-4. Confirm the minimum-Go minor-release policy is present in each affected repo.
-5. Resolve `collection`'s module-path/tag mismatch.
-6. Re-audit Wire, `webindex`, generated set rewriters, documentation generators,
-   gopls, lint, and CI against the stable Go 1.27 toolchain.
-7. Reconfirm that no generated interface boundary was replaced merely to obtain
-   generic method syntax.
+1. `Collection.Zip` is not a viable generic method because the stable compiler
+   rejects its recursively expanding result method set as an instantiation
+   cycle. The package function remains canonical.
+2. Queue retired the public `bus.Context` alias arrangement. Payload result
+   methods belong directly to concrete root `Job` and `Message` values.
 
-If any final language rule or repository API differs from this document, update
-the design before implementation rather than silently adapting during rollout.
+Each public-library branch updates its relevant module floors, installation
+guidance, CI, tests, benchmarks, and generated documentation in the same change.
+No interface boundary is replaced to obtain method syntax.
+
+Paired benchmarks found allocation parity between compatibility and method
+forms across collection, cache, and HTTP hot paths, and between the old and new
+execx and queue result forms. Collection retains a direct `ZipWith` function
+body because delegating it through the method would exceed the compiler's inline
+budget on an established hot path.
 
 ## Rollout Plan
 
-### Phase 0: readiness before stable Go 1.27
+### Phase 1: stable compiler canary — complete
 
-1. Keep this design as the cross-repo contract.
-2. Add Go 1.27 RC CI experiments without publishing production modules.
-3. Repair Wire, source analyzers, set rewriters, and documentation identities.
-4. Publish the minimum-Go minor-release policy and correct README/CI version
-   claims that disagree with `go.mod`.
-5. Resolve `collection`'s module-path/tag mismatch.
-6. Add compile-only prototypes in temporary branches or `/tmp` modules where
-   useful; do not put RC-only syntax in released branches.
+Ship's internal `lighthouse.Decode[T](cmd)` is converted to `cmd.Decode[T]()`,
+with production call sites and method value/expression coverage updated.
 
-### Phase 1: stable compiler canary
+### Phase 2: direct public migrations — implemented in PR branches
 
-After stable Go 1.27:
-
-1. Convert Ship's internal `lighthouse.Decode[T](cmd)` to `cmd.Decode[T]()`.
-2. Run its full CI, lint, docs, and editor workflows.
-3. Exercise method calls, method values, and method expressions.
-4. Resolve tool failures before any public module release.
-
-### Phase 2: direct public migrations
-
-Implement in this order:
+Implemented in this order:
 
 1. `collection`
 2. `cache`
@@ -1017,19 +961,17 @@ For each repo:
 6. run unit, contract, integration, vet, and lint checks appropriate to the repo
 7. publish according to the repo's minimum-Go release policy
 
-The order starts with the broadest language/API exercise, then validates the
-concrete generated-App cache surface, then the larger HTTP verb family.
+The order starts with the broadest language/API exercise, then the context-bound
+cache surface, then the larger HTTP verb family.
 
-### Phase 3: focused new APIs
+### Phase 3: focused new APIs — implemented in PR branches
 
 1. Add `execx.DecodeChain.As[T]`.
 2. Add queue `Job.PayloadAs[T]` and `Message.PayloadAs[T]`.
-3. Update generated job templates only after the queue release is consumed.
-4. Evaluate `collection.ReduceTo` or `Fold` independently.
-5. Consider `web.Bind[T]` and related helpers independently of Go 1.27, after
-   `webindex` is ready.
+3. Evaluate `collection.ReduceTo` or `Fold` independently.
+4. Consider `web.Bind[T]` and related helpers independently of Go 1.27.
 
-### Phase 4: GoForj generated surface
+### Deferred: GoForj generated consumers
 
 After sibling releases are available:
 
@@ -1039,7 +981,7 @@ After sibling releases are available:
 4. prefer queue payload result methods in generated handlers
 5. update starter kits and demo templates
 6. render and test disposable Apps only under `/tmp`
-7. verify source indexing, Wire generation, docs, build, and runtime smoke
+7. verify generated documentation, build, and runtime behavior
 
 Do not change generated event, storage, or web receiver types merely to expose
 generic methods.
@@ -1054,6 +996,8 @@ Every adopting repo should validate:
 - pointer and value receivers as applicable
 - nil-receiver behavior where the existing function accepted a nil pointer
 - exact parity between method and compatibility function results/errors
+- allocation-count and timing comparisons between method and compatibility
+  forms, with an established main-branch baseline for hot paths
 - documentation identity for same-named functions and methods
 - reflection-dependent code paths do not expect the generic method
 - lint, vet, static analysis, and generated examples
@@ -1065,22 +1009,21 @@ GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./...
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go vet ./...
 ```
 
-For GoForj integration:
+For a later GoForj consumer change:
 
 - release or locally replace the sibling module intentionally
 - render into `/tmp`, never into the GoForj repository
 - build and test the emitted App
-- verify Wire generation
-- verify API indexing and OpenAPI artifacts
+- verify any generated API artifacts affected by that separate change
 - inspect generated README/example output in every changed sibling
 
 ## Risks
 
 ### Tool lag
 
-The accepted proposal warns that third-party tooling may take one or two release
-cycles to catch up. GoForj owns enough AST, code generation, and Wire machinery
-that compiler success alone is not a release signal.
+Each library must validate its own compiler, docs, examples, lint, and CI paths.
+Generated-App tooling is validated when GoForj actually begins emitting the new
+calls; it is not coupled to declaration-only library releases.
 
 ### Interface confusion
 
@@ -1110,6 +1053,14 @@ Moving a function into a namespace must not quietly change context binding,
 default-client behavior, codecs, observation names, nil handling, or errors.
 Methods and wrappers should share one implementation.
 
+### Accidental performance regressions
+
+An additive method can still make a compatibility function exceed the compiler's
+inline budget or add a wrapper frame to a hot path. Preserve allocation counts,
+benchmark both call forms, and retain a direct implementation when delegation
+measurably regresses an established performance-sensitive entry point. The
+`collection.ZipWith` compatibility function follows that exception.
+
 ## Final Recommendation
 
 Adopt generic methods as a focused API correction for the receiver-first
@@ -1122,18 +1073,18 @@ The feature's best GoForj outcome is not “put generics everywhere.” It is:
 - HTTP calls live on the client that performs them
 - old function calls keep working
 - interface-led primitives keep their abstraction strength
-- generated Apps gain the new syntax only after the compiler and GoForj toolchain
-  are ready
+- generated applications can adopt the new syntax in a separate consumer change
 
 That gives GoForj a materially cleaner public surface without turning a language
 release into an ecosystem-wide redesign.
 
 ## Sources
 
-- [Draft Go 1.27 release notes](https://go.dev/doc/go1.27)
+- [Go 1.27 release notes](https://go.dev/doc/go1.27)
 - [Accepted generic methods proposal, golang/go#77273](https://github.com/golang/go/issues/77273)
-- [Official Go downloads, including Go 1.27 RC1](https://go.dev/dl/)
+- [Official Go downloads, including Go 1.27.0](https://go.dev/dl/)
 - [Go module version numbering](https://go.dev/doc/modules/version-numbers)
 - [Go major-version guidance](https://go.dev/doc/modules/major-version)
 - [Go modules reference: minimum Go version](https://go.dev/ref/mod#go-mod-file-go)
-- Local API audit of GoForj-owned sibling modules, 2026-07-13
+- Local API audit of GoForj-owned sibling modules, revalidated 2026-08-23
+- [Stable compiler rejection for generic `Zip`, golang/go#80109](https://github.com/golang/go/issues/80109)
