@@ -136,6 +136,23 @@ Add if the task is about server-rendered templates, Blade-like rendering, htmx, 
 
 - [../designs/completed/templ-htmx-starter-kit-design.md](../designs/completed/templ-htmx-starter-kit-design.md)
 
+### Atlas, agent guidance, live evaluations, capability coverage, or scorecards
+
+Read:
+
+- [Atlas Live Evaluations](../maintainer/atlas-live-evaluations.md)
+- [Atlas Evaluation Benchmark](../maintainer/atlas-evaluation-benchmark.md) before interpreting a pass rate or planning provider sessions
+
+Add if the task changes isolation, evidence eligibility, treatment semantics, or the runner architecture:
+
+- [Atlas Live Agent Evaluation Design](../designs/atlas-live-agent-evaluation-design.md)
+
+The current maintainer checkpoint distinguishes the published 32-evaluation
+matrix from newly promoted evaluations, records exact Atlas and GoForj
+revision boundaries, and names the authoritative sandbox as the next
+implementation phase. Do not infer current evidence from the number of
+evaluation manifests alone.
+
 ### Queue shutdown behavior or worker-stop semantics
 
 Read:
@@ -207,6 +224,11 @@ Add if the issue mentions `forj dev`, Ctrl+C, watcher shutdown, Docker Compose s
 - [Practical Workflows](practical-workflows.md)
   - day-to-day loops
   - common commands and pitfalls
+- [Atlas Live Evaluations](../maintainer/atlas-live-evaluations.md)
+  - evaluation ownership across Atlas and GoForj
+  - treatment ladder, evidence levels, and maintainer restart point
+- [Atlas Evaluation Benchmark](../maintainer/atlas-evaluation-benchmark.md)
+  - latest retained scorecard, denominators, provenance, and limitations
 - [Web Boundary](web-boundary.md)
   - what should move into `web`
 - [Queue Shutdown Behavior](queue-shutdown-behavior.md)
