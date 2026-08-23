@@ -316,14 +316,14 @@ func (c *Cache) Remember[T any](
 ```
 
 The custom-codec function currently takes `context.Context` before `*Cache`.
-The method should follow the rest of the concrete cache API and use the context
-bound by `WithContext`. Its legacy function must preserve its explicit-context
+The method follows the rest of the concrete cache API and uses the context
+bound by `WithContext`. Its legacy function preserves its explicit-context
 contract through the existing private context-aware implementation.
 
 This helper is therefore the one cache migration that is not a mechanical
-first-argument move. The method and compatibility function should enter the
-same private implementation with their respective resolved contexts. Add parity
-tests for nil-context normalization, cancellation, and the context delivered to
+first-argument move. The method and compatibility function enter the same
+private implementation with their respective resolved contexts. Parity tests
+cover nil-context normalization, cancellation, and the context delivered to
 cache observers.
 
 ### Resulting usage
@@ -570,7 +570,7 @@ func (c *Client) Options[Out any](
 ) (Out, error)
 ```
 
-Add matching context methods with `ctx context.Context` as the first ordinary
+Matching context methods use `ctx context.Context` as the first ordinary
 argument.
 
 The new body methods need only `Out`. The current `In` parameter is unconstrained
@@ -585,7 +585,8 @@ response, err := client.Post[CreateUserResponse](
 )
 ```
 
-The existing two-parameter package function remains compatible and delegates:
+The existing two-parameter package function remains compatible. Both entry
+points call the shared request engine directly, preserving the same hot path:
 
 ```go
 func Post[In, Out any](
@@ -594,14 +595,15 @@ func Post[In, Out any](
 	body In,
 	opts ...Option,
 ) (Out, error) {
-	return client.Post[Out](url, body, opts...)
+	out, _, err := do[Out](client, nil, methodPost, url, body, opts)
+	return out, err
 }
 ```
 
 Keep `Head[Out]` as an exact migration in this compatibility wave even though a
 decoded body is a weak contract for a HEAD response. A different response-metadata
 API would be a separate HTTPX design; mixing it into this migration would lose
-behavior parity and prevent the legacy function from being a simple wrapper.
+behavior parity with the shared request engine.
 
 ### `Do[T]` stays a function
 
@@ -650,7 +652,7 @@ err := execx.Command(...).
 	Into(&payload)
 ```
 
-Add:
+The implemented addition is:
 
 ```go
 func (d *DecodeChain) As[T any]() (T, error)
@@ -668,9 +670,10 @@ This removes the temporary variable, pointer ceremony, and caller-triggered
 non-pointer destination error. It preserves the same decoder, source selection,
 trimming, and error behavior.
 
-Keep `Into(any)` for compatibility and for callers that intentionally populate
-an existing object. Keep `Decoder.Decode([]byte, any)` non-generic because a
-decoder implementation must handle many destination types through an interface.
+`Into(any)` remains available for compatibility and for callers that
+intentionally populate an existing object. `Decoder.Decode([]byte, any)` remains
+non-generic because a decoder implementation must handle many destination types
+through an interface.
 
 ## Adjacent Addition: Queue
 
@@ -684,7 +687,7 @@ if err := msg.Bind(&payload); err != nil {
 }
 ```
 
-Add methods to both public concrete payload values:
+The methods are implemented on both public concrete payload values:
 
 ```go
 func (j Job) PayloadAs[T any]() (T, error)
