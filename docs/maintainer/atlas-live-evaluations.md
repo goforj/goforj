@@ -28,7 +28,14 @@ forj atlas:eval coverage
 forj atlas:eval coverage --format markdown
 ```
 
-At this checkpoint, the catalog maps 40 of 57 named capabilities. Seventeen gaps remain planned deliberately. Run the coverage command for the current count rather than copying this checkpoint into another document. Do not infer coverage from the number of scenarios or evaluation manifests, and do not close a gap with a verifier that merely searches for source tokens.
+Current shipping checkpoint, recorded 2026-08-23: Atlas `v0.4.13` points to
+`5c9fe023`; GoForj `main` at `d40562ee` selects it and contains the matching
+data-resource scenario and verifier calibration. The latest GoForj tag remains
+`v0.26.1` and predates that integration. Final release-qualified evidence must
+therefore use a later GoForj tag rather than describing `d40562ee` as already
+released.
+
+At the `d40562ee` checkpoint, using Atlas `v0.4.13`, the catalog maps 41 of 57 named capabilities. Sixteen gaps remain planned deliberately. Run the coverage command for the current count rather than copying this checkpoint into another document. Do not infer coverage from the number of scenarios or evaluation manifests, and do not close a gap with a verifier that merely searches for source tokens.
 
 ## Program Operating Model
 
@@ -68,7 +75,7 @@ The guidance profiles isolate different parts of the developer experience:
 | `agents-skills` | yes | yes | — |
 | `atlas` | yes | yes | yes |
 
-The published scorecard includes all four profiles for all 32 promoted evaluations. Use adjacent comparisons when a new measurement is intended to attribute a change to one guidance surface:
+The published scorecard includes all four profiles for the 32 evaluations promoted at its recorded revision. Atlas `v0.4.13` and GoForj `d40562ee` add `create-data-resource` as a thirty-third promoted evaluation. One fresh `atlas`-profile attempt passed its outcome checks, but it was not a treatment comparison and its temporary artifacts were not retained. Keep it outside the published matrix until a rerun retains authenticated evidence. Use adjacent comparisons when a new measurement is intended to attribute a change to one guidance surface:
 
 ```sh
 /tmp/forj-eval atlas:eval suite core \
@@ -102,8 +109,8 @@ Render scenario Projects only under `/tmp`. Keep unrelated worktree files out of
 
 ## What Remains
 
-The next measurement should answer a specific regression or guidance question with repeated paired trials, beginning with the smoke tier. Do not pay for another complete matrix merely to replace stochastic failures with green cells. Publish a new scorecard only when its protocol, denominator, and revision identities are explicit.
+The highest-value next implementation is the authoritative container or VM backend and its negative isolation suite. It must keep signing authority and sibling trials outside the candidate boundary, capture commands through a supervisor-owned stream, enforce command and process limits online, and prove cleanup. Until that exists, local results remain diagnostic and unavailable trusted command, isolation, and cleanup evidence must remain ineligible.
 
-The next architectural phase is an authoritative container or VM backend with negative isolation tests. Until that backend exists, local results remain diagnostic: unavailable trusted command, isolation, and cleanup evidence must remain ineligible rather than being promoted into a pass.
+After that trust boundary exists, the next paid measurement should answer a specific adjacent-treatment question with repeated paired trials, beginning with the smoke tier. Do not pay for another complete matrix merely to replace stochastic failures with green cells. Publish a new scorecard only when its protocol, denominator, retained authenticated artifacts, and revision identities are explicit. The newly promoted `create-data-resource` evaluation also needs retained evidence before it joins that scorecard.
 
 Some capability gaps require new infrastructure rather than more source contracts. Browser-observed frontend loading and flicker, deployment rollback, graceful multi-runtime shutdown, and production driver swaps should remain planned until their verifier can observe the real behavior economically and deterministically.
