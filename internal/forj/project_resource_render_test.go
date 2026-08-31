@@ -463,6 +463,9 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 			t.Fatalf("default environment omitted queue operating default %q:\n%s", want, environment)
 		}
 	}
+	if !strings.Contains(environment, "SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT=\n") {
+		t.Fatalf("default environment must let scheduler subprocess shutdown inherit the app budget:\n%s", environment)
+	}
 	if !strings.Contains(environment, "IP_ADDRESS=0.0.0.0\n") {
 		t.Fatalf("default environment omitted the Docker bind-address default:\n%s", environment)
 	}
