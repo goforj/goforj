@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/goforj/goforj/internal/commanddiag"
 	"github.com/goforj/goforj/internal/envcontract"
 	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/projectlayout"
@@ -336,8 +337,8 @@ func runGoModTidy(projectDir string) error {
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = projectDir
 	cmd.Env = generationSubprocessEnvironment(projectDir)
-	if _, err := cmd.CombinedOutput(); err != nil {
-		return err
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return commanddiag.Wrap("go mod tidy", err, string(output))
 	}
 	return nil
 }
