@@ -36,10 +36,10 @@ func TestCreateGoModCreatesAndThenSkips(t *testing.T) {
 
 // TestCreateGoModReturnsCommandFailure prevents invalid module configuration from masquerading as an existing file.
 func TestCreateGoModReturnsCommandFailure(t *testing.T) {
-	renderer := projectRendererForGoModTest(t, "invalid module")
+	renderer := projectRendererForGoModTest(t, "https://github.com/example/new-project")
 	err := renderer.createGoMod()
-	if err == nil || !strings.Contains(err.Error(), "initialize go.mod") {
-		t.Fatalf("createGoMod() error = %v, want command failure", err)
+	if err == nil || !strings.Contains(err.Error(), "initialize go.mod: exit status 1") || !strings.Contains(err.Error(), "\n  go: malformed module path") {
+		t.Fatalf("createGoMod() error = %v, want formatted command diagnostics", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(renderer.workspace.path(), "go.mod")); !os.IsNotExist(statErr) {
 		t.Fatalf("failed initialization left go.mod behind: %v", statErr)
@@ -90,7 +90,7 @@ func TestGoModTidyReturnsCommandDiagnostics(t *testing.T) {
 	}
 
 	err := renderer.goModTidy()
-	if err == nil || !strings.Contains(err.Error(), "go mod tidy") || !strings.Contains(err.Error(), "unknown directive") {
+	if err == nil || !strings.Contains(err.Error(), "go mod tidy") || !strings.Contains(err.Error(), "\n  go: errors parsing go.mod") || !strings.Contains(err.Error(), "unknown directive") {
 		t.Fatalf("goModTidy() error = %v, want command diagnostics", err)
 	}
 }

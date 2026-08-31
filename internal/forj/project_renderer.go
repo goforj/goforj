@@ -22,6 +22,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/goforj/console"
 	"github.com/goforj/crypt"
+	"github.com/goforj/goforj/internal/commanddiag"
 	"github.com/goforj/goforj/internal/coredeps"
 	"github.com/goforj/goforj/internal/devservices"
 	"github.com/goforj/goforj/internal/envcontract"
@@ -61,7 +62,7 @@ type wireGenerateError struct {
 
 // Error retains the App-local Wire directory and captured output needed to repair generation failures.
 func (e *wireGenerateError) Error() string {
-	return fmt.Sprintf("wire generate %s: %v (%s)", e.dir, e.err, e.output)
+	return commanddiag.Format("wire "+e.dir, e.err, e.output)
 }
 
 // Unwrap preserves the underlying process failure for stale-toolchain classification.
@@ -1163,6 +1164,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 
 	// Run go mod tidy to ensure all dependencies are downloaded
 	if err := p.timeRenderStage("goModTidy", func() error { return p.tidyModule(p) }); err != nil {
+		if commanddiag.HasAction(err, "go mod tidy") {
+			return err
+		}
 		return fmt.Errorf("go mod tidy: %w", err)
 	}
 
@@ -2930,8 +2934,11 @@ func (p *ProjectRenderer) createGoMod() error {
 
 	cmd := exec.Command("go", "mod", "init", p.config.GoModuleName)
 	cmd.Dir = p.workspace.path()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	if err := p.workspace.logicalError(cmd.Run()); err != nil {
-		return fmt.Errorf("initialize go.mod: %w", err)
+		return commanddiag.Wrap("initialize go.mod", err, stderr.String(), stdout.String())
 	}
 	p.stats.recordCreated("go.mod")
 	return nil
@@ -2948,18 +2955,11 @@ func (p *ProjectRenderer) goModTidy() error {
 	cmd.Stderr = &stderr
 
 	if err := p.workspace.logicalError(cmd.Run()); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
-		}
 		p.logger.Error().
 			Str("stdout", stdout.String()).
 			Str("stderr", stderr.String()).
 			Msg("🔴 go mod tidy failed")
-		if detail != "" {
-			return fmt.Errorf("go mod tidy: %w (%s)", err, detail)
-		}
-		return fmt.Errorf("go mod tidy: %w", err)
+		return commanddiag.Wrap("go mod tidy", err, stderr.String(), stdout.String())
 	}
 
 	modCount := countTidyModules(stdout.String(), stderr.String())
@@ -3007,14 +3007,7 @@ func (p *ProjectRenderer) syncCoreLibrariesInDir(dir string) error {
 	cmd.Stderr = &stderr
 
 	if err := p.workspace.logicalError(cmd.Run()); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
-		}
-		if detail != "" {
-			return fmt.Errorf("go mod edit core libs: %w (%s)", err, detail)
-		}
-		return fmt.Errorf("go mod edit core libs: %w", err)
+		return commanddiag.Wrap("go mod edit core libs", err, stderr.String(), stdout.String())
 	}
 
 	p.lines = append(p.lines, renderCountsLine("sync core libs", len(modules), skipped, "modules"))
@@ -3136,11 +3129,7 @@ func (p *ProjectRenderer) runTemplGenerate() error {
 	output, err := cmd.CombinedOutput()
 	err = p.workspace.logicalError(err)
 	if err != nil {
-		detail := strings.TrimSpace(string(output))
-		if detail != "" {
-			return fmt.Errorf("%w (%s)", err, detail)
-		}
-		return err
+		return commanddiag.Wrap("go run templ", err, string(output))
 	}
 	p.lines = append(p.lines, renderCountsLine("templ generate", 1, 0, "commands"))
 	return nil
@@ -3263,7 +3252,7 @@ func installWire() (string, error) {
 	install.Env = os.Environ()
 	install.Env = append(install.Env, "GOBIN="+toolDir)
 	if out, err := install.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("wire install: %w (%s)", err, strings.TrimSpace(string(out)))
+		return "", commanddiag.Wrap("wire install", err, string(out))
 	}
 	wirePath, err := exec.LookPath(filepath.Join(toolDir, "wire"))
 	if err != nil {

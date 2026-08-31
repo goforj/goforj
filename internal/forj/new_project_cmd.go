@@ -797,11 +797,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			switch msg.String() {
 			case "enter":
-				if strings.TrimSpace(m.moduleInput.Value()) == "" {
-					m.errorMsg = "Go module path is required."
+				modulePath := strings.TrimSpace(m.moduleInput.Value())
+				if err := validateNewProjectModulePath(modulePath); err != nil {
+					m.errorMsg = err.Error()
 					return m, nil
 				}
-				m.config.GoModuleName = m.moduleInput.Value()
+				m.config.GoModuleName = modulePath
 				m.stage = StageSelectComponents
 				m.moduleInput.Blur()
 				m.errorMsg = ""
@@ -1284,7 +1285,7 @@ func (m model) View() string {
 		}
 		rows := []keyValue{
 			{"Project", m.projectInput.Value()},
-			{"Directory", m.projectSlug()},
+			{"Directory", filepath.Base(m.projectPath())},
 			{"Go module", m.modulePreview()},
 			{"Path", m.projectPath()},
 			{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Render.Components.DemoApp]},
@@ -1305,7 +1306,7 @@ func (m model) View() string {
 	}
 
 	if m.stage == StageDone {
-		panels = append(panels, m.panelWithTitle("Project initialized", successStyle.Render("Project initialized and .goforj.yml created!"), m.termWidth, false))
+		panels = append(panels, m.panelWithTitle("Configuration complete", successStyle.Render("Project configuration complete. Creating project files..."), m.termWidth, false))
 	}
 
 	view := ""
@@ -2298,8 +2299,8 @@ func (m model) validateBeforeConfirm() error {
 	if strings.TrimSpace(m.projectInput.Value()) == "" {
 		return fmt.Errorf("Project name is required.")
 	}
-	if strings.TrimSpace(m.moduleInput.Value()) == "" {
-		return fmt.Errorf("Go module path is required.")
+	if err := validateNewProjectModulePath(m.moduleInput.Value()); err != nil {
+		return err
 	}
 
 	if err := m.validatePathInput(); err != nil {
@@ -2495,6 +2496,9 @@ func (c *NewProjectCmd) createProject(m model) error {
 	if m.stage != StageDone {
 		return fmt.Errorf("project wizard must be completed before creation")
 	}
+	if err := validateNewProjectModulePath(m.config.GoModuleName); err != nil {
+		return err
+	}
 	var targetPath string
 	targetPath = m.targetPath
 	if targetPath == "" {
@@ -2559,6 +2563,7 @@ func (c *NewProjectCmd) createProject(m model) error {
 		}
 		fmt.Printf("%s Installed Atlas agent support\n", console.SuccessMark())
 	}
+	fmt.Printf("%s Project initialized at %s\n", console.SuccessMark(), targetPath)
 
 	return nil
 }
