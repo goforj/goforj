@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+
+	"github.com/goforj/goforj/internal/commanddiag"
 )
 
 // moduleReplacesStateFile records only entries owned by the renderer so later runs cannot remove user-managed replacements.
@@ -126,11 +128,7 @@ func (w projectRenderWorkspace) runGoModEdit(flag, value string) error {
 	cmd.Env = os.Environ()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		err = w.logicalError(err)
-		detail := strings.TrimSpace(string(out))
-		if detail != "" {
-			return fmt.Errorf("go mod edit %s %s: %w (%s)", flag, value, err, detail)
-		}
-		return fmt.Errorf("go mod edit %s %s: %w", flag, value, err)
+		return commanddiag.Wrap(fmt.Sprintf("go mod edit %s %s", flag, value), err, string(out))
 	}
 	return nil
 }

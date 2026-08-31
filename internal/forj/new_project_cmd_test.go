@@ -144,6 +144,93 @@ func TestModelBackNavigation(t *testing.T) {
 	}
 }
 
+// TestValidateNewProjectModulePathMatchesLocalGoInitRules rejects malformed input without requiring publication.
+func TestValidateNewProjectModulePathMatchesLocalGoInitRules(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{name: "unpublished remote-shaped path", path: "project.invalid/owner/not-published"},
+		{name: "local-only module", path: "forj"},
+		{name: "empty", path: "  ", wantErr: "required"},
+		{name: "URL", path: "https://github.com/example/new-project", wantErr: `Use "github.com/example/new-project" instead`},
+		{name: "invalid import path", path: "github.com/example/project name", wantErr: "invalid"},
+		{name: "invalid major suffix", path: "github.com/example/project/v1", wantErr: "major-version suffix"},
+		{name: "reserved", path: "go", wantErr: "reserved"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateNewProjectModulePath(test.path)
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateNewProjectModulePath(%q) = %v", test.path, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("validateNewProjectModulePath(%q) = %v, want %q", test.path, err, test.wantErr)
+			}
+		})
+	}
+}
+
+// TestModuleStageRejectsURLBeforeProjectConfiguration keeps malformed paths inside the field that owns them.
+func TestModuleStageRejectsURLBeforeProjectConfiguration(t *testing.T) {
+	m := initialModel()
+	m.stage = StageModuleName
+	m.moduleInput.SetValue("https://github.com/example/new-project")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if m.stage != StageModuleName {
+		t.Fatalf("URL module advanced to stage %v", m.stage)
+	}
+	if !strings.Contains(m.errorMsg, "without a URL scheme") {
+		t.Fatalf("URL module error = %q", m.errorMsg)
+	}
+	if m.config.GoModuleName != "" {
+		t.Fatalf("invalid module was persisted as %q", m.config.GoModuleName)
+	}
+}
+
+// TestCreateProjectRejectsInvalidModuleBeforeFilesystemChanges preserves an untouched target on defensive validation failure.
+func TestCreateProjectRejectsInvalidModuleBeforeFilesystemChanges(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "not-created")
+	m := initialModel()
+	m.stage = StageDone
+	m.targetPath = target
+	m.config.GoModuleName = "https://github.com/example/new-project"
+	cmd := NewNewProjectCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+
+	err := cmd.createProject(m)
+	if err == nil || !strings.Contains(err.Error(), "without a URL scheme") {
+		t.Fatalf("createProject() error = %v, want module guidance", err)
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid module created target: %v", statErr)
+	}
+}
+
+// TestConfirmationUsesSelectedDirectoryAndDefersSuccess keeps the final wizard screen truthful before rendering starts.
+func TestConfirmationUsesSelectedDirectoryAndDefersSuccess(t *testing.T) {
+	m := initialModel()
+	m.projectInput.SetValue("New Project")
+	m.moduleInput.SetValue("example.com/new-project")
+	m.pathInput.SetValue(filepath.Join(t.TempDir(), "chosen-directory"))
+	m.stage = StageConfirm
+	confirmation := ansi.Strip(m.View())
+	if !strings.Contains(confirmation, "Directory » chosen-directory") {
+		t.Fatalf("confirmation omitted selected directory:\n%s", confirmation)
+	}
+
+	m.stage = StageDone
+	done := ansi.Strip(m.View())
+	if !strings.Contains(done, "Configuration complete") || strings.Contains(done, "Project initialized") {
+		t.Fatalf("completion view claimed publication before rendering:\n%s", done)
+	}
+}
+
 func TestConfirmationFlow(t *testing.T) {
 	orig, _ := os.Getwd()
 	defer os.Chdir(orig)
