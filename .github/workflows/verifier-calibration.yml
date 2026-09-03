@@ -1,0 +1,73 @@
+name: verifier calibration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/verifier-calibration.yml
+      - go.mod
+      - go.sum
+      - internal/forj/atlas/**
+      - internal/forj/atlaseval/**
+      - internal/scenarios/**
+      - templates/**
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25"
+  GOPRIVATE: "github.com/goforj/*"
+  GONOPROXY: "none"
+  WIRE_INSTALL_TARGET: "github.com/goforj/wire/cmd/wire@v1.2.0"
+
+jobs:
+  calibration-shards:
+    name: calibration (${{ matrix.shard }}/24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: set up go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            internal/coredeps/modules.go
+
+      - name: install wire
+        run: go install "$WIRE_INSTALL_TARGET"
+
+      - name: build goforj binary
+        run: go build -o "$RUNNER_TEMP/forj" ./cmd/forj
+
+      - name: run verifier calibration shard
+        env:
+          FORJ_INTEGRATION_FORJ_PATH: ${{ runner.temp }}/forj
+        run: '"$FORJ_INTEGRATION_FORJ_PATH" test:integration framework --framework-profile=verifiercalibration --shard=${{ matrix.shard }}/24 -v'
+
+  calibration:
+    name: verifier calibration
+    if: ${{ always() }}
+    needs: calibration-shards
+    runs-on: ubuntu-latest
+    steps:
+      - name: require every calibration shard
+        env:
+          SHARD_RESULT: ${{ needs.calibration-shards.result }}
+        run: |
+          if [ "$SHARD_RESULT" != "success" ]; then
+            echo "One or more verifier calibration shards failed: $SHARD_RESULT"
+            exit 1
+          fi
