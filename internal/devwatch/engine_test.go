@@ -20,10 +20,11 @@ type fakeDevWatchBackend struct {
 	events  chan devWatchRawEvent
 	updates chan devWatchBackendUpdate
 
-	mu            sync.Mutex
-	roots         []string
-	shouldDescend func(string) bool
-	stopOnce      sync.Once
+	mu              sync.Mutex
+	roots           []string
+	shouldDescend   func(string) bool
+	shouldTrackFile func(string) bool
+	stopOnce        sync.Once
 }
 
 type blockingFailDevWatchBackend struct {
@@ -35,14 +36,14 @@ type failingStartDevWatchBackend struct {
 }
 
 // start blocks until shutdown so the engine's startup/close handoff is deterministic.
-func (b *blockingFailDevWatchBackend) start(ctx context.Context, _ []string, _ func(string) bool) (devWatchBackendStart, error) {
+func (b *blockingFailDevWatchBackend) start(ctx context.Context, _ []string, _ func(string) bool, _ func(string) bool) (devWatchBackendStart, error) {
 	close(b.started)
 	<-ctx.Done()
 	return devWatchBackendStart{}, errors.New("backend startup failed")
 }
 
 // start returns a deterministic notification setup failure for automatic fallback tests.
-func (b *failingStartDevWatchBackend) start(context.Context, []string, func(string) bool) (devWatchBackendStart, error) {
+func (b *failingStartDevWatchBackend) start(context.Context, []string, func(string) bool, func(string) bool) (devWatchBackendStart, error) {
 	return devWatchBackendStart{}, b.err
 }
 
@@ -59,10 +60,12 @@ func (b *fakeDevWatchBackend) start(
 	_ context.Context,
 	roots []string,
 	shouldDescend func(string) bool,
+	shouldTrackFile func(string) bool,
 ) (devWatchBackendStart, error) {
 	b.mu.Lock()
 	b.roots = slices.Clone(roots)
 	b.shouldDescend = shouldDescend
+	b.shouldTrackFile = shouldTrackFile
 	b.mu.Unlock()
 	return devWatchBackendStart{
 		events:             b.events,
@@ -418,6 +421,200 @@ func TestDevWatchEngineDirectoryPruningUsesAllSubscribers(t *testing.T) {
 	}
 }
 
+// TestDevWatchEnginePhysicalSelectionUsesExplicitWatcherInputs prevents one lifecycle root from retaining unrelated files.
+func TestDevWatchEnginePhysicalSelectionUsesExplicitWatcherInputs(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	frontend := filepath.Join(root, "frontend")
+	if err := os.Mkdir(frontend, 0o700); err != nil {
+		t.Fatalf("create frontend directory: %v", err)
+	}
+	fakeBackend := newFakeDevWatchBackend()
+	engine, err := NewEngine(EngineConfig{
+		Watchers: []Spec{
+			{Name: "backend", Roots: []string{root}, Includes: []Matcher{mustDevWatchMatcher(t, ".go")}},
+			{Name: "spa", Roots: []string{frontend}, Includes: []Matcher{mustDevWatchMatcher(t, ".ts")}},
+		},
+		backendForTest: fakeBackend,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+	if err := engine.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: filepath.Join(root, "internal", "handler.go"), want: true},
+		{path: filepath.Join(frontend, "src", "main.ts"), want: true},
+		{path: filepath.Join(frontend, "public", "logo.svg"), want: false},
+		{path: filepath.Join(root, "docs", "theme.css"), want: false},
+	}
+	for _, test := range tests {
+		if got := fakeBackend.shouldTrackFile(test.path); got != test.want {
+			t.Errorf("shouldTrackFile(%q) = %t, want %t", test.path, got, test.want)
+		}
+	}
+}
+
+// TestDevWatchKqueuePlatformsUseFilteredPolling prevents directory registration from opening unrelated files.
+func TestDevWatchKqueuePlatformsUseFilteredPolling(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	tests := []struct {
+		name    string
+		backend BackendKind
+		goos    string
+		want    BackendKind
+	}{
+		{name: "automatic macOS", backend: BackendAuto, goos: "darwin", want: BackendPoll},
+		{name: "automatic BSD", backend: BackendAuto, goos: "freebsd", want: BackendPoll},
+		{name: "automatic Linux", backend: BackendAuto, goos: "linux", want: BackendNotify},
+		{name: "explicit macOS notifications", backend: BackendNotify, goos: "darwin", want: BackendNotify},
+		{name: "explicit Linux polling", backend: BackendPoll, goos: "linux", want: BackendPoll},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			engine, err := NewEngine(EngineConfig{
+				Backend:  test.backend,
+				Watchers: []Spec{{Name: "files", Roots: []string{root}}},
+			})
+			if err != nil {
+				t.Fatalf("NewEngine() error = %v", err)
+			}
+			backend, got := engine.configuredBackendForPlatform(test.goos)
+			if got != test.want {
+				t.Fatalf("configured backend for %s = %q, want %q", test.goos, got, test.want)
+			}
+			switch test.want {
+			case BackendNotify:
+				if _, ok := backend.(*devWatchFSNotifyBackend); !ok {
+					t.Fatalf("configured backend for %s has type %T, want notification backend", test.goos, backend)
+				}
+			case BackendPoll:
+				if _, ok := backend.(*devWatchPollBackend); !ok {
+					t.Fatalf("configured backend for %s has type %T, want polling backend", test.goos, backend)
+				}
+			}
+		})
+	}
+}
+
+// TestDevWatchPollingSnapshotRetainsOnlySelectedFiles keeps filtering at the physical scan boundary.
+func TestDevWatchPollingSnapshotRetainsOnlySelectedFiles(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	goPath := filepath.Join(root, "main.go")
+	svgPath := filepath.Join(root, "logo.svg")
+	if err := os.WriteFile(goPath, []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("write Go source: %v", err)
+	}
+	if err := os.WriteFile(svgPath, []byte("<svg/>\n"), 0o600); err != nil {
+		t.Fatalf("write SVG asset: %v", err)
+	}
+
+	snapshot, err := snapshotDevWatchRoots(
+		context.Background(),
+		[]string{root},
+		func(string) bool { return true },
+		func(path string) bool { return filepath.Ext(path) == ".go" },
+	)
+	if err != nil {
+		t.Fatalf("snapshotDevWatchRoots() error = %v", err)
+	}
+	if _, exists := snapshot.files[goPath]; !exists {
+		t.Fatalf("polling snapshot omitted selected file %q", goPath)
+	}
+	if _, exists := snapshot.files[svgPath]; exists {
+		t.Fatalf("polling snapshot retained unrelated file %q", svgPath)
+	}
+}
+
+// TestDevWatchPollingKeepsBackendAndSPAFileTriggersIndependent verifies the macOS default backend against real filesystem changes.
+func TestDevWatchPollingKeepsBackendAndSPAFileTriggersIndependent(t *testing.T) {
+	root := t.TempDir()
+	frontend := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(filepath.Join(frontend, "src"), 0o700); err != nil {
+		t.Fatalf("create frontend source directory: %v", err)
+	}
+	svgPath := filepath.Join(frontend, "logo.svg")
+	if err := os.WriteFile(svgPath, []byte("<svg>one</svg>\n"), 0o600); err != nil {
+		t.Fatalf("write initial SVG: %v", err)
+	}
+
+	engine, err := NewEngine(EngineConfig{
+		Backend:      BackendPoll,
+		PollInterval: 15 * time.Millisecond,
+		Watchers: []Spec{
+			{
+				Name: "backend", Roots: []string{root}, Includes: []Matcher{mustDevWatchMatcher(t, ".go")},
+				Debounce: 5 * time.Millisecond, DebounceSet: true,
+			},
+			{
+				Name: "spa", Roots: []string{frontend}, Includes: []Matcher{mustDevWatchMatcher(t, ".ts")},
+				Debounce: 5 * time.Millisecond, DebounceSet: true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewEngine() error = %v", err)
+	}
+	if err := engine.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+
+	if err := os.WriteFile(svgPath, []byte("<svg>two</svg>\n"), 0o600); err != nil {
+		t.Fatalf("change unrelated SVG: %v", err)
+	}
+	assertNoDevWatchEvent(t, engine.Events(), 100*time.Millisecond)
+
+	backendPath := filepath.Join(root, "main.go")
+	if err := os.WriteFile(backendPath, []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("create backend source: %v", err)
+	}
+	backendEvent := awaitDevWatchEvent(t, engine.Events(), 2*time.Second)
+	if backendEvent.Watcher != "backend" || len(backendEvent.Changes) != 1 || backendEvent.Changes[0].Path != backendPath || backendEvent.Changes[0].Op&OpCreate == 0 {
+		t.Fatalf("backend create event = %#v, want backend create for %q", backendEvent, backendPath)
+	}
+
+	spaPath := filepath.Join(frontend, "src", "main.ts")
+	if err := os.WriteFile(spaPath, []byte("export const value = 1\n"), 0o600); err != nil {
+		t.Fatalf("create SPA source: %v", err)
+	}
+	spaEvent := awaitDevWatchEvent(t, engine.Events(), 2*time.Second)
+	if spaEvent.Watcher != "spa" || len(spaEvent.Changes) != 1 || spaEvent.Changes[0].Path != spaPath || spaEvent.Changes[0].Op&OpCreate == 0 {
+		t.Fatalf("SPA create event = %#v, want SPA create for %q", spaEvent, spaPath)
+	}
+
+	draftPath := filepath.Join(root, "draft.tmp")
+	publishedPath := filepath.Join(root, "published.go")
+	if err := os.WriteFile(draftPath, []byte("package published\n"), 0o600); err != nil {
+		t.Fatalf("write unmatched draft: %v", err)
+	}
+	if err := os.Rename(draftPath, publishedPath); err != nil {
+		t.Fatalf("rename draft into backend scope: %v", err)
+	}
+	publishedEvent := awaitDevWatchEvent(t, engine.Events(), 2*time.Second)
+	if publishedEvent.Watcher != "backend" || len(publishedEvent.Changes) != 1 || publishedEvent.Changes[0].Path != publishedPath || publishedEvent.Changes[0].Op&OpCreate == 0 {
+		t.Fatalf("backend publication event = %#v, want backend create for %q", publishedEvent, publishedPath)
+	}
+
+	archivedPath := filepath.Join(root, "published.tmp")
+	if err := os.Rename(publishedPath, archivedPath); err != nil {
+		t.Fatalf("rename backend source out of scope: %v", err)
+	}
+	removedEvent := awaitDevWatchEvent(t, engine.Events(), 2*time.Second)
+	if removedEvent.Watcher != "backend" || len(removedEvent.Changes) != 1 || removedEvent.Changes[0].Path != publishedPath || removedEvent.Changes[0].Op&OpRemove == 0 {
+		t.Fatalf("backend removal event = %#v, want backend remove for %q", removedEvent, publishedPath)
+	}
+	assertNoDevWatchEvent(t, engine.Events(), 100*time.Millisecond)
+}
+
 // TestDevWatchLegacyDirectoryRegexSemantics preserves wgo full-path matching and default pruning.
 func TestDevWatchLegacyDirectoryRegexSemantics(t *testing.T) {
 	t.Parallel()
@@ -571,7 +768,12 @@ func TestDevWatchPollSnapshotDetectsSameMetadataReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat original file: %v", err)
 	}
-	before, err := snapshotDevWatchRoots(context.Background(), []string{root}, func(string) bool { return true })
+	before, err := snapshotDevWatchRoots(
+		context.Background(),
+		[]string{root},
+		func(string) bool { return true },
+		func(string) bool { return true },
+	)
 	if err != nil {
 		t.Fatalf("snapshot original file: %v", err)
 	}
@@ -602,7 +804,12 @@ func TestDevWatchPollSnapshotDetectsSameMetadataReplacement(t *testing.T) {
 			originalInfo.ModTime(),
 		)
 	}
-	after, err := snapshotDevWatchRoots(context.Background(), []string{root}, func(string) bool { return true })
+	after, err := snapshotDevWatchRoots(
+		context.Background(),
+		[]string{root},
+		func(string) bool { return true },
+		func(string) bool { return true },
+	)
 	if err != nil {
 		t.Fatalf("snapshot replacement file: %v", err)
 	}
@@ -837,6 +1044,7 @@ func TestDevWatchFSNotifyRecoveryPublishesPartialRootDiscoveries(t *testing.T) {
 		watcher,
 		[]string{firstRoot, secondRoot},
 		func(string) bool { return true },
+		func(string) bool { return true },
 		watched,
 		recoveryDirectories,
 		knownDirectories,
@@ -864,6 +1072,7 @@ func TestDevWatchFSNotifyRecoveryPublishesPartialRootDiscoveries(t *testing.T) {
 		context.Background(),
 		watcher,
 		[]string{firstRoot, secondRoot},
+		func(string) bool { return true },
 		func(string) bool { return true },
 		watched,
 		recoveryDirectories,
@@ -896,6 +1105,7 @@ func TestDevWatchFSNotifyIgnoresVanishedNonRootScan(t *testing.T) {
 		watcher,
 		filepath.Join(root, "already-gone"),
 		false,
+		func(string) bool { return true },
 		func(string) bool { return true },
 		make(map[string]struct{}),
 		make(map[string]struct{}),

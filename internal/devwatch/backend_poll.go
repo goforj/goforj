@@ -33,12 +33,13 @@ func (b *devWatchPollBackend) start(
 	ctx context.Context,
 	roots []string,
 	shouldDescend func(string) bool,
+	shouldTrackFile func(string) bool,
 ) (devWatchBackendStart, error) {
 	interval := b.interval
 	if interval <= 0 {
 		interval = DefaultPollInterval
 	}
-	previous, err := snapshotDevWatchRoots(ctx, roots, shouldDescend)
+	previous, err := snapshotDevWatchRoots(ctx, roots, shouldDescend, shouldTrackFile)
 	if err != nil {
 		return devWatchBackendStart{}, err
 	}
@@ -47,7 +48,7 @@ func (b *devWatchPollBackend) start(
 	events := make(chan devWatchRawEvent, 256)
 	updates := make(chan devWatchBackendUpdate, 16)
 	done := make(chan struct{})
-	go runDevWatchPollBackend(backendCtx, roots, shouldDescend, interval, previous, events, updates, done)
+	go runDevWatchPollBackend(backendCtx, roots, shouldDescend, shouldTrackFile, interval, previous, events, updates, done)
 
 	var stopOnce sync.Once
 	stop := func() error {
@@ -70,6 +71,7 @@ func runDevWatchPollBackend(
 	ctx context.Context,
 	roots []string,
 	shouldDescend func(string) bool,
+	shouldTrackFile func(string) bool,
 	interval time.Duration,
 	previous devWatchSnapshot,
 	events chan<- devWatchRawEvent,
@@ -87,7 +89,7 @@ func runDevWatchPollBackend(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			current, err := snapshotDevWatchRoots(ctx, roots, shouldDescend)
+			current, err := snapshotDevWatchRoots(ctx, roots, shouldDescend, shouldTrackFile)
 			if err != nil {
 				if healthy {
 					healthy = false
@@ -113,7 +115,12 @@ func runDevWatchPollBackend(
 }
 
 // snapshotDevWatchRoots captures file metadata while applying shared directory pruning.
-func snapshotDevWatchRoots(ctx context.Context, roots []string, shouldDescend func(string) bool) (devWatchSnapshot, error) {
+func snapshotDevWatchRoots(
+	ctx context.Context,
+	roots []string,
+	shouldDescend func(string) bool,
+	shouldTrackFile func(string) bool,
+) (devWatchSnapshot, error) {
 	snapshot := devWatchSnapshot{files: make(map[string]devWatchFileFingerprint)}
 	seenDirectories := make(map[string]struct{})
 	for _, root := range roots {
@@ -133,6 +140,9 @@ func snapshotDevWatchRoots(ctx context.Context, roots []string, shouldDescend fu
 					return filepath.SkipDir
 				}
 				seenDirectories[currentPath] = struct{}{}
+				return nil
+			}
+			if !shouldTrackFile(currentPath) {
 				return nil
 			}
 			info, err := entry.Info()

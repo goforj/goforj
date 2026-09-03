@@ -417,8 +417,16 @@ dev:
 
 `root` is accepted as a single-root YAML convenience; `roots` is the normalized
 multi-root form. `poll` selects bounded snapshot polling for that watcher. With
-no `poll`, filesystem notifications are preferred and startup falls back to
-polling if notification coverage cannot be established.
+no `poll`, Linux and Windows prefer filesystem notifications and fall back to
+polling if notification coverage cannot be established. macOS and BSD use
+filtered polling by default because their kqueue notification backend opens a
+file descriptor for every child of a watched directory.
+
+Physical polling snapshots retain only files accepted by at least one logical
+watcher. Backend and SPA include matchers therefore define independent input
+sets before change delivery, rather than filtering an already retained
+repository tree. Directory traversal remains shared so newly created matching
+files are discovered without requiring a list of routine exclusions.
 
 Outermost physical roots must exist as real directories when the watcher
 starts; symbolic-link roots are rejected because notification paths cannot be
