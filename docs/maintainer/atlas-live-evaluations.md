@@ -58,9 +58,18 @@ Use the evaluation program at three cadences:
 
 | Cadence | Evidence | Purpose |
 | --- | --- | --- |
-| Pull request | Deterministic runner, verifier, golden, mutant, and rendered-Project checks | Reject contract and harness regressions without provider cost. |
+| Pull request | Fast deterministic runner, verifier unit, and rendered-Project checks | Reject framework regressions without provider cost. |
+| Evaluation-surface pull request | Golden, alternate, mutant, and hidden behavior calibration | Reject contract and harness regressions where those checks provide direct value. |
 | Provider smoke | Fresh sessions over the smallest release-critical tier | Detect tool-discovery and agent-behavior regressions early. |
 | Release benchmark | Repeated paired trials over the promoted portfolio | Publish reliability, per-capability outcomes, failure classes, and treatment attribution. |
+
+The `verifier calibration` workflow runs when a pull request changes Atlas integration, scenario, template, or module inputs. Maintainers can also start it manually. The ordinary framework integration profile deliberately excludes these exhaustive fixture permutations:
+
+```sh
+forj test:integration framework --framework-profile=verifiercalibration --shard=1/24
+```
+
+Fixture calibration proves that reviewed examples are classified correctly. Provider smoke and release benchmarks remain the evidence that an agent can discover and complete the task.
 
 A report should preserve the denominator and show more than one aggregate percentage. Retain per-evaluation results, capability coverage, failure taxonomy, exact Atlas, GoForj, model, agent, catalog, and backend identities, plus the backend's trust limitations. If corrected contracts or new evaluations have not been rerun, mark them unmeasured rather than carrying an old pass forward.
 
