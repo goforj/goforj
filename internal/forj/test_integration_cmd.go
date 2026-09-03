@@ -39,7 +39,7 @@ type TestIntegrationCmd struct {
 	Shard string `help:"Run one framework shard in N/M form (for example 1/6)"`
 
 	// FrameworkProfile chooses the integration-only build-tag layer to discover and run.
-	FrameworkProfile string `help:"Framework integration profile" default:"integration" enum:"integration,lighthouse,multiapp"`
+	FrameworkProfile string `help:"Framework integration profile" default:"integration" enum:"integration,lighthouse,multiapp,verifiercalibration"`
 
 	// Silent suppresses shadow-printed commands.
 	Silent bool `help:"Suppress command output" short:"s"`
@@ -212,6 +212,8 @@ func frameworkProfileTags(profile string) (string, string, error) {
 		return "integration", "integration,lighthouse", nil
 	case "multiapp":
 		return "integration", "integration,multiapp", nil
+	case "verifiercalibration":
+		return "integration", "integration,verifiercalibration", nil
 	default:
 		return "", "", fmt.Errorf("unknown framework integration profile %q", profile)
 	}
