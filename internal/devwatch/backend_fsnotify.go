@@ -31,6 +31,7 @@ func (b *devWatchFSNotifyBackend) start(
 	ctx context.Context,
 	roots []string,
 	shouldDescend func(string) bool,
+	shouldTrackFile func(string) bool,
 ) (devWatchBackendStart, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -50,7 +51,7 @@ func (b *devWatchFSNotifyBackend) start(
 			_ = watcher.Close()
 			return devWatchBackendStart{}, err
 		}
-		if err := addDevWatchDirectories(ctx, watcher, root, true, shouldDescend, watched, knownDirectories, knownFiles, nil); err != nil {
+		if err := addDevWatchDirectories(ctx, watcher, root, true, shouldDescend, shouldTrackFile, watched, knownDirectories, knownFiles, nil); err != nil {
 			_ = watcher.Close()
 			return devWatchBackendStart{}, err
 		}
@@ -70,6 +71,7 @@ func (b *devWatchFSNotifyBackend) start(
 		watcher,
 		roots,
 		shouldDescend,
+		shouldTrackFile,
 		watched,
 		recoveryDirectories,
 		knownDirectories,
@@ -105,6 +107,7 @@ func runDevWatchFSNotifyBackend(
 	watcher *fsnotify.Watcher,
 	roots []string,
 	shouldDescend func(string) bool,
+	shouldTrackFile func(string) bool,
 	watched map[string]struct{},
 	recoveryDirectories map[string]struct{},
 	knownDirectories map[string]struct{},
@@ -135,6 +138,7 @@ func runDevWatchFSNotifyBackend(
 				watcher,
 				roots,
 				shouldDescend,
+				shouldTrackFile,
 				watched,
 				recoveryDirectories,
 				knownDirectories,
@@ -166,6 +170,7 @@ func runDevWatchFSNotifyBackend(
 				watcher,
 				roots,
 				shouldDescend,
+				shouldTrackFile,
 				watched,
 				recoveryDirectories,
 				knownDirectories,
@@ -185,6 +190,7 @@ func handleDevWatchFSNotifyEvent(
 	watcher *fsnotify.Watcher,
 	roots []string,
 	shouldDescend func(string) bool,
+	shouldTrackFile func(string) bool,
 	watched map[string]struct{},
 	recoveryDirectories map[string]struct{},
 	knownDirectories map[string]struct{},
@@ -226,6 +232,7 @@ func handleDevWatchFSNotifyEvent(
 			absolutePath,
 			isDevWatchRoot(roots, absolutePath),
 			shouldDescend,
+			shouldTrackFile,
 			watched,
 			knownDirectories,
 			knownFiles,
@@ -253,7 +260,7 @@ func handleDevWatchFSNotifyEvent(
 		refreshDevWatchFSNotifyCoverage(ctx, roots, watched, updates, state)
 	}
 	if !isDirectory && belongsToRoot {
-		if operation&(OpCreate|OpWrite) != 0 {
+		if operation&(OpCreate|OpWrite) != 0 && shouldTrackFile(absolutePath) {
 			knownFiles[absolutePath] = struct{}{}
 		}
 		if operation&(OpRemove|OpRename) != 0 {
@@ -276,6 +283,7 @@ func retryDevWatchFSNotifyCoverage(
 	watcher *fsnotify.Watcher,
 	roots []string,
 	shouldDescend func(string) bool,
+	shouldTrackFile func(string) bool,
 	watched map[string]struct{},
 	recoveryDirectories map[string]struct{},
 	knownDirectories map[string]struct{},
@@ -303,6 +311,7 @@ func retryDevWatchFSNotifyCoverage(
 			root,
 			true,
 			shouldDescend,
+			shouldTrackFile,
 			watched,
 			knownDirectories,
 			knownFiles,
@@ -425,6 +434,7 @@ func addDevWatchDirectories(
 	root string,
 	requiredRoot bool,
 	shouldDescend func(string) bool,
+	shouldTrackFile func(string) bool,
 	watched map[string]struct{},
 	knownDirectories map[string]struct{},
 	knownFiles map[string]struct{},
@@ -443,6 +453,9 @@ func addDevWatchDirectories(
 		}
 		currentPath = filepath.Clean(currentPath)
 		if !entry.IsDir() {
+			if !shouldTrackFile(currentPath) {
+				return nil
+			}
 			_, alreadyKnown := knownFiles[currentPath]
 			knownFiles[currentPath] = struct{}{}
 			if discoveredFiles != nil && !alreadyKnown {
