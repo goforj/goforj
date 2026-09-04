@@ -218,10 +218,15 @@ jobs:
           do
             jq -e '(.components // []) | length > 0' "$bill" >/dev/null
           done
-          expected="$((
-            $(find . -name go.mod -not -path './.git/*' -not -path '*/node_modules/*' | wc -l) +
-            $(find . -name package-lock.json -not -path './.git/*' -not -path '*/node_modules/*' -exec jq -e '(.packages // {}) | length > 1' {} \; | grep -c true || true)
-          ))"
+          npm_expected=0
+          while IFS= read -r lockfile
+          do
+            if jq -e '(.packages // {}) | length > 1' "$lockfile" >/dev/null
+            then
+              npm_expected="$((npm_expected + 1))"
+            fi
+          done < <(find . -name package-lock.json -not -path './.git/*' -not -path '*/node_modules/*' | sort)
+          expected="$(($(find . -name go.mod -not -path './.git/*' -not -path '*/node_modules/*' | wc -l) + npm_expected))"
           actual="$(find sbom -name '*.cdx.json' | wc -l)"
           test "$actual" -eq "$expected"
           jq -e 'any(.components[]?; .name == "github.com/testcontainers/testcontainers-go")' sbom/go-integration.cdx.json >/dev/null
