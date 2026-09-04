@@ -93,7 +93,7 @@ jobs:
               awk '$1 == "image:" { print $2 }' templates/docker-compose.yml.tmpl templates/containers/developer-services/*.yml.tmpl
             } \
               | sort -u \
-              | jq -Rn '[inputs | select(length > 0) | {ref: ., name: (gsub("[^A-Za-z0-9._-]"; "-"))}] | {include: .}'
+              | jq -Rnc '[inputs | select(length > 0) | {ref: ., name: (gsub("[^A-Za-z0-9._-]"; "-"))}] | {include: .}'
           )"
           jq -e '.include | length > 0 and all(.[]; .ref | contains(":"))' <<<"$matrix" >/dev/null
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
