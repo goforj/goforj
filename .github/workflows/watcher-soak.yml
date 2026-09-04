@@ -18,10 +18,10 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -42,7 +42,7 @@ jobs:
         run: go test ./internal/forj -run '^$' -bench '^BenchmarkDevWatcherBuildGate' -benchmem -count=10 | tee watcher-benchmarks.txt
 
       - name: retain benchmark history
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: watcher-benchmarks-${{ github.run_id }}
           path: watcher-benchmarks.txt
