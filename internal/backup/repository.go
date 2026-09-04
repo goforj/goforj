@@ -43,6 +43,11 @@ func (r StorageRepository) Upload(ctx context.Context, name string, source strin
 	if err != nil {
 		return err
 	}
+	sourceRoot, err := os.OpenRoot(source)
+	if err != nil {
+		return fmt.Errorf("open backup repository source: %w", err)
+	}
+	defer sourceRoot.Close()
 	return filepath.Walk(source, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -53,11 +58,11 @@ func (r StorageRepository) Upload(ctx context.Context, name string, source strin
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("unsupported backup repository file %s", path)
 		}
-		data, err := os.ReadFile(path)
+		relative, err := filepath.Rel(source, path)
 		if err != nil {
 			return err
 		}
-		relative, err := filepath.Rel(source, path)
+		data, err := sourceRoot.ReadFile(relative)
 		if err != nil {
 			return err
 		}
@@ -75,9 +80,14 @@ func (r StorageRepository) Download(ctx context.Context, name string, destinatio
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(destination, 0o755); err != nil {
+	if err := os.MkdirAll(destination, 0o700); err != nil {
 		return err
 	}
+	destinationRoot, err := os.OpenRoot(destination)
+	if err != nil {
+		return fmt.Errorf("open backup repository destination: %w", err)
+	}
+	defer destinationRoot.Close()
 	return binding.disk.Walk(binding.prefix, func(entry storage.Entry) error {
 		if entry.IsDir {
 			return nil
@@ -87,14 +97,18 @@ func (r StorageRepository) Download(ctx context.Context, name string, destinatio
 		if err != nil {
 			return err
 		}
+		relativePath, err := filepath.Rel(destination, path)
+		if err != nil {
+			return err
+		}
 		data, err := binding.disk.Get(entry.Path)
 		if err != nil {
 			return fmt.Errorf("download %s: %w", entry.Path, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := destinationRoot.MkdirAll(filepath.Dir(relativePath), 0o700); err != nil {
 			return err
 		}
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := destinationRoot.WriteFile(relativePath, data, 0o600); err != nil {
 			return err
 		}
 		return nil

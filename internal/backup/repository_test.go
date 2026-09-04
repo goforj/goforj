@@ -48,6 +48,13 @@ func TestStorageRepositoryRoundTripAndListing(t *testing.T) {
 	if string(data) != "dump" {
 		t.Fatalf("downloaded artifact = %q", data)
 	}
+	info, err := os.Stat(filepath.Join(destination, "databases", "default.dump"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("downloaded artifact mode = %o, want 600", got)
+	}
 	if err := repository.Delete(context.Background(), "backup-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -57,5 +64,28 @@ func TestStorageRepositoryRoundTripAndListing(t *testing.T) {
 	}
 	if len(names) != 0 {
 		t.Fatalf("repository names after delete = %#v", names)
+	}
+}
+
+// TestStorageRepositoryDownloadContainsDestinationSymlinks verifies remote object names cannot write through an escaping local link.
+func TestStorageRepositoryDownloadContainsDestinationSymlinks(t *testing.T) {
+	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := disk.Put("backups/backup-1/linked/escaped.txt", []byte("blocked")); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	destination := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(destination, "linked")); err != nil {
+		t.Skipf("create destination symlink: %v", err)
+	}
+	repository := StorageRepository{Disk: disk, Prefix: "backups"}
+	if err := repository.Download(context.Background(), "backup-1", destination); err == nil {
+		t.Fatal("expected destination symlink rejection")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "escaped.txt")); !os.IsNotExist(err) {
+		t.Fatalf("outside file stat error = %v, want not found", err)
 	}
 }

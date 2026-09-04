@@ -12,6 +12,18 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// storageArchiveMaxEntries prevents archives from creating an unbounded number of filesystem objects.
+const storageArchiveMaxEntries = 100_000
+
+// storageArchiveMaxExpandedBytes leaves large application backups practical while bounding decompression work.
+const storageArchiveMaxExpandedBytes int64 = 64 << 30
+
+// archiveRestoreLimits bounds work accepted from a compressed storage artifact.
+type archiveRestoreLimits struct {
+	entries int
+	bytes   int64
+}
+
 // ArchiveDirectory creates a zstd-compressed tar archive of a local storage directory.
 func ArchiveDirectory(source string, artifact string) (resultErr error) {
 	info, err := os.Stat(source)
@@ -24,7 +36,7 @@ func ArchiveDirectory(source string, artifact string) (resultErr error) {
 	if _, err := artifactPath(artifact); err != nil {
 		return err
 	}
-	file, err := os.Create(artifact)
+	file, err := os.OpenFile(artifact, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("create storage artifact: %w", err)
 	}
@@ -42,6 +54,11 @@ func ArchiveDirectory(source string, artifact string) (resultErr error) {
 	tarWriter := tar.NewWriter(zstdWriter)
 	defer recordClose("close storage archive", tarWriter.Close)
 	root := filepath.Clean(source)
+	rootDirectory, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("open storage source root: %w", err)
+	}
+	defer recordClose("close storage source root", rootDirectory.Close)
 	err = filepath.Walk(root, func(path string, entry os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -64,7 +81,7 @@ func ArchiveDirectory(source string, artifact string) (resultErr error) {
 		if !entry.Mode().IsRegular() {
 			return nil
 		}
-		input, err := os.Open(path)
+		input, err := rootDirectory.Open(relative)
 		if err != nil {
 			return err
 		}
@@ -83,6 +100,14 @@ func ArchiveDirectory(source string, artifact string) (resultErr error) {
 
 // RestoreDirectoryArchive extracts a local storage archive into a directory.
 func RestoreDirectoryArchive(artifact string, target string) error {
+	return restoreDirectoryArchive(artifact, target, archiveRestoreLimits{
+		entries: storageArchiveMaxEntries,
+		bytes:   storageArchiveMaxExpandedBytes,
+	})
+}
+
+// restoreDirectoryArchive extracts a local storage archive within explicit resource limits.
+func restoreDirectoryArchive(artifact string, target string, limits archiveRestoreLimits) error {
 	if _, err := safeArtifactPath(filepath.Dir(artifact), filepath.Base(artifact)); err != nil {
 		return err
 	}
@@ -104,6 +129,13 @@ func RestoreDirectoryArchive(artifact string, target string) error {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
+	targetDirectory, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("open storage restore root: %w", err)
+	}
+	defer targetDirectory.Close()
+	entries := 0
+	var expandedBytes int64
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -112,12 +144,24 @@ func RestoreDirectoryArchive(artifact string, target string) error {
 		if err != nil {
 			return fmt.Errorf("read storage archive: %w", err)
 		}
+		entries++
+		if entries > limits.entries {
+			return fmt.Errorf("storage archive exceeds %d entries", limits.entries)
+		}
+		if header.Size < 0 || header.Size > limits.bytes-expandedBytes {
+			return fmt.Errorf("storage archive exceeds %d expanded bytes", limits.bytes)
+		}
+		expandedBytes += header.Size
 		path, err := safeExtractPath(root, header.Name)
 		if err != nil {
 			return err
 		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
 		if header.FileInfo().IsDir() {
-			if err := os.MkdirAll(path, 0o755); err != nil {
+			if err := targetDirectory.MkdirAll(relative, 0o755); err != nil {
 				return err
 			}
 			continue
@@ -125,10 +169,10 @@ func RestoreDirectoryArchive(artifact string, target string) error {
 		if !header.FileInfo().Mode().IsRegular() {
 			return fmt.Errorf("unsupported storage archive entry %s", header.Name)
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := targetDirectory.MkdirAll(filepath.Dir(relative), 0o755); err != nil {
 			return err
 		}
-		output, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, header.FileInfo().Mode().Perm())
+		output, err := targetDirectory.OpenFile(relative, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, header.FileInfo().Mode().Perm())
 		if err != nil {
 			return err
 		}

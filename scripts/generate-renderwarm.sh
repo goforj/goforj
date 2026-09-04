@@ -214,6 +214,9 @@ fi
   done < "$imports_file"
   # httpx v1 selects an older godump, so warm builds pin the release validated by the host module.
   echo "github.com/goforj/godump"
+  # Template dependencies can otherwise select transitive releases with known archive and TLS defects.
+  echo "github.com/moby/go-archive"
+  echo "github.com/refraction-networking/utls"
 } | sort -u > "$modules_file"
 
 mkdir -p "$out_dir"

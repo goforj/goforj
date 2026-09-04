@@ -1,7 +1,7 @@
 FROM debian:trixie
 
 # Versions (override at build time if desired)
-ARG GO_VERSION=1.25.0
+ARG GO_VERSION=1.26.0
 
 # Install base deps + Docker Engine dependencies
 RUN apt-get update && apt-get install -y \

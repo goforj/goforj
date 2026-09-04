@@ -1,0 +1,4 @@
+# These advisories affect Moby daemon authorization and plugin validation.
+# GoForj imports only Docker client packages and does not embed or run the daemon.
+GO-2026-4883
+GO-2026-4887

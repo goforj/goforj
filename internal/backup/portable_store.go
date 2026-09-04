@@ -12,11 +12,11 @@ func WritePortableArchive(dir string, archive PortableArchive) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create portable backup directory: %w", err)
 	}
 	path := filepath.Join(dir, "portable.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write portable archive: %w", err)
 	}
 	fingerprint, err := Checksum(path)

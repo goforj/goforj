@@ -41,7 +41,7 @@ func (s *Service) Create(ctx context.Context, root string, resourceName string) 
 		return CreatedBackup{}, err
 	}
 	dir := filepath.Join(root, "backup-"+time.Now().UTC().Format("20060102T150405Z"))
-	if err := os.MkdirAll(filepath.Join(dir, "databases"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "databases"), 0o700); err != nil {
 		return CreatedBackup{}, fmt.Errorf("create backup set: %w", err)
 	}
 	manifest := Manifest{Version: 1, CreatedAt: time.Now().UTC()}
@@ -96,10 +96,10 @@ func (s *Service) Create(ctx context.Context, root string, resourceName string) 
 			}
 			artifactName := storage.Name + ".objects.json"
 			artifact := filepath.Join(dir, "storage", artifactName)
-			if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(artifact), 0o700); err != nil {
 				return CreatedBackup{}, err
 			}
-			if err := os.WriteFile(artifact, data, 0o644); err != nil {
+			if err := os.WriteFile(artifact, data, 0o600); err != nil {
 				return CreatedBackup{}, fmt.Errorf("write %s object manifest: %w", selector, err)
 			}
 			fingerprint, err := Checksum(artifact)

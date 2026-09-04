@@ -1,5 +1,8 @@
 name: verifier calibration
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   pull_request:
@@ -18,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.26"
   GOPRIVATE: "github.com/goforj/*"
   GONOPROXY: "none"
   WIRE_INSTALL_TARGET: "github.com/goforj/wire/cmd/wire@v1.2.0"
@@ -35,10 +38,10 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: set up go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
