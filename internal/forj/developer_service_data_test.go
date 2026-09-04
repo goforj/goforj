@@ -222,7 +222,7 @@ func TestDeveloperServiceDataContracts(t *testing.T) {
 			want: expectedService{
 				image:       "axllent/mailpit:v1.30.4",
 				profiles:    []string{"mailpit"},
-				ports:       []string{"${IP_ADDRESS:-${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}}:${MAILPIT_SMTP_PORT:-1025}:1025", "${IP_ADDRESS:-${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}}:${MAILPIT_HTTP_PORT:-8025}:8025"},
+				ports:       []string{"${IP_ADDRESS:-127.0.0.1}:${MAILPIT_SMTP_PORT:-1025}:1025", "${IP_ADDRESS:-127.0.0.1}:${MAILPIT_HTTP_PORT:-8025}:8025"},
 				environment: []string{"TZ=${TZ:-UTC}"},
 			},
 		},
@@ -231,7 +231,7 @@ func TestDeveloperServiceDataContracts(t *testing.T) {
 			want: expectedService{
 				image:        "victoriametrics/victoria-metrics:v1.120.0",
 				profiles:     []string{"victoriametrics", "grafana"},
-				ports:        []string{"${IP_ADDRESS:-${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}}:${OBSERVABILITY_VM_PORT:-8428}:8428"},
+				ports:        []string{"${IP_ADDRESS:-127.0.0.1}:${OBSERVABILITY_VM_PORT:-8428}:8428"},
 				volumes:      []string{"victoriametrics:/victoria-metrics-data"},
 				namedVolumes: []string{"victoriametrics"},
 				environment:  []string{"TZ=${TZ:-UTC}"},
@@ -243,7 +243,7 @@ func TestDeveloperServiceDataContracts(t *testing.T) {
 			want: expectedService{
 				image:        "grafana/grafana:12.0.2",
 				profiles:     []string{"grafana"},
-				ports:        []string{"${IP_ADDRESS:-${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}}:${GRAFANA_PORT:-13001}:3000"},
+				ports:        []string{"${IP_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-13001}:3000"},
 				volumes:      []string{"grafana:/var/lib/grafana"},
 				namedVolumes: []string{"grafana"},
 				environment: []string{
@@ -389,7 +389,7 @@ func TestDeveloperServiceDataConditionalExtensions(t *testing.T) {
 	if !reflect.DeepEqual(grafanaService.Profiles, []string{"grafana"}) ||
 		!reflect.DeepEqual(grafanaService.DependsOn, []string{"victoriametrics"}) ||
 		!reflect.DeepEqual(grafanaService.SecurityOptions, []string{"no-new-privileges:true"}) ||
-		!reflect.DeepEqual(grafanaService.Ports, []string{"${IP_ADDRESS:-${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}}:${GRAFANA_PORT:-13001}:3000"}) ||
+		!reflect.DeepEqual(grafanaService.Ports, []string{"${IP_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-13001}:3000"}) ||
 		!reflect.DeepEqual(grafanaService.Volumes, []string{"grafana:/var/lib/grafana"}) {
 		t.Fatalf("component Grafana service contract = %#v", grafanaService)
 	}

@@ -27,7 +27,7 @@ services:
       args:
         - INNODB_BUFFER_POOL_SIZE=${INNODB_BUFFER_POOL_SIZE:-512MB}
     ports:
-      - ${IP_ADDRESS:-${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}}:${DB_MYSQL_PORT:-${DB_PORT:-3306}}:3306
+      - ${IP_ADDRESS:-127.0.0.1}:${DB_MYSQL_PORT:-${DB_PORT:-3306}}:3306
     volumes:
       - mariadb:/var/lib/mysql
     environment:
@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
     image: postgres:16
     ports:
-      - ${IP_ADDRESS:-${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}}:${DB_POSTGRES_PORT:-${DB_PORT:-5432}}:5432
+      - ${IP_ADDRESS:-127.0.0.1}:${DB_POSTGRES_PORT:-${DB_PORT:-5432}}:5432
     volumes:
       - postgres:/var/lib/postgresql/data
     environment:
