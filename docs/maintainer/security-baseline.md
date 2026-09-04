@@ -35,7 +35,7 @@ The repositories have different risk profiles:
 
 PR #109 establishes the first repository-local baseline for `goforj`. The other repositories do not yet inherit that workflow or dependency configuration.
 
-The 2026-09-04 review actively scanned every repository checkout with dependency manifests using `govulncheck -test ./...` and production npm audits. The current PR branch has separate clean Go and npm gates, so its results supersede the older `goforj` workspace checkout included in that inventory. The `.github` and `docs` repositories were reviewed from local checkouts, and the private `demo-repository` workflows were reviewed through GitHub. Historical secret scanning remains incomplete across sibling repositories. This is a failed-to-scan result, not evidence that those histories are clean.
+The 2026-09-04 review actively scanned every repository checkout with dependency manifests using `govulncheck -test ./...` and production npm audits. The current PR branch has separate clean Go and npm gates, so its results supersede the older `goforj` workspace checkout included in that inventory. The `.github` and `docs` repositories were reviewed from local checkouts, and the private `demo-repository` was reviewed through a temporary authenticated clone. Full-history Gitleaks scans found no unaccepted secrets in `goforj` or any in-scope sibling repository. `ship` and `harbor` were excluded from the sibling remediation pass by request.
 
 GitHub reported 221 open Dependabot alerts on the `goforj` default branch during this review: 4 critical, 97 high, 103 moderate, and 17 low. The review token could not read alert details, so an administrator must reconcile that queue against the current branch scans, remove stale alerts, and assign any remaining findings. A passing pull request scan does not by itself close default-branch alerts.
 
@@ -45,8 +45,7 @@ GitHub reported 221 open Dependabot alerts on the `goforj` default branch during
 | Production npm findings | The `docs`, `ship`, and `harbor` frontends | Update lockfiles at their authoritative source, regenerate checked-in output, and confirm the generated application is clean |
 | No reachable Go findings in the active scan | `collection`, `console`, `crypt`, `env`, `execx`, `godump`, `mail`, `metrics`, `null`, `scheduler`, `str`, `wire` | Adopt recurring scans so this point-in-time result does not become stale |
 | Go modules without analyzable packages | Documentation, example, or integration modules in `cache`, `collection`, `events`, `mail`, `metrics`, and `queue` | Record these as not applicable or add a buildable validation surface; do not report them as clean scans |
-| No Go or npm dependency manifest | `.github`, `demo-repository` | Maintain workflow supply-chain controls and include each repository in full-history secret scanning |
-| Not actively scanned | All sibling Git histories | Complete full-history secret scans before claiming ecosystem-wide coverage |
+| No Go or npm dependency manifest | `.github`, `demo-repository` | Maintain workflow supply-chain controls and recurring full-history secret scanning |
 
 Finding counts are triage inputs, not severity by themselves. Optional drivers, examples, benchmarks, generated applications, and test dependencies have different deployment exposure, but each published or generated surface still needs an explicit disposition.
 
