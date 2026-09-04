@@ -202,15 +202,25 @@ func (r StorageRepository) Delete(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	return binding.disk.Walk(binding.prefix, func(entry storage.Entry) error {
+	objects := []string{}
+	if err := binding.disk.Walk(binding.prefix, func(entry storage.Entry) error {
 		if entry.IsDir {
 			return nil
 		}
 		if _, err := repositoryRelativePath(binding.prefix, entry.Path); err != nil {
 			return err
 		}
-		return binding.disk.Delete(entry.Path)
-	})
+		objects = append(objects, entry.Path)
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, object := range objects {
+		if err := binding.disk.Delete(object); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // bound validates repository state and returns a context-bound storage handle and path.

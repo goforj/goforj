@@ -218,6 +218,29 @@ func TestStorageRepositoryDeleteRejectsEscapingListings(t *testing.T) {
 	}
 }
 
+// TestStorageRepositoryDeleteValidatesEveryObjectBeforeDeletion verifies a late invalid key cannot leave a partial deletion.
+func TestStorageRepositoryDeleteValidatesEveryObjectBeforeDeletion(t *testing.T) {
+	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted := []string{}
+	repository := StorageRepository{Disk: repositorySizeStorage{
+		Storage: disk,
+		entries: []storage.Entry{
+			{Path: "backups/backup-1/manifest.json", Size: 2},
+			{Path: "backups/backup-1/../victim/manifest.json", Size: 2},
+		},
+		deleted: &deleted,
+	}, Prefix: "backups"}
+	if err := repository.Delete(context.Background(), "backup-1"); err == nil {
+		t.Fatal("expected escaping repository listing rejection")
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("deleted objects = %#v, want none", deleted)
+	}
+}
+
 // TestStorageRepositoryDeleteRejectsInvalidObjectPaths verifies destructive calls reject every unsafe key form.
 func TestStorageRepositoryDeleteRejectsInvalidObjectPaths(t *testing.T) {
 	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})

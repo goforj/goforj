@@ -179,6 +179,7 @@ jobs:
 
       - name: generate Go SBOMs
         run: |
+          set -euo pipefail
           mkdir -p sbom
           go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0
           bash scripts/generate-renderwarm.sh
@@ -192,11 +193,29 @@ jobs:
               name="root"
             fi
             name="$(printf '%s' "$name" | tr '/.' '--')"
-            (cd "$directory" && cyclonedx-gomod mod -test -json -licenses -noserial -notimestamp -output "$GITHUB_WORKSPACE/sbom/go-$name.cdx.json" .)
+            module_path="$(cd "$directory" && GOWORK=off go list -m -f '{{.Path}}')"
+            package_names="$(cd "$directory" && GOWORK=off go list -f '{{.Name}}' ./...)"
+            component_type="library"
+            if grep -Fqx main <<<"$package_names"
+            then
+              component_type="application"
+            fi
+            output="$GITHUB_WORKSPACE/sbom/go-$name.cdx.json"
+            (cd "$directory" && cyclonedx-gomod mod -test -json -type "$component_type" -licenses -noserial -notimestamp -output "$output" .)
+            jq -e --arg module_path "$module_path" --arg component_type "$component_type" '
+              .bomFormat == "CycloneDX" and
+              .metadata.component.name == $module_path and
+              .metadata.component.type == $component_type and
+              (.metadata.component.purl | startswith("pkg:golang/" + $module_path + "?")) and
+              (.components | type == "array") and
+              (.components | length > 0) and
+              all(.components[]?; .name != ".." and (.purl // "" | contains("pkg:golang/..") | not))
+            ' "$output" >/dev/null
           done < <(find . -name go.mod -not -path './.git/*' -not -path '*/node_modules/*' | sort)
 
       - name: generate npm SBOMs
         run: |
+          set -euo pipefail
           while IFS= read -r lockfile
           do
             directory="$(dirname "$lockfile")"
@@ -205,18 +224,28 @@ jobs:
               continue
             fi
             name="$(printf '%s' "$directory" | sed 's#^\.$#root#; s#[/.]#-#g')"
+            output="$PWD/sbom/npm-$name.cdx.json"
+            package_name="$(jq -er '.packages[""].name // .name' "$lockfile")"
             npx --yes @cyclonedx/cyclonedx-npm@6.0.1 \
               --package-lock-only \
               --output-reproducible \
-              --output-file "$PWD/sbom/npm-$name.cdx.json" \
+              --output-file "$output" \
               "$directory/package.json"
+            jq -e --arg package_name "$package_name" '
+              .bomFormat == "CycloneDX" and
+              .metadata.component.name == $package_name and
+              .metadata.component.type == "application" and
+              (.components | type == "array") and
+              (.components | length > 0)
+            ' "$output" >/dev/null
           done < <(find . -name package-lock.json -not -path './.git/*' -not -path '*/node_modules/*' | sort)
 
       - name: verify SBOM coverage
         run: |
+          set -euo pipefail
           for bill in sbom/*.cdx.json
           do
-            jq -e '(.components // []) | length > 0' "$bill" >/dev/null
+            jq -e '.bomFormat == "CycloneDX" and ((.components // []) | length > 0)' "$bill" >/dev/null
           done
           npm_expected=0
           while IFS= read -r lockfile
