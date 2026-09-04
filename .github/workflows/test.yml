@@ -242,6 +242,7 @@ jobs:
       - name: seed go caches
         run: |
           bash scripts/generate-renderwarm.sh
+          git diff --exit-code -- tools/renderwarm/go.mod tools/renderwarm/go.sum tools/renderwarm/main.go
           go mod download
           go install "$WIRE_INSTALL_TARGET"
           go install ./cmd/forj

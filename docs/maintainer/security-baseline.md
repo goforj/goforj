@@ -35,17 +35,18 @@ The repositories have different risk profiles:
 
 PR #109 establishes the first repository-local baseline for `goforj`. The other repositories do not yet inherit that workflow or dependency configuration.
 
-The 2026-09-04 review actively scanned every available local checkout: 101 Go modules across 22 repositories with `govulncheck -test ./...`, plus all 11 npm lockfiles with a production dependency audit. The current PR branch has separate clean Go and npm gates, so its results supersede the older `goforj` workspace checkout included in that inventory. `.github`, `docs`, and `demo-repository` were not available locally and remain remote-only review gaps. Historical secret scanning could not be completed across sibling repositories because the review environment did not have Gitleaks installed. This is a failed-to-scan result, not evidence that those histories are clean.
+The 2026-09-04 review actively scanned every repository checkout with dependency manifests using `govulncheck -test ./...` and production npm audits. The current PR branch has separate clean Go and npm gates, so its results supersede the older `goforj` workspace checkout included in that inventory. The `.github` and `docs` repositories were reviewed from local checkouts, and the private `demo-repository` workflows were reviewed through GitHub. Historical secret scanning remains incomplete across sibling repositories. This is a failed-to-scan result, not evidence that those histories are clean.
 
 GitHub reported 221 open Dependabot alerts on the `goforj` default branch during this review: 4 critical, 97 high, 103 moderate, and 17 low. The review token could not read alert details, so an administrator must reconcile that queue against the current branch scans, remove stale alerts, and assign any remaining findings. A passing pull request scan does not by itself close default-branch alerts.
 
 | Result | Repositories | Required response |
 | --- | --- | --- |
-| Reachable Go findings | `atlas`, `cache`, `events`, `harbor`, `httpx`, `queue`, `ship`, `storage`, `web` | Triage each advisory in its owning repository, update reachable dependencies, and use only scoped, expiring exceptions for demonstrated non-applicability |
-| Production npm findings | The `ship` frontend, the `harbor` frontend, and the cached docs frontend under `atlas` | Update lockfiles at their authoritative source, regenerate checked-in output, and confirm the generated application is clean |
+| Reachable Go findings | `atlas`, `cache`, `docs`, `events`, `harbor`, `httpx`, `queue`, `ship`, `storage`, `web` | Triage each advisory in its owning repository, update reachable dependencies, and use only scoped, expiring exceptions for demonstrated non-applicability |
+| Production npm findings | The `docs`, `ship`, and `harbor` frontends | Update lockfiles at their authoritative source, regenerate checked-in output, and confirm the generated application is clean |
 | No reachable Go findings in the active scan | `collection`, `console`, `crypt`, `env`, `execx`, `godump`, `mail`, `metrics`, `null`, `scheduler`, `str`, `wire` | Adopt recurring scans so this point-in-time result does not become stale |
 | Go modules without analyzable packages | Documentation, example, or integration modules in `cache`, `collection`, `events`, `mail`, `metrics`, and `queue` | Record these as not applicable or add a buildable validation surface; do not report them as clean scans |
-| Not actively scanned | `.github`, `docs`, `demo-repository`, and all sibling Git histories | Complete remote repository and full-history secret scans before claiming ecosystem-wide coverage |
+| No Go or npm dependency manifest | `.github`, `demo-repository` | Maintain workflow supply-chain controls and include each repository in full-history secret scanning |
+| Not actively scanned | All sibling Git histories | Complete full-history secret scans before claiming ecosystem-wide coverage |
 
 Finding counts are triage inputs, not severity by themselves. Optional drivers, examples, benchmarks, generated applications, and test dependencies have different deployment exposure, but each published or generated surface still needs an explicit disposition.
 
@@ -61,6 +62,12 @@ Finding counts are triage inputs, not severity by themselves. Optional drivers, 
 The container gate blocks fixable high and critical findings in the CI test image. Unfixed findings cannot be remediated by this repository, so CI records all high and critical findings as a retained report while the blocking pass ignores only findings with no upstream fix. Maintainers must review that report during dependency updates and convert any longer-lived risk acceptance into a scoped, expiring exception.
 
 Generated Compose image references remain tag-based and therefore mutable. The security workflow inventories every current reference and retains a vulnerability report and SBOM for the resolved image. The remaining digest-pinning and automated-update gap is owned by `@cmilesio` with a target date of 2026-12-04. Until that is complete, release review must compare the resolved image digest with the prior retained inventory.
+
+GoForj releases currently use annotated, unsigned source tags, GitHub Releases do not cover recent tags, and the 14-day CI SBOM artifact is not tied to a release. A tag-triggered workflow must verify the annotated tag and retain release-keyed SBOMs for every discovered module and lockfile. Artifact attestations must cover only artifacts the workflow actually builds. This release-integrity work is owned by `@cmilesio` with a target date of 2026-12-04.
+
+The CI test image currently trusts the Docker apt key downloaded during its build without checking an expected fingerprint, and Docker packages are not version pinned. Fingerprint verification and an explicit package update policy are owned by `@cmilesio` with a target date of 2026-12-04.
+
+Remote backup repositories are trusted operational inputs. Object metadata is bounded before download, but the current storage interface returns whole objects, so a compromised repository can still create memory pressure before the actual size is compared with metadata. A streaming, size-limited storage read contract is owned by `@cmilesio` with a target date of 2027-03-04.
 
 Repository files cannot prove organization settings. An organization administrator must separately verify two-factor authentication enforcement, default workflow token permissions, branch rules, protected tags, private vulnerability reporting, Dependabot alerts, secret scanning, push protection, and code scanning. These settings were not visible to the token used for this assessment and remain unverified until that administrative review is recorded.
 

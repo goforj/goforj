@@ -11,7 +11,7 @@
     environment:
       - TZ=${TZ:-UTC}
     ports:
-      - ${IP_ADDRESS:-0.0.0.0}:${REDIS_PORT:-6379}:6379
+      - ${IP_ADDRESS:-${DEV_SERVICE_IP_ADDRESS:-127.0.0.1}}:${REDIS_PORT:-6379}:6379
     volumes:
       - redis:/data
     networks:

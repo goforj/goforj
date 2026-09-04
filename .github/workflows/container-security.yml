@@ -95,7 +95,14 @@ jobs:
               | sort -u \
               | jq -Rnc '[inputs | select(length > 0) | {ref: ., name: (gsub("[^A-Za-z0-9._-]"; "-"))}] | {include: .}'
           )"
-          jq -e '.include | length > 0 and all(.[]; .ref | contains(":"))' <<<"$matrix" >/dev/null
+          jq -e '
+            .include
+            | length > 0
+              and all(.[];
+                .ref
+                | test("^[A-Za-z0-9][A-Za-z0-9._:/@-]*$")
+              )
+          ' <<<"$matrix" >/dev/null
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   template-images:
@@ -109,10 +116,12 @@ jobs:
     steps:
       - name: pull image
         shell: bash
+        env:
+          IMAGE_REF: ${{ matrix.ref }}
         run: |
           for attempt in 1 2 3
           do
-            if docker pull "${{ matrix.ref }}"
+            if docker pull "$IMAGE_REF"
             then
               exit 0
             fi
@@ -164,6 +173,29 @@ jobs:
 
           while IFS= read -r -d '' source
           do
+            if awk '
+              index($0, "{{") {
+                remainder = $0
+                gsub(/\{\{[^}]*\}\}/, "", remainder)
+                if (remainder !~ /^[[:space:]]*$/) {
+                  print FNR ":" $0
+                  found = 1
+                }
+              }
+              END { exit found }
+            ' "$source"
+            then
+              continue
+            fi
+            echo "inline template content cannot be represented by the container security scan: $source" >&2
+            exit 1
+          done < <(
+            find templates/containers -type f \( -name Dockerfile -o -name 'Dockerfile*.tmpl' \) -print0
+            find templates/containers/developer-services templates/docker-compose.yml.tmpl -type f -name '*.yml.tmpl' -print0
+          )
+
+          while IFS= read -r -d '' source
+          do
             relative="${source#templates/containers/}"
             name="$(printf '%s' "$relative" | tr '/.' '--')"
             destination="$scan_root/dockerfiles/$name"
@@ -192,7 +224,7 @@ jobs:
         run: |
           while IFS= read -r -d '' compose_file
           do
-            if ! docker compose -f "$compose_file" config --no-interpolate --format json \
+            if ! IP_ADDRESS='' DEV_SERVICE_IP_ADDRESS='' docker compose -f "$compose_file" config --format json \
               | jq -e '
                   [
                     .services[]?
@@ -206,6 +238,12 @@ jobs:
                         or any((.volumes // [])[]?;
                           ((.source // "") | contains("docker.sock"))
                           or ((.target // "") | contains("docker.sock"))
+                        )
+                        or any((.ports // [])[]?;
+                          ((.host_ip // "") as $host_ip
+                            | ($host_ip == "::1" or ($host_ip | test("^127([.][0-9]{1,3}){3}$")))
+                            | not
+                          )
                         )
                       )
                   ]

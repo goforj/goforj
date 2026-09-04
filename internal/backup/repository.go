@@ -4,11 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/goforj/str/v2"
 
 	"github.com/goforj/storage"
 )
@@ -101,6 +100,10 @@ func (r StorageRepository) Download(ctx context.Context, name string, destinatio
 		if entry.IsDir {
 			return nil
 		}
+		relative, err := repositoryRelativePath(binding.prefix, entry.Path)
+		if err != nil {
+			return err
+		}
 		entries++
 		if entries > repositoryDownloadMaxEntries {
 			return fmt.Errorf("backup repository exceeds %d files", repositoryDownloadMaxEntries)
@@ -112,7 +115,6 @@ func (r StorageRepository) Download(ctx context.Context, name string, destinatio
 			return fmt.Errorf("backup repository exceeds %d bytes", repositoryDownloadMaxBytes)
 		}
 		downloadedBytes += entry.Size
-		relative := str.Of(entry.Path).TrimPrefix(binding.prefix).TrimPrefix("/").String()
 		if _, err := safeRepositoryExtractPath(destination, relative); err != nil {
 			return err
 		}
@@ -122,7 +124,10 @@ func (r StorageRepository) Download(ctx context.Context, name string, destinatio
 		return err
 	}
 	for _, entry := range objects {
-		relative := str.Of(entry.Path).TrimPrefix(binding.prefix).TrimPrefix("/").String()
+		relative, err := repositoryRelativePath(binding.prefix, entry.Path)
+		if err != nil {
+			return err
+		}
 		path, err := safeRepositoryExtractPath(destination, relative)
 		if err != nil {
 			return err
@@ -156,21 +161,29 @@ func (r StorageRepository) List(ctx context.Context, prefix string) ([]string, e
 	}
 	root := binding.prefix
 	if prefix != "" {
-		root = filepath.ToSlash(filepath.Join(root, prefix))
+		prefix, err = safeRepositoryName(prefix)
+		if err != nil {
+			return nil, err
+		}
+		root = path.Join(root, prefix)
 	}
 	names := map[string]struct{}{}
 	if err := binding.disk.Walk(root, func(entry storage.Entry) error {
-		if entry.IsDir || !strings.HasSuffix(entry.Path, "/manifest.json") {
+		if entry.IsDir {
 			return nil
 		}
-		name := str.Of(entry.Path).
-			TrimPrefix(root).
-			TrimPrefix("/").
-			TrimSuffix("/manifest.json").
-			String()
-		if name != "" {
-			names[name] = struct{}{}
+		relative, err := repositoryRelativePath(root, entry.Path)
+		if err != nil {
+			return err
 		}
+		if !strings.HasSuffix(relative, "/manifest.json") {
+			return nil
+		}
+		name, err := safeRepositoryName(strings.TrimSuffix(relative, "/manifest.json"))
+		if err != nil {
+			return err
+		}
+		names[name] = struct{}{}
 		return nil
 	}); err != nil {
 		return nil, err
@@ -193,6 +206,9 @@ func (r StorageRepository) Delete(ctx context.Context, name string) error {
 		if entry.IsDir {
 			return nil
 		}
+		if _, err := repositoryRelativePath(binding.prefix, entry.Path); err != nil {
+			return err
+		}
 		return binding.disk.Delete(entry.Path)
 	})
 }
@@ -205,11 +221,57 @@ func (r StorageRepository) bound(ctx context.Context, name string) (repositoryBi
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	prefix := str.Of(r.Prefix).Trim().TrimChars("/").String()
+	prefix, err := safeRepositoryPrefix(r.Prefix)
+	if err != nil {
+		return repositoryBinding{}, err
+	}
 	if name != "" {
-		prefix = filepath.ToSlash(filepath.Join(prefix, name))
+		name, err = safeRepositoryName(name)
+		if err != nil {
+			return repositoryBinding{}, err
+		}
+		prefix = path.Join(prefix, name)
 	}
 	return repositoryBinding{disk: r.Disk.WithContext(ctx), prefix: prefix}, nil
+}
+
+// safeRepositoryPrefix normalizes a configured logical key prefix without allowing parent traversal.
+func safeRepositoryPrefix(prefix string) (string, error) {
+	prefix = strings.TrimSpace(prefix)
+	prefix = strings.Trim(prefix, "/")
+	if prefix == "" {
+		return "", nil
+	}
+	if strings.Contains(prefix, "\\") || path.Clean(prefix) != prefix || prefix == "." || strings.HasPrefix(prefix, "../") {
+		return "", fmt.Errorf("invalid backup repository prefix %q", prefix)
+	}
+	return prefix, nil
+}
+
+// safeRepositoryName limits backup names to one logical key segment before destructive operations.
+func safeRepositoryName(name string) (string, error) {
+	if name == "" || strings.TrimSpace(name) != name || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+		return "", fmt.Errorf("invalid backup repository name %q", name)
+	}
+	return name, nil
+}
+
+// repositoryRelativePath requires storage listings to stay below the exact requested logical prefix.
+func repositoryRelativePath(prefix string, entryPath string) (string, error) {
+	if entryPath == "" || strings.Contains(entryPath, "\\") || path.IsAbs(entryPath) || path.Clean(entryPath) != entryPath {
+		return "", fmt.Errorf("invalid backup repository object path %q", entryPath)
+	}
+	relative := entryPath
+	if prefix != "" {
+		if !strings.HasPrefix(entryPath, prefix+"/") {
+			return "", fmt.Errorf("backup repository object %q escapes prefix %q", entryPath, prefix)
+		}
+		relative = strings.TrimPrefix(entryPath, prefix+"/")
+	}
+	if relative == "" || relative == "." || relative == ".." || strings.HasPrefix(relative, "../") {
+		return "", fmt.Errorf("invalid backup repository object path %q", entryPath)
+	}
+	return relative, nil
 }
 
 // safeRepositoryExtractPath prevents a repository object from escaping a local destination.

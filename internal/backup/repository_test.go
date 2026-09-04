@@ -153,11 +153,136 @@ func TestStorageRepositoryDownloadRejectsChangedObjectSize(t *testing.T) {
 	}
 }
 
+// TestStorageRepositoryDownloadRejectsEscapingListings verifies invalid remote keys are rejected before any object is fetched.
+func TestStorageRepositoryDownloadRejectsEscapingListings(t *testing.T) {
+	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{
+		"/backups/backup-1/absolute.dump",
+		`backups/backup-1\escaped.dump`,
+		"backups/backup-1/../victim.dump",
+		"backups/another-backup/victim.dump",
+	}
+	for _, objectPath := range paths {
+		t.Run(objectPath, func(t *testing.T) {
+			fetched := []string{}
+			repository := StorageRepository{Disk: repositorySizeStorage{
+				Storage: disk,
+				entries: []storage.Entry{{Path: objectPath, Size: 1}},
+				fetched: &fetched,
+			}, Prefix: "backups"}
+			if err := repository.Download(context.Background(), "backup-1", t.TempDir()); err == nil {
+				t.Fatal("expected escaping repository listing rejection")
+			}
+			if len(fetched) != 0 {
+				t.Fatalf("fetched objects = %#v, want none", fetched)
+			}
+		})
+	}
+}
+
+// TestStorageRepositoryListRejectsEscapingListings verifies invalid remote keys cannot create misleading backup names.
+func TestStorageRepositoryListRejectsEscapingListings(t *testing.T) {
+	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := StorageRepository{Disk: repositorySizeStorage{
+		Storage: disk,
+		entries: []storage.Entry{{Path: "backups/../victim/manifest.json", Size: 2}},
+	}, Prefix: "backups"}
+	if _, err := repository.List(context.Background(), ""); err == nil {
+		t.Fatal("expected escaping repository listing rejection")
+	}
+}
+
+// TestStorageRepositoryDeleteRejectsEscapingListings verifies untrusted object keys cannot drive deletion outside a backup prefix.
+func TestStorageRepositoryDeleteRejectsEscapingListings(t *testing.T) {
+	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted := []string{}
+	repository := StorageRepository{Disk: repositorySizeStorage{
+		Storage: disk,
+		entries: []storage.Entry{{Path: "backups/backup-1/../victim/manifest.json", Size: 2}},
+		deleted: &deleted,
+	}, Prefix: "backups"}
+	if err := repository.Delete(context.Background(), "backup-1"); err == nil {
+		t.Fatal("expected escaping repository listing rejection")
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("deleted objects = %#v, want none", deleted)
+	}
+}
+
+// TestStorageRepositoryDeleteRejectsInvalidObjectPaths verifies destructive calls reject every unsafe key form.
+func TestStorageRepositoryDeleteRejectsInvalidObjectPaths(t *testing.T) {
+	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{
+		"/backups/backup-1/absolute.dump",
+		`backups/backup-1\escaped.dump`,
+		"backups/backup-1/../victim.dump",
+		"backups/another-backup/victim.dump",
+	}
+	for _, objectPath := range paths {
+		t.Run(objectPath, func(t *testing.T) {
+			deleted := []string{}
+			repository := StorageRepository{Disk: repositorySizeStorage{
+				Storage: disk,
+				entries: []storage.Entry{{Path: objectPath, Size: 1}},
+				deleted: &deleted,
+			}, Prefix: "backups"}
+			if err := repository.Delete(context.Background(), "backup-1"); err == nil {
+				t.Fatal("expected invalid repository path rejection")
+			}
+			if len(deleted) != 0 {
+				t.Fatalf("deleted objects = %#v, want none", deleted)
+			}
+		})
+	}
+}
+
+// TestStorageRepositoryRejectsUnsafeNames verifies callers cannot escape a configured repository prefix.
+func TestStorageRepositoryRejectsUnsafeNames(t *testing.T) {
+	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := StorageRepository{Disk: disk, Prefix: "backups"}
+	for _, name := range []string{"../victim", "nested/victim", `nested\victim`} {
+		if err := repository.Delete(context.Background(), name); err == nil {
+			t.Fatalf("delete name %q succeeded, want rejection", name)
+		}
+	}
+}
+
+// TestStorageRepositoryRejectsUnsafePrefixes verifies configured storage roots cannot traverse logical key boundaries.
+func TestStorageRepositoryRejectsUnsafePrefixes(t *testing.T) {
+	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{".", "../backups", "nested/../backups", `nested\backups`} {
+		repository := StorageRepository{Disk: disk, Prefix: prefix}
+		if _, err := repository.List(context.Background(), ""); err == nil {
+			t.Fatalf("repository prefix %q succeeded, want rejection", prefix)
+		}
+	}
+}
+
 // repositorySizeStorage provides controlled metadata while preserving the rest of a storage implementation.
 type repositorySizeStorage struct {
 	storage.Storage
 	entries []storage.Entry
 	data    map[string][]byte
+	deleted *[]string
+	fetched *[]string
 }
 
 // WithContext preserves controlled metadata while forwarding context binding to the real storage implementation.
@@ -178,8 +303,20 @@ func (s repositorySizeStorage) Walk(_ string, fn func(storage.Entry) error) erro
 
 // Get returns controlled object data when a test needs metadata and contents to diverge.
 func (s repositorySizeStorage) Get(path string) ([]byte, error) {
+	if s.fetched != nil {
+		*s.fetched = append(*s.fetched, path)
+	}
 	if data, ok := s.data[path]; ok {
 		return data, nil
 	}
 	return s.Storage.Get(path)
+}
+
+// Delete records attempted deletions so traversal tests can prove no destructive call was made.
+func (s repositorySizeStorage) Delete(path string) error {
+	if s.deleted != nil {
+		*s.deleted = append(*s.deleted, path)
+		return nil
+	}
+	return s.Storage.Delete(path)
 }
