@@ -254,4 +254,11 @@ mkdir -p "$out_dir"
   echo "func main() {}"
 } > "$out_dir/main.go"
 
+# The checked-in module must be directly consumable by read-only security and
+# inventory tools, not only by the render cache job that previously tidied it.
+(
+  cd "$out_dir"
+  GOWORK=off go mod tidy
+)
+
 echo "generated tools/renderwarm for $(wc -l < "$imports_file" | tr -d ' ') imports"

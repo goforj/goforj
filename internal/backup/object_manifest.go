@@ -72,11 +72,11 @@ func WriteObjectManifest(ctx context.Context, lister ObjectLister, prefix string
 	if err != nil {
 		return ObjectManifest{}, err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := ensurePrivateDirectory(dir); err != nil {
 		return ObjectManifest{}, err
 	}
 	path := filepath.Join(dir, "objects.json")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := writePrivateFile(path, data); err != nil {
 		return ObjectManifest{}, fmt.Errorf("write object manifest: %w", err)
 	}
 	fingerprint, err := Checksum(path)

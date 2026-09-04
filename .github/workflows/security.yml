@@ -17,13 +17,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dependency-review:
+    name: dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
   go-vulnerabilities:
-    name: Go vulnerabilities (${{ matrix.module }})
+    name: Go vulnerabilities (${{ matrix.name }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        module: [".", integration, tools/renderwarm]
+        include:
+          - name: root
+            module: "."
+            tags: ""
+          - name: root integrations
+            module: "."
+            tags: integration,lighthouse,multiapp,verifiercalibration
+          - name: root watcher stress
+            module: "."
+            tags: watcherstress
+          - name: root wire generator
+            module: "."
+            tags: wireinject
+          - name: integration
+            module: integration
+            tags: ""
+          - name: integration backup
+            module: integration
+            tags: integration_backup
+          - name: integration generator
+            module: integration
+            tags: integration_generator
+          - name: render warm
+            module: tools/renderwarm
+            tags: ""
     steps:
       - name: checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -38,7 +75,7 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 
       - name: scan module
-        run: bash scripts/check-vulnerabilities.sh "${{ matrix.module }}"
+        run: bash scripts/check-vulnerabilities.sh "${{ matrix.module }}" "${{ matrix.tags }}"
 
   frontend-vulnerabilities:
     name: frontend vulnerabilities (${{ matrix.directory }})
@@ -109,14 +146,13 @@ jobs:
         run: |
           mkdir -p sbom
           go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0
-          cyclonedx-gomod mod -json -licenses -noserial -notimestamp -output sbom/go-root.cdx.json .
-          (cd integration && cyclonedx-gomod mod -json -licenses -noserial -notimestamp -output "$GITHUB_WORKSPACE/sbom/go-integration.cdx.json" .)
-          (cd tools/renderwarm && cyclonedx-gomod mod -json -licenses -noserial -notimestamp -output "$GITHUB_WORKSPACE/sbom/go-renderwarm.cdx.json" .)
+          cyclonedx-gomod mod -test -json -licenses -noserial -notimestamp -output sbom/go-root.cdx.json .
+          (cd integration && cyclonedx-gomod mod -test -json -licenses -noserial -notimestamp -output "$GITHUB_WORKSPACE/sbom/go-integration.cdx.json" .)
+          (cd tools/renderwarm && cyclonedx-gomod mod -test -json -licenses -noserial -notimestamp -output "$GITHUB_WORKSPACE/sbom/go-renderwarm.cdx.json" .)
 
       - name: generate npm SBOMs
         run: |
           for directory in \
-            . \
             templates/demo/frontend \
             templates/internal/lighthouse/ui \
             templates/starter-kits/react/frontend \
@@ -130,6 +166,14 @@ jobs:
               --output-file "$PWD/sbom/npm-$name.cdx.json" \
               "$directory/package.json"
           done
+
+      - name: verify SBOM coverage
+        run: |
+          for bill in sbom/*.cdx.json
+          do
+            jq -e '(.components // []) | length > 0' "$bill" >/dev/null
+          done
+          jq -e 'any(.components[]?; .name == "github.com/testcontainers/testcontainers-go")' sbom/go-integration.cdx.json >/dev/null
 
       - name: upload SBOMs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -277,7 +277,7 @@ func postgresEnv(conn Connection) []string {
 
 // runRedirectedTool runs a native tool with stdout redirected to an artifact.
 func runRedirectedTool(ctx context.Context, name string, args []string, env []string, output string) error {
-	file, err := os.OpenFile(output, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	file, err := openPrivateOutput(output)
 	if err != nil {
 		return fmt.Errorf("create %s output: %w", name, err)
 	}

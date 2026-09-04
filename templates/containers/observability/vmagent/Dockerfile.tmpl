@@ -1,4 +1,6 @@
-FROM victoriametrics/vmagent:v1.120.0
+FROM victoriametrics/vmagent:v1.120.0@sha256:9061bf157f8541102d4352c963a726cb6a666c947da0d143e02e5d997dfd187f
 
 COPY prometheus.yml /etc/vmagent/prometheus.yml
 COPY metrics-targets.json /etc/vmagent/metrics-targets.json
+
+USER 65534:65534

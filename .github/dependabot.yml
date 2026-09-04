@@ -40,3 +40,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  - package-ecosystem: docker
+    directory: /containers/test-build
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /templates/containers/mariadb
+    schedule:
+      interval: weekly

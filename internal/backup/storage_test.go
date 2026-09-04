@@ -61,6 +61,30 @@ func TestRestoreDirectoryArchiveRejectsEntryLimit(t *testing.T) {
 	}
 }
 
+// TestRestoreDirectoryArchivePreflightsLimits verifies a late invalid entry cannot partially overwrite the live target.
+func TestRestoreDirectoryArchivePreflightsLimits(t *testing.T) {
+	target := t.TempDir()
+	path := filepath.Join(target, "one.txt")
+	if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact := writeStorageArchive(t, []storageArchiveTestEntry{{name: "one.txt", body: "changed"}, {name: "two.txt", body: "blocked"}})
+	err := restoreDirectoryArchive(artifact, target, archiveRestoreLimits{entries: 1, bytes: 100})
+	if err == nil || !strings.Contains(err.Error(), "exceeds 1 entries") {
+		t.Fatalf("restore error = %v, want entry limit", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "original" {
+		t.Fatalf("existing target = %q, want original", data)
+	}
+	if _, err := os.Stat(filepath.Join(target, "two.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("late target stat error = %v, want not found", err)
+	}
+}
+
 // TestRestoreDirectoryArchiveContainsDestinationSymlinks verifies writes cannot follow a destination link outside the restore root.
 func TestRestoreDirectoryArchiveContainsDestinationSymlinks(t *testing.T) {
 	outside := t.TempDir()

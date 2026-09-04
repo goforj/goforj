@@ -2,9 +2,11 @@ package backup
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/goforj/storage"
@@ -88,4 +90,96 @@ func TestStorageRepositoryDownloadContainsDestinationSymlinks(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(outside, "escaped.txt")); !os.IsNotExist(err) {
 		t.Fatalf("outside file stat error = %v, want not found", err)
 	}
+}
+
+// TestStorageRepositoryDownloadRejectsOversizedMetadata verifies size limits apply before object contents are allocated.
+func TestStorageRepositoryDownloadRejectsOversizedMetadata(t *testing.T) {
+	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited := repositorySizeStorage{Storage: disk, entries: []storage.Entry{{Path: "backups/backup-1/large.dump", Size: repositoryDownloadMaxBytes + 1}}}
+	repository := StorageRepository{Disk: limited, Prefix: "backups"}
+	if err := repository.Download(context.Background(), "backup-1", t.TempDir()); err == nil {
+		t.Fatal("expected oversized repository rejection")
+	}
+}
+
+// TestStorageRepositoryDownloadMetadataLimits verifies every remote metadata bound before downloads begin.
+func TestStorageRepositoryDownloadMetadataLimits(t *testing.T) {
+	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tooMany := make([]storage.Entry, repositoryDownloadMaxEntries+1)
+	for i := range tooMany {
+		tooMany[i] = storage.Entry{Path: filepath.ToSlash(filepath.Join("backups", "backup-1", fmt.Sprintf("%d.dump", i)))}
+	}
+	tests := []struct {
+		name    string
+		entries []storage.Entry
+		want    string
+	}{
+		{name: "negative size", entries: []storage.Entry{{Path: "backups/backup-1/negative.dump", Size: -1}}, want: "has negative size -1"},
+		{name: "cumulative size", entries: []storage.Entry{{Path: "backups/backup-1/one.dump", Size: repositoryDownloadMaxBytes}, {Path: "backups/backup-1/two.dump", Size: 1}}, want: "exceeds 68719476736 bytes"},
+		{name: "file count", entries: tooMany, want: "exceeds 100000 files"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := StorageRepository{Disk: repositorySizeStorage{Storage: disk, entries: test.entries}, Prefix: "backups"}
+			err := repository.Download(context.Background(), "backup-1", t.TempDir())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("download error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+// TestStorageRepositoryDownloadRejectsChangedObjectSize verifies metadata cannot understate downloaded memory and disk use.
+func TestStorageRepositoryDownloadRejectsChangedObjectSize(t *testing.T) {
+	disk, err := storage.Build(localstorage.Config{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "backups/backup-1/changing.dump"
+	repository := StorageRepository{Disk: repositorySizeStorage{
+		Storage: disk,
+		entries: []storage.Entry{{Path: path, Size: 1}},
+		data:    map[string][]byte{path: []byte("changed")},
+	}, Prefix: "backups"}
+	err = repository.Download(context.Background(), "backup-1", t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "object size changed from 1 to 7 bytes") {
+		t.Fatalf("download error = %v, want changed object size", err)
+	}
+}
+
+// repositorySizeStorage provides controlled metadata while preserving the rest of a storage implementation.
+type repositorySizeStorage struct {
+	storage.Storage
+	entries []storage.Entry
+	data    map[string][]byte
+}
+
+// WithContext preserves controlled metadata while forwarding context binding to the real storage implementation.
+func (s repositorySizeStorage) WithContext(ctx context.Context) storage.Storage {
+	s.Storage = s.Storage.WithContext(ctx)
+	return s
+}
+
+// Walk reports controlled entries used by repository limit tests.
+func (s repositorySizeStorage) Walk(_ string, fn func(storage.Entry) error) error {
+	for _, entry := range s.entries {
+		if err := fn(entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Get returns controlled object data when a test needs metadata and contents to diverge.
+func (s repositorySizeStorage) Get(path string) ([]byte, error) {
+	if data, ok := s.data[path]; ok {
+		return data, nil
+	}
+	return s.Storage.Get(path)
 }

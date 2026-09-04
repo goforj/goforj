@@ -13,6 +13,12 @@ import (
 	"github.com/goforj/storage"
 )
 
+// repositoryDownloadMaxEntries prevents a remote prefix from creating an unbounded number of local files.
+const repositoryDownloadMaxEntries = 100_000
+
+// repositoryDownloadMaxBytes bounds local disk consumption before any remote object is materialized.
+const repositoryDownloadMaxBytes int64 = 64 << 30
+
 // BackupRepository stores complete manifest-backed backup directories.
 type BackupRepository interface {
 	// Upload defines the upload behavior required from implementations.
@@ -80,7 +86,7 @@ func (r StorageRepository) Download(ctx context.Context, name string, destinatio
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(destination, 0o700); err != nil {
+	if err := ensurePrivateDirectory(destination); err != nil {
 		return err
 	}
 	destinationRoot, err := os.OpenRoot(destination)
@@ -88,10 +94,34 @@ func (r StorageRepository) Download(ctx context.Context, name string, destinatio
 		return fmt.Errorf("open backup repository destination: %w", err)
 	}
 	defer destinationRoot.Close()
-	return binding.disk.Walk(binding.prefix, func(entry storage.Entry) error {
+	entries := 0
+	var downloadedBytes int64
+	objects := make([]storage.Entry, 0)
+	if err := binding.disk.Walk(binding.prefix, func(entry storage.Entry) error {
 		if entry.IsDir {
 			return nil
 		}
+		entries++
+		if entries > repositoryDownloadMaxEntries {
+			return fmt.Errorf("backup repository exceeds %d files", repositoryDownloadMaxEntries)
+		}
+		if entry.Size < 0 {
+			return fmt.Errorf("backup repository object %s has negative size %d", entry.Path, entry.Size)
+		}
+		if entry.Size > repositoryDownloadMaxBytes-downloadedBytes {
+			return fmt.Errorf("backup repository exceeds %d bytes", repositoryDownloadMaxBytes)
+		}
+		downloadedBytes += entry.Size
+		relative := str.Of(entry.Path).TrimPrefix(binding.prefix).TrimPrefix("/").String()
+		if _, err := safeRepositoryExtractPath(destination, relative); err != nil {
+			return err
+		}
+		objects = append(objects, entry)
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, entry := range objects {
 		relative := str.Of(entry.Path).TrimPrefix(binding.prefix).TrimPrefix("/").String()
 		path, err := safeRepositoryExtractPath(destination, relative)
 		if err != nil {
@@ -105,14 +135,17 @@ func (r StorageRepository) Download(ctx context.Context, name string, destinatio
 		if err != nil {
 			return fmt.Errorf("download %s: %w", entry.Path, err)
 		}
-		if err := destinationRoot.MkdirAll(filepath.Dir(relativePath), 0o700); err != nil {
+		if int64(len(data)) != entry.Size {
+			return fmt.Errorf("download %s: object size changed from %d to %d bytes", entry.Path, entry.Size, len(data))
+		}
+		if err := ensurePrivateRootDirectory(destinationRoot, filepath.Dir(relativePath)); err != nil {
 			return err
 		}
-		if err := destinationRoot.WriteFile(relativePath, data, 0o600); err != nil {
+		if err := writePrivateRootFile(destinationRoot, relativePath, data); err != nil {
 			return err
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // List returns manifest-backed backup names below the repository prefix.

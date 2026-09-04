@@ -64,10 +64,10 @@ func WriteManifest(dir string, manifest Manifest) error {
 		return fmt.Errorf("encode backup manifest: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := ensurePrivateDirectory(dir); err != nil {
 		return fmt.Errorf("create backup directory: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), data, 0o600); err != nil {
+	if err := writePrivateFile(filepath.Join(dir, "manifest.json"), data); err != nil {
 		return fmt.Errorf("write backup manifest: %w", err)
 	}
 	checksums := strings.Builder{}
@@ -77,7 +77,7 @@ func WriteManifest(dir string, manifest Manifest) error {
 		}
 		fmt.Fprintf(&checksums, "%s  %s\n", resource.Checksum, resource.Artifact)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "checksums.txt"), []byte(checksums.String()), 0o600); err != nil {
+	if err := writePrivateFile(filepath.Join(dir, "checksums.txt"), []byte(checksums.String())); err != nil {
 		return fmt.Errorf("write backup checksums: %w", err)
 	}
 	return nil
