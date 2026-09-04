@@ -202,11 +202,13 @@ jobs:
             fi
             output="$GITHUB_WORKSPACE/sbom/go-$name.cdx.json"
             (cd "$directory" && cyclonedx-gomod mod -test -json -type "$component_type" -licenses -noserial -notimestamp -output "$output" .)
-            jq -e --arg module_path "$module_path" --arg component_type "$component_type" '
+            jq -e --arg module_path "$module_path" --arg component_type "$component_type" --arg purl_prefix "pkg:golang/$module_path" '
               .bomFormat == "CycloneDX" and
               .metadata.component.name == $module_path and
               .metadata.component.type == $component_type and
-              (.metadata.component.purl | startswith("pkg:golang/" + $module_path + "?")) and
+              (.metadata.component.purl as $purl |
+                ($purl | startswith($purl_prefix)) and
+                (($purl | ltrimstr($purl_prefix)) | startswith("?") or startswith("@"))) and
               (.components | type == "array") and
               (.components | length > 0) and
               all(.components[]?; .name != ".." and (.purl // "" | contains("pkg:golang/..") | not))
