@@ -37,6 +37,8 @@ PR #109 establishes the first repository-local baseline for `goforj`. The other 
 
 The 2026-09-04 review actively scanned every available local checkout: 101 Go modules across 22 repositories with `govulncheck -test ./...`, plus all 11 npm lockfiles with a production dependency audit. The current PR branch has separate clean Go and npm gates, so its results supersede the older `goforj` workspace checkout included in that inventory. `.github`, `docs`, and `demo-repository` were not available locally and remain remote-only review gaps. Historical secret scanning could not be completed across sibling repositories because the review environment did not have Gitleaks installed. This is a failed-to-scan result, not evidence that those histories are clean.
 
+GitHub reported 221 open Dependabot alerts on the `goforj` default branch during this review: 4 critical, 97 high, 103 moderate, and 17 low. The review token could not read alert details, so an administrator must reconcile that queue against the current branch scans, remove stale alerts, and assign any remaining findings. A passing pull request scan does not by itself close default-branch alerts.
+
 | Result | Repositories | Required response |
 | --- | --- | --- |
 | Reachable Go findings | `atlas`, `cache`, `events`, `harbor`, `httpx`, `queue`, `ship`, `storage`, `web` | Triage each advisory in its owning repository, update reachable dependencies, and use only scoped, expiring exceptions for demonstrated non-applicability |
