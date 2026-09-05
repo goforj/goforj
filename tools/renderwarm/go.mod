@@ -2,7 +2,7 @@
 
 module github.com/goforj/goforj/tools/renderwarm
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/a-h/templ v0.3.1020
@@ -11,8 +11,8 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/glebarez/sqlite v1.11.0
-	github.com/goforj/cache v0.4.0
-	github.com/goforj/cache/cachecore v0.4.0
+	github.com/goforj/cache v0.4.1
+	github.com/goforj/cache/cachecore v0.4.1
 	github.com/goforj/cache/driver/rediscache v0.4.0
 	github.com/goforj/console v0.2.0
 	github.com/goforj/crypt v1.2.0
