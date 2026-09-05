@@ -19,7 +19,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "embla-carousel-vue": "^8.6.0",
-    "reka-ui": "^2.9.6",
+    "reka-ui": "^2.10.4",
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.18",
     "vaul-vue": "^0.4.1",
