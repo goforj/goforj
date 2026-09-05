@@ -12,6 +12,9 @@ updates:
       root-go-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: gomod
     directory: /integration
     schedule:
@@ -22,6 +25,9 @@ updates:
       integration-go-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: gomod
     directory: /tools/renderwarm
     schedule:
@@ -32,6 +38,9 @@ updates:
       renderwarm-go-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -42,6 +51,9 @@ updates:
       root-npm-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: npm
     directory: /templates/demo/frontend
     schedule:
@@ -52,6 +64,9 @@ updates:
       demo-frontend-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: npm
     directory: /templates/internal/lighthouse/ui
     schedule:
@@ -62,6 +77,9 @@ updates:
       lighthouse-ui-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: npm
     directory: /templates/starter-kits/react/frontend
     schedule:
@@ -72,6 +90,9 @@ updates:
       react-starter-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: npm
     directory: /templates/starter-kits/templ-htmx/frontend
     schedule:
@@ -82,6 +103,9 @@ updates:
       templ-htmx-starter-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: npm
     directory: /templates/starter-kits/vue/frontend
     schedule:
@@ -92,6 +116,9 @@ updates:
       vue-starter-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -102,6 +129,9 @@ updates:
       actions-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: docker
     directory: /containers/test-build
     schedule:
@@ -112,6 +142,9 @@ updates:
       test-build-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
   - package-ecosystem: docker
     directory: /templates/containers/mariadb
     schedule:
@@ -122,3 +155,6 @@ updates:
       mariadb-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
