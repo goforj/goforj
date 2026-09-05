@@ -11,7 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@internationalized/date": "^3.12.2",
+    "@internationalized/date": "^3.12.4",
     "@lucide/vue": "^1.24.0",
     "@tailwindcss/vite": "^4.1.18",
     "@vee-validate/zod": "^4.15.1",
