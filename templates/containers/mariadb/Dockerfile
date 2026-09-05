@@ -1,4 +1,4 @@
-FROM mariadb:10.11.6@sha256:e846701e66dcc95a3f90d161cc3dfc2e4ff96f0699ee4fb93b0bfdab94158570
+FROM mariadb:12.3.3@sha256:dd9b303aed4f4890ed09f766d8ca9ddfd176c0c6f6267feff53b3192ec65a979
 
 COPY my.cnf /etc/mysql/conf.d/my.cnf
 
