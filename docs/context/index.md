@@ -68,6 +68,15 @@ Read:
 - [Generated App Extension Points](generated-app-extension-points.md)
 - [Runtime Architecture](runtime-architecture.md)
 
+### Security, supply chain, backups, untrusted input, or workflow hardening
+
+Read:
+
+- [Security Context](security.md)
+- [GoForj Security Baseline](../maintainer/security-baseline.md)
+
+Add the owning topic document when the change crosses a specific runtime boundary. For backup behavior, also read [Backup and Restore Command Design](../designs/completed/backup-restore-command-design.md). For generated developer services or containers, also read [Rendering And Smoke Workflow](rendering-and-smoke-workflow.md).
+
 ### Web adapters, middleware, HTTP abstractions, or "should this live in `web`?"
 
 Read:
@@ -198,6 +207,14 @@ Add if the issue mentions `forj dev`, Ctrl+C, watcher shutdown, Docker Compose s
   - security invariants
   - future provider direction
   - user-facing package overview: [../../auth/README.md](../../auth/README.md)
+- [Security Context](security.md)
+  - security-sensitive change routing
+  - core invariants and review questions
+  - local validation and evidence limits
+- [GoForj Security Baseline](../maintainer/security-baseline.md)
+  - current ecosystem rollout state
+  - repository controls, exceptions, and residual risks
+  - security and release acceptance criteria
 - [Rendering And Smoke Workflow](rendering-and-smoke-workflow.md)
   - render/smoke/integration workflow
   - compose-driven rendered dependency model
