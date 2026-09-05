@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@dnd-kit/abstract": "^0.2.3",
-    "@tabler/icons-vue": "^3.36.1",
+    "@tabler/icons-vue": "^3.46.0",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/vue-table": "^8.21.3",
     "@unovis/ts": "^1.6.4",
