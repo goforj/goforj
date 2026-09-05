@@ -10,7 +10,7 @@ require (
 	github.com/docker/go-connections v0.6.0
 	github.com/fsouza/fake-gcs-server v1.54.0
 	github.com/glebarez/go-sqlite v1.21.2
-	github.com/go-sql-driver/mysql v1.9.3
+	github.com/go-sql-driver/mysql v1.10.1
 	github.com/goforj/goforj v0.0.0
 	github.com/goftp/server v0.0.0-20200708154336-f64f7c2d8a42
 	github.com/jackc/pgx/v5 v5.10.0
@@ -31,7 +31,7 @@ require (
 	cloud.google.com/go/pubsub/v2 v2.4.0 // indirect
 	cloud.google.com/go/storage v1.60.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
-	filippo.io/edwards25519 v1.1.1 // indirect
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.55.0 // indirect
