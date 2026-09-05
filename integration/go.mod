@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.8
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.8
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3
-	github.com/docker/go-connections v0.6.0
+	github.com/docker/go-connections v0.8.1
 	github.com/fsouza/fake-gcs-server v1.54.0
 	github.com/glebarez/go-sqlite v1.21.2
 	github.com/go-sql-driver/mysql v1.9.3
