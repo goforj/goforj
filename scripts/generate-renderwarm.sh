@@ -154,6 +154,7 @@ override_version_for_module() {
     github.com/goforj/web) echo "v0.6.2" ;;
     github.com/klauspost/compress) echo "v1.18.4" ;;
     github.com/labstack/echo/v4) echo "v4.15.1" ;;
+    github.com/labstack/echo/v5) echo "v5.2.0" ;;
     github.com/redis/go-redis/v9) echo "v9.17.2" ;;
     github.com/shirou/gopsutil/v4) echo "v4.26.2" ;;
     golang.org/x/net) echo "v0.48.0" ;;
@@ -245,8 +246,14 @@ fi
   # httpx v1 selects an older godump, so warm builds pin the release validated by the host module.
   echo "github.com/goforj/godump"
   # Template dependencies can otherwise select transitive releases with known archive and TLS defects.
+  echo "filippo.io/edwards25519"
+  echo "github.com/jackc/pgx/v5"
+  echo "github.com/labstack/echo/v5"
+  echo "github.com/imroc/req/v3"
   echo "github.com/moby/go-archive"
+  echo "github.com/quic-go/quic-go"
   echo "github.com/refraction-networking/utls"
+  echo "golang.org/x/mod"
 } | sort -u > "$modules_file"
 
 mkdir -p "$out_dir"
