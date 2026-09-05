@@ -76,6 +76,7 @@ CI remains authoritative for the full build-tag, platform, integration, containe
 
 | Risk | Current Mitigation | Owner and Target |
 | --- | --- | --- |
+| GitHub still reports 221 default-branch Dependabot alerts immediately after the remediation merge | Branch vulnerability scans selected fixed releases or documented exact exceptions, but an administrator must confirm graph recalculation, dismiss stale alerts with rationale, and assign any remaining findings | Organization administrator review required |
 | Generated Compose image tags remain mutable | CI records resolved image inventories, vulnerability reports, and SBOMs; release review compares resolved digests | `@cmilesio`, December 4, 2026 |
 | Release SBOMs are short-lived CI artifacts and source tags are unsigned | Versioned source and per-revision SBOM validation remain available; release-keyed attestations are still required | `@cmilesio`, December 4, 2026 |
 | The CI test image trusts the downloaded Docker apt key without an expected fingerprint and Docker packages are not version-pinned | Container builds and vulnerability scans gate fixable high and critical findings | `@cmilesio`, December 4, 2026 |
