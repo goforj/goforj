@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+inventory_dir="$(mktemp -d)"
+trap 'rm -rf "$inventory_dir"' EXIT
+
+dependabot_entries="$inventory_dir/dependabot.txt"
+awk '
+  $1 == "-" && $2 == "package-ecosystem:" {
+    ecosystem = $3
+    next
+  }
+  $1 == "directory:" && ecosystem != "" {
+    print ecosystem, $2
+    ecosystem = ""
+  }
+' "$repo_root/.github/dependabot.yml" | sort -u > "$dependabot_entries"
+
+check_surface() {
+  local ecosystem="$1"
+  local manifest="$2"
+  local directory
+  directory="$(dirname "${manifest#"$repo_root"/}")"
+  if [[ ! "$directory" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    echo "security manifest directory contains unsupported characters: $directory" >&2
+    return 1
+  fi
+  if [[ "$directory" == "." ]]; then
+    directory="/"
+  else
+    directory="/$directory"
+  fi
+  if ! grep -Fqx "$ecosystem $directory" "$dependabot_entries"; then
+    echo "missing Dependabot coverage for $ecosystem manifest: $manifest" >&2
+    return 1
+  fi
+}
+
+while IFS= read -r manifest; do
+  check_surface gomod "$manifest"
+done < <(find "$repo_root" -name go.mod -not -path '*/.git/*' -not -path '*/node_modules/*' | sort)
+
+while IFS= read -r manifest; do
+  check_surface npm "$manifest"
+done < <(find "$repo_root" -name package-lock.json -not -path '*/.git/*' -not -path '*/node_modules/*' | sort)
+
+echo "security inventory covers every Go module and npm lockfile"

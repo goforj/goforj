@@ -1,0 +1,34 @@
+[
+  {
+    "id": "GO-2026-4883",
+    "module": "github.com/docker/docker",
+    "exact_packages": [
+      "github.com/docker/docker/api",
+      "github.com/docker/docker/pkg/jsonmessage",
+      "github.com/docker/docker/pkg/stdcopy"
+    ],
+    "package_prefixes": [
+      "github.com/docker/docker/api/types",
+      "github.com/docker/docker/client"
+    ],
+    "expires": "2026-12-04",
+    "owner": "@cmilesio",
+    "reason": "The advisory affects daemon plugin privilege validation. GoForj imports client-side packages and does not embed the Docker daemon."
+  },
+  {
+    "id": "GO-2026-4887",
+    "module": "github.com/docker/docker",
+    "exact_packages": [
+      "github.com/docker/docker/api",
+      "github.com/docker/docker/pkg/jsonmessage",
+      "github.com/docker/docker/pkg/stdcopy"
+    ],
+    "package_prefixes": [
+      "github.com/docker/docker/api/types",
+      "github.com/docker/docker/client"
+    ],
+    "expires": "2026-12-04",
+    "owner": "@cmilesio",
+    "reason": "The advisory affects daemon authorization of oversized request bodies. GoForj imports client-side packages and does not embed the Docker daemon."
+  }
+]

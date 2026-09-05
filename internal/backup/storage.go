@@ -12,6 +12,18 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// storageArchiveMaxEntries prevents archives from creating an unbounded number of filesystem objects.
+const storageArchiveMaxEntries = 100_000
+
+// storageArchiveMaxExpandedBytes leaves large application backups practical while bounding decompression work.
+const storageArchiveMaxExpandedBytes int64 = 64 << 30
+
+// archiveRestoreLimits bounds work accepted from a compressed storage artifact.
+type archiveRestoreLimits struct {
+	entries int
+	bytes   int64
+}
+
 // ArchiveDirectory creates a zstd-compressed tar archive of a local storage directory.
 func ArchiveDirectory(source string, artifact string) (resultErr error) {
 	info, err := os.Stat(source)
@@ -24,7 +36,7 @@ func ArchiveDirectory(source string, artifact string) (resultErr error) {
 	if _, err := artifactPath(artifact); err != nil {
 		return err
 	}
-	file, err := os.Create(artifact)
+	file, err := openPrivateOutput(artifact)
 	if err != nil {
 		return fmt.Errorf("create storage artifact: %w", err)
 	}
@@ -42,6 +54,11 @@ func ArchiveDirectory(source string, artifact string) (resultErr error) {
 	tarWriter := tar.NewWriter(zstdWriter)
 	defer recordClose("close storage archive", tarWriter.Close)
 	root := filepath.Clean(source)
+	rootDirectory, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("open storage source root: %w", err)
+	}
+	defer recordClose("close storage source root", rootDirectory.Close)
 	err = filepath.Walk(root, func(path string, entry os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -64,7 +81,7 @@ func ArchiveDirectory(source string, artifact string) (resultErr error) {
 		if !entry.Mode().IsRegular() {
 			return nil
 		}
-		input, err := os.Open(path)
+		input, err := rootDirectory.Open(relative)
 		if err != nil {
 			return err
 		}
@@ -83,6 +100,14 @@ func ArchiveDirectory(source string, artifact string) (resultErr error) {
 
 // RestoreDirectoryArchive extracts a local storage archive into a directory.
 func RestoreDirectoryArchive(artifact string, target string) error {
+	return restoreDirectoryArchive(artifact, target, archiveRestoreLimits{
+		entries: storageArchiveMaxEntries,
+		bytes:   storageArchiveMaxExpandedBytes,
+	})
+}
+
+// restoreDirectoryArchive extracts a local storage archive within explicit resource limits.
+func restoreDirectoryArchive(artifact string, target string, limits archiveRestoreLimits) error {
 	if _, err := safeArtifactPath(filepath.Dir(artifact), filepath.Base(artifact)); err != nil {
 		return err
 	}
@@ -91,19 +116,32 @@ func RestoreDirectoryArchive(artifact string, target string) error {
 		return fmt.Errorf("open storage artifact: %w", err)
 	}
 	defer input.Close()
+	root, err := filepath.Abs(target)
+	if err != nil {
+		return err
+	}
+	if err := validateDirectoryArchive(input, root, limits); err != nil {
+		return err
+	}
+	if _, err := input.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewind storage artifact: %w", err)
+	}
 	zstdReader, err := zstd.NewReader(input)
 	if err != nil {
 		return fmt.Errorf("read storage artifact: %w", err)
 	}
 	defer zstdReader.Close()
 	tarReader := tar.NewReader(zstdReader)
-	root, err := filepath.Abs(target)
-	if err != nil {
-		return err
-	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
+	targetDirectory, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("open storage restore root: %w", err)
+	}
+	defer targetDirectory.Close()
+	entries := 0
+	var expandedBytes int64
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -112,23 +150,20 @@ func RestoreDirectoryArchive(artifact string, target string) error {
 		if err != nil {
 			return fmt.Errorf("read storage archive: %w", err)
 		}
-		path, err := safeExtractPath(root, header.Name)
+		relative, err := checkedArchiveEntry(root, header, limits, &entries, &expandedBytes)
 		if err != nil {
 			return err
 		}
 		if header.FileInfo().IsDir() {
-			if err := os.MkdirAll(path, 0o755); err != nil {
+			if err := targetDirectory.MkdirAll(relative, 0o755); err != nil {
 				return err
 			}
 			continue
 		}
-		if !header.FileInfo().Mode().IsRegular() {
-			return fmt.Errorf("unsupported storage archive entry %s", header.Name)
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := targetDirectory.MkdirAll(filepath.Dir(relative), 0o755); err != nil {
 			return err
 		}
-		output, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, header.FileInfo().Mode().Perm())
+		output, err := targetDirectory.OpenFile(relative, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, header.FileInfo().Mode().Perm())
 		if err != nil {
 			return err
 		}
@@ -142,6 +177,50 @@ func RestoreDirectoryArchive(artifact string, target string) error {
 		}
 	}
 	return nil
+}
+
+// validateDirectoryArchive rejects an invalid archive before the live target can be mutated.
+func validateDirectoryArchive(input io.Reader, root string, limits archiveRestoreLimits) error {
+	zstdReader, err := zstd.NewReader(input)
+	if err != nil {
+		return fmt.Errorf("read storage artifact: %w", err)
+	}
+	defer zstdReader.Close()
+	tarReader := tar.NewReader(zstdReader)
+	entries := 0
+	var expandedBytes int64
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read storage archive: %w", err)
+		}
+		if _, err := checkedArchiveEntry(root, header, limits, &entries, &expandedBytes); err != nil {
+			return err
+		}
+	}
+}
+
+// checkedArchiveEntry validates one entry and advances the restore resource counters.
+func checkedArchiveEntry(root string, header *tar.Header, limits archiveRestoreLimits, entries *int, expandedBytes *int64) (string, error) {
+	*entries = *entries + 1
+	if *entries > limits.entries {
+		return "", fmt.Errorf("storage archive exceeds %d entries", limits.entries)
+	}
+	if header.Size < 0 || header.Size > limits.bytes-*expandedBytes {
+		return "", fmt.Errorf("storage archive exceeds %d expanded bytes", limits.bytes)
+	}
+	*expandedBytes += header.Size
+	path, err := safeExtractPath(root, header.Name)
+	if err != nil {
+		return "", err
+	}
+	if !header.FileInfo().IsDir() && !header.FileInfo().Mode().IsRegular() {
+		return "", fmt.Errorf("unsupported storage archive entry %s", header.Name)
+	}
+	return filepath.Rel(root, path)
 }
 
 // safeExtractPath prevents archive entries from escaping the target directory.

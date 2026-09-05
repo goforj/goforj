@@ -244,7 +244,7 @@ onUnmounted(() => {
                   : 'text-foreground'
               "
             >
-              {{ summaryLoaded ? pill.displayValue : '—' }}
+              {{ summaryLoaded ? pill.displayValue : 'N/A' }}
             </span>
           </div>
         </div>
@@ -327,7 +327,7 @@ onUnmounted(() => {
                 : 'text-foreground'
             "
         >
-            {{ summaryLoaded ? pill.displayValue : '—' }}
+            {{ summaryLoaded ? pill.displayValue : 'N/A' }}
           </span>
         </div>
       </div>
