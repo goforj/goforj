@@ -2,6 +2,8 @@ package backup
 
 import (
 	"bytes"
+	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,6 +72,15 @@ func TestPortableArchiveStoreVerifiesArtifact(t *testing.T) {
 	}
 	if got.Version != 1 || got.Tables[0].Name != "users" {
 		t.Fatalf("unexpected portable archive: %#v", got)
+	}
+}
+
+// TestPortableServiceCreateRejectsExistingBackupSet ensures timestamp collisions cannot overwrite a completed backup.
+func TestPortableServiceCreateRejectsExistingBackupSet(t *testing.T) {
+	dir := t.TempDir()
+	_, err := NewPortableService().Create(context.Background(), dir, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "create exclusive portable backup set") {
+		t.Fatalf("create error = %v, want exclusive backup set rejection", err)
 	}
 }
 

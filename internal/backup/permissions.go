@@ -4,7 +4,19 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
+
+// createExclusivePrivateDirectory claims a backup set path without reusing existing contents.
+func createExclusivePrivateDirectory(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		return err
+	}
+	return nil
+}
 
 // ensurePrivateDirectory tightens a backup-owned directory even when it already exists.
 func ensurePrivateDirectory(path string) error {

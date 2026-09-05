@@ -15,6 +15,9 @@ func NewPortableService() *PortableService { return &PortableService{} }
 
 // Create exports selected tables from a SQL database into a portable backup set.
 func (s *PortableService) Create(ctx context.Context, dir string, db *sql.DB, dialect SQLDialect, tables []string, migrationFingerprints ...string) (PortableArchive, error) {
+	if err := createExclusivePrivateDirectory(dir); err != nil {
+		return PortableArchive{}, fmt.Errorf("create exclusive portable backup set: %w", err)
+	}
 	archive, err := ExportPortable(ctx, db, dialect, tables)
 	if err != nil {
 		return PortableArchive{}, err

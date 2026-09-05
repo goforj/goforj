@@ -41,10 +41,7 @@ func (s *Service) Create(ctx context.Context, root string, resourceName string) 
 		return CreatedBackup{}, err
 	}
 	dir := filepath.Join(root, "backup-"+time.Now().UTC().Format("20060102T150405Z"))
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return CreatedBackup{}, fmt.Errorf("create backup root: %w", err)
-	}
-	if err := os.Mkdir(dir, 0o700); err != nil {
+	if err := createExclusivePrivateDirectory(dir); err != nil {
 		return CreatedBackup{}, fmt.Errorf("create exclusive backup set: %w", err)
 	}
 	if err := os.Mkdir(filepath.Join(dir, "databases"), 0o700); err != nil {
