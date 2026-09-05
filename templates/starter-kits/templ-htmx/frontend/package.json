@@ -13,7 +13,7 @@
     "basecoat-css": "^0.3.11",
     "htmx.org": "^2.0.8",
     "shadcn": "^4.11.0",
-    "tailwindcss": "^4.1.18"
+    "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
