@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.8.0
 	github.com/creack/pty v1.1.18
 	github.com/docker/docker v28.5.2+incompatible
-	github.com/docker/go-connections v0.6.0
+	github.com/docker/go-connections v0.8.1
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/glebarez/go-sqlite v1.21.2
 	github.com/glebarez/sqlite v1.11.0
