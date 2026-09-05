@@ -1,0 +1,474 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MonitorDetailPanel snapshot baselines > matches down baseline 1`] = `
+"<div data-v-e7bf4501="" data-slot="card" class="bg-card text-card-foreground flex flex-col rounded-xl border py-6 shadow-sm relative min-h-[32rem] overflow-hidden gap-1 transition-shadow duration-300">
+  <div data-v-e7bf4501="" aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-1 overflow-hidden">
+    <!--v-if-->
+  </div>
+  <div data-v-e7bf4501="" data-slot="card-header" class="@container/card-header grid auto-rows-min grid-rows-[auto_auto] items-start gap-1.5 px-6 has-data-[slot=card-action]:grid-cols-[1fr_auto] [.border-b]:pb-6">
+    <div data-v-e7bf4501="" class="flex flex-wrap items-start justify-between gap-2">
+      <div data-v-e7bf4501="" class="space-y-2.5 pr-2">
+        <h3 data-v-e7bf4501="" data-slot="card-title" class="leading-none font-semibold flex items-center gap-2 transition-opacity duration-300 ease-out"><img data-v-e7bf4501="" src="/api/v1/monitoring/monitors/monitor_cloudflare/favicon" alt="" class="size-5 rounded-sm"><span data-v-e7bf4501="">Cloudflare</span></h3>
+        <div data-v-e7bf4501="" class="flex flex-wrap gap-x-6 gap-y-1.5 rounded-md border border-border/60 bg-muted/20 p-2.5 text-xs">
+          <div data-v-e7bf4501="" class="min-w-[10rem]">
+            <p data-v-e7bf4501="" class="text-[11px] uppercase tracking-wide text-muted-foreground">monitorDetail.type</p>
+            <p data-v-e7bf4501="" class="flex items-center gap-1.5 break-all font-medium text-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 text-muted-foreground lucide-globe-icon lucide-globe size-3.5 text-muted-foreground" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path>
+                <path d="M2 12h20"></path>
+              </svg><span data-v-e7bf4501="">HTTP</span></p>
+          </div>
+          <div data-v-e7bf4501="" class="min-w-[10rem]">
+            <p data-v-e7bf4501="" class="text-[11px] uppercase tracking-wide text-muted-foreground">monitorDetail.url</p><a data-v-e7bf4501="" href="https://www.cloudflare.com" target="_blank" rel="noopener noreferrer" class="block break-all font-medium text-emerald-400 underline-offset-2 hover:underline">https://www.cloudflare.com</a>
+          </div>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" class="flex items-center gap-2"><a data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5" to="/monitors/monitor_cloudflare/edit"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-pencil-icon lucide-pencil size-4" aria-hidden="true">
+            <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path>
+            <path d="m15 5 4 4"></path>
+          </svg> common.edit</a><button data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-play-icon lucide-play size-4" aria-hidden="true">
+            <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path>
+          </svg> monitorDetail.checkNow</button><button data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-pause-icon lucide-pause size-4" aria-hidden="true">
+            <rect x="14" y="3" width="5" height="18" rx="1"></rect>
+            <rect x="5" y="3" width="5" height="18" rx="1"></rect>
+          </svg> monitoring.pause</button></div>
+    </div>
+  </div>
+  <div data-v-e7bf4501="" data-slot="card-content" class="px-6 space-y-3">
+    <div data-v-e7bf4501="" class="space-y-3 transition-opacity duration-300 ease-out opacity-100">
+      <div data-v-e7bf4501="" class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
+        <div data-v-e7bf4501="" class="flex-1">
+          <div data-v-e7bf4501="" data-test="heartbeat-stub" hide-open-bucket="false" statuses="unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,up,up,down,paused,up" points=",,,,,,,,,,,,,,,,,,,,,,,,[object Object],[object Object],[object Object],[object Object],[object Object],[object Object]"></div>
+          <p data-v-e7bf4501="" class="mt-2 text-xs text-muted-foreground">monitorDetail.checkEverySeconds</p>
+        </div>
+        <div data-v-e7bf4501="" data-slot="badge" class="inline-flex items-center justify-center border py-0.5 font-medium w-fit whitespace-nowrap shrink-0 [&amp;>svg]:size-3 gap-1 [&amp;>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden border-transparent [a&amp;]:hover:bg-primary/90 h-11 rounded-full px-5 text-xl bg-rose-500 text-white">status.down</div>
+      </div>
+      <div data-v-e7bf4501="" class="grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-5">
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-zap-icon lucide-zap size-3.5" aria-hidden="true">
+              <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"></path>
+            </svg> monitorDetail.responseCurrent</p>
+          <p data-v-e7bf4501="" class="font-medium">0ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-activity-icon lucide-activity size-3.5" aria-hidden="true">
+              <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path>
+            </svg> monitorDetail.avgResponse24h</p>
+          <p data-v-e7bf4501="" class="font-medium">0ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-shield-check-icon lucide-shield-check size-3.5" aria-hidden="true">
+              <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path>
+              <path d="m9 12 2 2 4-4"></path>
+            </svg> monitoring.uptime24h</p>
+          <p data-v-e7bf4501="" class="font-medium">99.20%</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-chart-column-icon lucide-chart-column size-3.5" aria-hidden="true">
+              <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>
+              <path d="M18 17V9"></path>
+              <path d="M13 17V5"></path>
+              <path d="M8 17v-3"></path>
+            </svg> monitorDetail.p95_24h</p>
+          <p data-v-e7bf4501="" class="font-medium">340ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-clock3-icon lucide-clock-3 size-3.5" aria-hidden="true">
+              <path d="M12 6v6h4"></path>
+              <circle cx="12" cy="12" r="10"></circle>
+            </svg> monitorDetail.checks</p>
+          <p data-v-e7bf4501="" class="font-medium">40</p>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" data-test="chart-stub" monitor-name="Cloudflare" monitor-type="http" checks="[object Object]" range="1h"></div>
+      <div data-v-e7bf4501="" class="rounded-md border border-border p-3">
+        <p data-v-e7bf4501="" class="mb-2 text-sm font-medium">monitorDetail.recentIncidents</p>
+        <div data-v-e7bf4501="" class="space-y-2">
+          <div data-v-e7bf4501="" class="rounded-md border border-border p-2 text-sm">
+            <p data-v-e7bf4501="" class="font-medium">Probe timeout spike</p>
+            <p data-v-e7bf4501="" class="text-xs text-muted-foreground">common.opened 2026-02-07T11:50:00Z · common.open</p>
+          </div>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" class="overflow-hidden rounded-md border border-border">
+        <div data-v-e7bf4501="" data-slot="table-container" class="relative w-full overflow-auto">
+          <table data-slot="table" class="w-full caption-bottom text-sm">
+            <thead data-v-e7bf4501="" data-slot="table-header" class="[&amp;_tr]:border-b">
+              <tr data-v-e7bf4501="" data-slot="table-row" class="hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors">
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.time</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitoring.status</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.http</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.latency</th>
+              </tr>
+            </thead>
+            <tbody data-v-e7bf4501="" data-slot="table-body" class="[&amp;_tr:last-child]:border-0">
+              <!--v-if-->
+              <tr data-v-e7bf4501="" data-slot="table-row" class="hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors">
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px] text-xs text-muted-foreground"><span data-v-e7bf4501="" title="2026-02-07T11:59:00Z">relative.daysAgo</span></td>
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">
+                  <div data-v-e7bf4501="" data-slot="badge" class="inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&amp;>svg]:size-3 gap-1 [&amp;>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground border-rose-500/40 text-rose-400" variant="outline">down</div>
+                </td>
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">503</td>
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">0ms</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>"
+`;
+
+exports[`MonitorDetailPanel snapshot baselines > matches gap baseline 1`] = `
+"<div data-v-e7bf4501="" data-slot="card" class="bg-card text-card-foreground flex flex-col rounded-xl border py-6 shadow-sm relative min-h-[32rem] overflow-hidden gap-1 transition-shadow duration-300">
+  <div data-v-e7bf4501="" aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-1 overflow-hidden">
+    <!--v-if-->
+  </div>
+  <div data-v-e7bf4501="" data-slot="card-header" class="@container/card-header grid auto-rows-min grid-rows-[auto_auto] items-start gap-1.5 px-6 has-data-[slot=card-action]:grid-cols-[1fr_auto] [.border-b]:pb-6">
+    <div data-v-e7bf4501="" class="flex flex-wrap items-start justify-between gap-2">
+      <div data-v-e7bf4501="" class="space-y-2.5 pr-2">
+        <h3 data-v-e7bf4501="" data-slot="card-title" class="leading-none font-semibold flex items-center gap-2 transition-opacity duration-300 ease-out"><img data-v-e7bf4501="" src="/api/v1/monitoring/monitors/monitor_cloudflare/favicon" alt="" class="size-5 rounded-sm"><span data-v-e7bf4501="">Cloudflare</span></h3>
+        <div data-v-e7bf4501="" class="flex flex-wrap gap-x-6 gap-y-1.5 rounded-md border border-border/60 bg-muted/20 p-2.5 text-xs">
+          <div data-v-e7bf4501="" class="min-w-[10rem]">
+            <p data-v-e7bf4501="" class="text-[11px] uppercase tracking-wide text-muted-foreground">monitorDetail.type</p>
+            <p data-v-e7bf4501="" class="flex items-center gap-1.5 break-all font-medium text-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 text-muted-foreground lucide-globe-icon lucide-globe size-3.5 text-muted-foreground" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path>
+                <path d="M2 12h20"></path>
+              </svg><span data-v-e7bf4501="">HTTP</span></p>
+          </div>
+          <div data-v-e7bf4501="" class="min-w-[10rem]">
+            <p data-v-e7bf4501="" class="text-[11px] uppercase tracking-wide text-muted-foreground">monitorDetail.url</p><a data-v-e7bf4501="" href="https://www.cloudflare.com" target="_blank" rel="noopener noreferrer" class="block break-all font-medium text-emerald-400 underline-offset-2 hover:underline">https://www.cloudflare.com</a>
+          </div>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" class="flex items-center gap-2"><a data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5" to="/monitors/monitor_cloudflare/edit"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-pencil-icon lucide-pencil size-4" aria-hidden="true">
+            <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path>
+            <path d="m15 5 4 4"></path>
+          </svg> common.edit</a><button data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-play-icon lucide-play size-4" aria-hidden="true">
+            <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path>
+          </svg> monitorDetail.checkNow</button><button data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-pause-icon lucide-pause size-4" aria-hidden="true">
+            <rect x="14" y="3" width="5" height="18" rx="1"></rect>
+            <rect x="5" y="3" width="5" height="18" rx="1"></rect>
+          </svg> monitoring.pause</button></div>
+    </div>
+  </div>
+  <div data-v-e7bf4501="" data-slot="card-content" class="px-6 space-y-3">
+    <div data-v-e7bf4501="" class="space-y-3 transition-opacity duration-300 ease-out opacity-100">
+      <div data-v-e7bf4501="" class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
+        <div data-v-e7bf4501="" class="flex-1">
+          <div data-v-e7bf4501="" data-test="heartbeat-stub" hide-open-bucket="false" statuses="unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,up,up,down,paused,up" points=",,,,,,,,,,,,,,,,,,,,,,,,[object Object],[object Object],[object Object],[object Object],[object Object],[object Object]"></div>
+          <p data-v-e7bf4501="" class="mt-2 text-xs text-muted-foreground">monitorDetail.checkEverySeconds</p>
+        </div>
+        <div data-v-e7bf4501="" data-slot="badge" class="inline-flex items-center justify-center border py-0.5 font-medium w-fit whitespace-nowrap shrink-0 [&amp;>svg]:size-3 gap-1 [&amp;>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden border-transparent [a&amp;]:hover:bg-primary/90 h-11 rounded-full px-5 text-xl bg-rose-500 text-white">status.unknown</div>
+      </div>
+      <div data-v-e7bf4501="" class="grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-5">
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-zap-icon lucide-zap size-3.5" aria-hidden="true">
+              <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"></path>
+            </svg> monitorDetail.responseCurrent</p>
+          <p data-v-e7bf4501="" class="font-medium">0ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-activity-icon lucide-activity size-3.5" aria-hidden="true">
+              <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path>
+            </svg> monitorDetail.avgResponse24h</p>
+          <p data-v-e7bf4501="" class="font-medium">0ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-shield-check-icon lucide-shield-check size-3.5" aria-hidden="true">
+              <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path>
+              <path d="m9 12 2 2 4-4"></path>
+            </svg> monitoring.uptime24h</p>
+          <p data-v-e7bf4501="" class="font-medium">99.20%</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-chart-column-icon lucide-chart-column size-3.5" aria-hidden="true">
+              <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>
+              <path d="M18 17V9"></path>
+              <path d="M13 17V5"></path>
+              <path d="M8 17v-3"></path>
+            </svg> monitorDetail.p95_24h</p>
+          <p data-v-e7bf4501="" class="font-medium">340ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-clock3-icon lucide-clock-3 size-3.5" aria-hidden="true">
+              <path d="M12 6v6h4"></path>
+              <circle cx="12" cy="12" r="10"></circle>
+            </svg> monitorDetail.checks</p>
+          <p data-v-e7bf4501="" class="font-medium">40</p>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" data-test="chart-stub" monitor-name="Cloudflare" monitor-type="http" checks="" range="1h"></div>
+      <div data-v-e7bf4501="" class="rounded-md border border-border p-3">
+        <p data-v-e7bf4501="" class="mb-2 text-sm font-medium">monitorDetail.recentIncidents</p>
+        <div data-v-e7bf4501="" class="space-y-2">
+          <div data-v-e7bf4501="" class="rounded-md border border-border p-2 text-sm">
+            <p data-v-e7bf4501="" class="font-medium">Probe timeout spike</p>
+            <p data-v-e7bf4501="" class="text-xs text-muted-foreground">common.opened 2026-02-07T11:50:00Z · common.open</p>
+          </div>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" class="overflow-hidden rounded-md border border-border">
+        <div data-v-e7bf4501="" data-slot="table-container" class="relative w-full overflow-auto">
+          <table data-slot="table" class="w-full caption-bottom text-sm">
+            <thead data-v-e7bf4501="" data-slot="table-header" class="[&amp;_tr]:border-b">
+              <tr data-v-e7bf4501="" data-slot="table-row" class="hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors">
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.time</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitoring.status</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.http</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.latency</th>
+              </tr>
+            </thead>
+            <tbody data-v-e7bf4501="" data-slot="table-body" class="[&amp;_tr:last-child]:border-0">
+              <tr data-v-e7bf4501="" data-slot="table-row" class="hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors">
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px] text-center text-muted-foreground" colspan="4">monitorDetail.noChecksYet</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>"
+`;
+
+exports[`MonitorDetailPanel snapshot baselines > matches paused baseline 1`] = `
+"<div data-v-e7bf4501="" data-slot="card" class="bg-card text-card-foreground flex flex-col rounded-xl border py-6 shadow-sm relative min-h-[32rem] overflow-hidden gap-1 transition-shadow duration-300">
+  <div data-v-e7bf4501="" aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-1 overflow-hidden">
+    <!--v-if-->
+  </div>
+  <div data-v-e7bf4501="" data-slot="card-header" class="@container/card-header grid auto-rows-min grid-rows-[auto_auto] items-start gap-1.5 px-6 has-data-[slot=card-action]:grid-cols-[1fr_auto] [.border-b]:pb-6">
+    <div data-v-e7bf4501="" class="flex flex-wrap items-start justify-between gap-2">
+      <div data-v-e7bf4501="" class="space-y-2.5 pr-2">
+        <h3 data-v-e7bf4501="" data-slot="card-title" class="leading-none font-semibold flex items-center gap-2 transition-opacity duration-300 ease-out"><img data-v-e7bf4501="" src="/api/v1/monitoring/monitors/monitor_cloudflare/favicon" alt="" class="size-5 rounded-sm"><span data-v-e7bf4501="">Cloudflare</span></h3>
+        <div data-v-e7bf4501="" class="flex flex-wrap gap-x-6 gap-y-1.5 rounded-md border border-border/60 bg-muted/20 p-2.5 text-xs">
+          <div data-v-e7bf4501="" class="min-w-[10rem]">
+            <p data-v-e7bf4501="" class="text-[11px] uppercase tracking-wide text-muted-foreground">monitorDetail.type</p>
+            <p data-v-e7bf4501="" class="flex items-center gap-1.5 break-all font-medium text-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 text-muted-foreground lucide-globe-icon lucide-globe size-3.5 text-muted-foreground" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path>
+                <path d="M2 12h20"></path>
+              </svg><span data-v-e7bf4501="">HTTP</span></p>
+          </div>
+          <div data-v-e7bf4501="" class="min-w-[10rem]">
+            <p data-v-e7bf4501="" class="text-[11px] uppercase tracking-wide text-muted-foreground">monitorDetail.url</p><a data-v-e7bf4501="" href="https://www.cloudflare.com" target="_blank" rel="noopener noreferrer" class="block break-all font-medium text-emerald-400 underline-offset-2 hover:underline">https://www.cloudflare.com</a>
+          </div>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" class="flex items-center gap-2"><a data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5" to="/monitors/monitor_cloudflare/edit"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-pencil-icon lucide-pencil size-4" aria-hidden="true">
+            <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path>
+            <path d="m15 5 4 4"></path>
+          </svg> common.edit</a><button data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-play-icon lucide-play size-4" aria-hidden="true">
+            <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path>
+          </svg> monitorDetail.checkNow</button><button data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-play-icon lucide-play size-4" aria-hidden="true">
+            <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path>
+          </svg> monitoring.resume</button></div>
+    </div>
+  </div>
+  <div data-v-e7bf4501="" data-slot="card-content" class="px-6 space-y-3">
+    <div data-v-e7bf4501="" class="space-y-3 transition-opacity duration-300 ease-out opacity-100">
+      <div data-v-e7bf4501="" class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
+        <div data-v-e7bf4501="" class="flex-1">
+          <div data-v-e7bf4501="" data-test="heartbeat-stub" hide-open-bucket="false" statuses="unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,up,up,down,paused,up" points=",,,,,,,,,,,,,,,,,,,,,,,,[object Object],[object Object],[object Object],[object Object],[object Object],[object Object]"></div>
+          <p data-v-e7bf4501="" class="mt-2 text-xs text-muted-foreground">monitorDetail.checkEverySeconds</p>
+        </div>
+        <div data-v-e7bf4501="" data-slot="badge" class="inline-flex items-center justify-center border py-0.5 font-medium w-fit whitespace-nowrap shrink-0 [&amp;>svg]:size-3 gap-1 [&amp;>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden border-transparent [a&amp;]:hover:bg-primary/90 h-11 rounded-full px-5 text-xl bg-amber-400 text-background">monitoring.paused</div>
+      </div>
+      <div data-v-e7bf4501="" class="grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-5">
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-zap-icon lucide-zap size-3.5" aria-hidden="true">
+              <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"></path>
+            </svg> monitorDetail.responseCurrent</p>
+          <p data-v-e7bf4501="" class="font-medium">0ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-activity-icon lucide-activity size-3.5" aria-hidden="true">
+              <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path>
+            </svg> monitorDetail.avgResponse24h</p>
+          <p data-v-e7bf4501="" class="font-medium">0ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-shield-check-icon lucide-shield-check size-3.5" aria-hidden="true">
+              <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path>
+              <path d="m9 12 2 2 4-4"></path>
+            </svg> monitoring.uptime24h</p>
+          <p data-v-e7bf4501="" class="font-medium">99.20%</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-chart-column-icon lucide-chart-column size-3.5" aria-hidden="true">
+              <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>
+              <path d="M18 17V9"></path>
+              <path d="M13 17V5"></path>
+              <path d="M8 17v-3"></path>
+            </svg> monitorDetail.p95_24h</p>
+          <p data-v-e7bf4501="" class="font-medium">340ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-clock3-icon lucide-clock-3 size-3.5" aria-hidden="true">
+              <path d="M12 6v6h4"></path>
+              <circle cx="12" cy="12" r="10"></circle>
+            </svg> monitorDetail.checks</p>
+          <p data-v-e7bf4501="" class="font-medium">40</p>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" data-test="chart-stub" monitor-name="Cloudflare" monitor-type="http" checks="[object Object]" range="1h"></div>
+      <div data-v-e7bf4501="" class="rounded-md border border-border p-3">
+        <p data-v-e7bf4501="" class="mb-2 text-sm font-medium">monitorDetail.recentIncidents</p>
+        <div data-v-e7bf4501="" class="space-y-2">
+          <div data-v-e7bf4501="" class="rounded-md border border-border p-2 text-sm">
+            <p data-v-e7bf4501="" class="font-medium">Probe timeout spike</p>
+            <p data-v-e7bf4501="" class="text-xs text-muted-foreground">common.opened 2026-02-07T11:50:00Z · common.open</p>
+          </div>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" class="overflow-hidden rounded-md border border-border">
+        <div data-v-e7bf4501="" data-slot="table-container" class="relative w-full overflow-auto">
+          <table data-slot="table" class="w-full caption-bottom text-sm">
+            <thead data-v-e7bf4501="" data-slot="table-header" class="[&amp;_tr]:border-b">
+              <tr data-v-e7bf4501="" data-slot="table-row" class="hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors">
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.time</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitoring.status</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.http</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.latency</th>
+              </tr>
+            </thead>
+            <tbody data-v-e7bf4501="" data-slot="table-body" class="[&amp;_tr:last-child]:border-0">
+              <!--v-if-->
+              <tr data-v-e7bf4501="" data-slot="table-row" class="hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors">
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px] text-xs text-muted-foreground"><span data-v-e7bf4501="" title="2026-02-07T11:59:00Z">relative.daysAgo</span></td>
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">
+                  <div data-v-e7bf4501="" data-slot="badge" class="inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&amp;>svg]:size-3 gap-1 [&amp;>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden [a&amp;]:hover:bg-accent [a&amp;]:hover:text-accent-foreground border-amber-500/40 text-amber-400" variant="outline">paused</div>
+                </td>
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">-</td>
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">0ms</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>"
+`;
+
+exports[`MonitorDetailPanel snapshot baselines > matches up baseline 1`] = `
+"<div data-v-e7bf4501="" data-slot="card" class="bg-card text-card-foreground flex flex-col rounded-xl border py-6 shadow-sm relative min-h-[32rem] overflow-hidden gap-1 transition-shadow duration-300">
+  <div data-v-e7bf4501="" aria-hidden="true" class="pointer-events-none absolute inset-x-0 top-0 h-1 overflow-hidden">
+    <!--v-if-->
+  </div>
+  <div data-v-e7bf4501="" data-slot="card-header" class="@container/card-header grid auto-rows-min grid-rows-[auto_auto] items-start gap-1.5 px-6 has-data-[slot=card-action]:grid-cols-[1fr_auto] [.border-b]:pb-6">
+    <div data-v-e7bf4501="" class="flex flex-wrap items-start justify-between gap-2">
+      <div data-v-e7bf4501="" class="space-y-2.5 pr-2">
+        <h3 data-v-e7bf4501="" data-slot="card-title" class="leading-none font-semibold flex items-center gap-2 transition-opacity duration-300 ease-out"><img data-v-e7bf4501="" src="/api/v1/monitoring/monitors/monitor_cloudflare/favicon" alt="" class="size-5 rounded-sm"><span data-v-e7bf4501="">Cloudflare</span></h3>
+        <div data-v-e7bf4501="" class="flex flex-wrap gap-x-6 gap-y-1.5 rounded-md border border-border/60 bg-muted/20 p-2.5 text-xs">
+          <div data-v-e7bf4501="" class="min-w-[10rem]">
+            <p data-v-e7bf4501="" class="text-[11px] uppercase tracking-wide text-muted-foreground">monitorDetail.type</p>
+            <p data-v-e7bf4501="" class="flex items-center gap-1.5 break-all font-medium text-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 text-muted-foreground lucide-globe-icon lucide-globe size-3.5 text-muted-foreground" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path>
+                <path d="M2 12h20"></path>
+              </svg><span data-v-e7bf4501="">HTTP</span></p>
+          </div>
+          <div data-v-e7bf4501="" class="min-w-[10rem]">
+            <p data-v-e7bf4501="" class="text-[11px] uppercase tracking-wide text-muted-foreground">monitorDetail.url</p><a data-v-e7bf4501="" href="https://www.cloudflare.com" target="_blank" rel="noopener noreferrer" class="block break-all font-medium text-emerald-400 underline-offset-2 hover:underline">https://www.cloudflare.com</a>
+          </div>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" class="flex items-center gap-2"><a data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5" to="/monitors/monitor_cloudflare/edit"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-pencil-icon lucide-pencil size-4" aria-hidden="true">
+            <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path>
+            <path d="m15 5 4 4"></path>
+          </svg> common.edit</a><button data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-play-icon lucide-play size-4" aria-hidden="true">
+            <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"></path>
+          </svg> monitorDetail.checkNow</button><button data-v-e7bf4501="" data-slot="button" class="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 shrink-0 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-4 lucide-pause-icon lucide-pause size-4" aria-hidden="true">
+            <rect x="14" y="3" width="5" height="18" rx="1"></rect>
+            <rect x="5" y="3" width="5" height="18" rx="1"></rect>
+          </svg> monitoring.pause</button></div>
+    </div>
+  </div>
+  <div data-v-e7bf4501="" data-slot="card-content" class="px-6 space-y-3">
+    <div data-v-e7bf4501="" class="space-y-3 transition-opacity duration-300 ease-out opacity-100">
+      <div data-v-e7bf4501="" class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
+        <div data-v-e7bf4501="" class="flex-1">
+          <div data-v-e7bf4501="" data-test="heartbeat-stub" hide-open-bucket="false" statuses="unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,up,up,down,paused,up" points=",,,,,,,,,,,,,,,,,,,,,,,,[object Object],[object Object],[object Object],[object Object],[object Object],[object Object]"></div>
+          <p data-v-e7bf4501="" class="mt-2 text-xs text-muted-foreground">monitorDetail.checkEverySeconds</p>
+        </div>
+        <div data-v-e7bf4501="" data-slot="badge" class="inline-flex items-center justify-center border py-0.5 font-medium w-fit whitespace-nowrap shrink-0 [&amp;>svg]:size-3 gap-1 [&amp;>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden border-transparent [a&amp;]:hover:bg-primary/90 h-11 rounded-full px-5 text-xl bg-emerald-400 text-background">status.up</div>
+      </div>
+      <div data-v-e7bf4501="" class="grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-5">
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-zap-icon lucide-zap size-3.5" aria-hidden="true">
+              <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"></path>
+            </svg> monitorDetail.responseCurrent</p>
+          <p data-v-e7bf4501="" class="font-medium">165ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-activity-icon lucide-activity size-3.5" aria-hidden="true">
+              <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path>
+            </svg> monitorDetail.avgResponse24h</p>
+          <p data-v-e7bf4501="" class="font-medium">165ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-shield-check-icon lucide-shield-check size-3.5" aria-hidden="true">
+              <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path>
+              <path d="m9 12 2 2 4-4"></path>
+            </svg> monitoring.uptime24h</p>
+          <p data-v-e7bf4501="" class="font-medium">99.20%</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-chart-column-icon lucide-chart-column size-3.5" aria-hidden="true">
+              <path d="M3 3v16a2 2 0 0 0 2 2h16"></path>
+              <path d="M18 17V9"></path>
+              <path d="M13 17V5"></path>
+              <path d="M8 17v-3"></path>
+            </svg> monitorDetail.p95_24h</p>
+          <p data-v-e7bf4501="" class="font-medium">340ms</p>
+        </div>
+        <div data-v-e7bf4501="" class="rounded-md border border-border p-2">
+          <p data-v-e7bf4501="" class="flex items-center gap-1 text-xs text-muted-foreground"><svg data-v-e7bf4501="" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide size-3.5 lucide-clock3-icon lucide-clock-3 size-3.5" aria-hidden="true">
+              <path d="M12 6v6h4"></path>
+              <circle cx="12" cy="12" r="10"></circle>
+            </svg> monitorDetail.checks</p>
+          <p data-v-e7bf4501="" class="font-medium">40</p>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" data-test="chart-stub" monitor-name="Cloudflare" monitor-type="http" checks="[object Object]" range="1h"></div>
+      <div data-v-e7bf4501="" class="rounded-md border border-border p-3">
+        <p data-v-e7bf4501="" class="mb-2 text-sm font-medium">monitorDetail.recentIncidents</p>
+        <div data-v-e7bf4501="" class="space-y-2">
+          <div data-v-e7bf4501="" class="rounded-md border border-border p-2 text-sm">
+            <p data-v-e7bf4501="" class="font-medium">Probe timeout spike</p>
+            <p data-v-e7bf4501="" class="text-xs text-muted-foreground">common.opened 2026-02-07T11:50:00Z · common.open</p>
+          </div>
+        </div>
+      </div>
+      <div data-v-e7bf4501="" class="overflow-hidden rounded-md border border-border">
+        <div data-v-e7bf4501="" data-slot="table-container" class="relative w-full overflow-auto">
+          <table data-slot="table" class="w-full caption-bottom text-sm">
+            <thead data-v-e7bf4501="" data-slot="table-header" class="[&amp;_tr]:border-b">
+              <tr data-v-e7bf4501="" data-slot="table-row" class="hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors">
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.time</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitoring.status</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.http</th>
+                <th data-v-e7bf4501="" data-slot="table-head" class="text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">monitorDetail.latency</th>
+              </tr>
+            </thead>
+            <tbody data-v-e7bf4501="" data-slot="table-body" class="[&amp;_tr:last-child]:border-0">
+              <!--v-if-->
+              <tr data-v-e7bf4501="" data-slot="table-row" class="hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors">
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px] text-xs text-muted-foreground"><span data-v-e7bf4501="" title="2026-02-07T11:59:00Z">relative.daysAgo</span></td>
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">
+                  <div data-v-e7bf4501="" data-slot="badge" class="inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&amp;>svg]:size-3 gap-1 [&amp;>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden border-transparent bg-primary text-primary-foreground [a&amp;]:hover:bg-primary/90" variant="default">up</div>
+                </td>
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">200</td>
+                <td data-v-e7bf4501="" data-slot="table-cell" class="p-2 align-middle whitespace-nowrap [&amp;:has([role=checkbox])]:pr-0 [&amp;>[role=checkbox]]:translate-y-[2px]">165ms</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>"
+`;

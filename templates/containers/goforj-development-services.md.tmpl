@@ -121,18 +121,18 @@ included in those links.
 
 ## Bindings, Credentials, And Data
 
-Most catalog ports use `DEV_SERVICE_IP_ADDRESS=127.0.0.1` and therefore bind to
-loopback by default. Redis, Mailpit, VictoriaMetrics, and Grafana retain the
-older `IP_ADDRESS=0.0.0.0` bind contract for compatibility. Before enabling any
-of those services on an untrusted network, set:
+Catalog ports use `DEV_SERVICE_IP_ADDRESS=127.0.0.1` and therefore bind to
+loopback by default. The legacy `IP_ADDRESS` variable remains an explicit
+override for Redis, Mailpit, VictoriaMetrics, Grafana, MySQL, and PostgreSQL.
+To expose one of those services to other hosts, set:
 
 ```env
-IP_ADDRESS=127.0.0.1
+IP_ADDRESS=0.0.0.0
 ```
 
-Change `DEV_SERVICE_IP_ADDRESS` only when another host must reach the other
-catalog services. Replace all development credentials before exposing a
-service beyond the local machine. Quote edited secrets with single quotes in
+Change `DEV_SERVICE_IP_ADDRESS` when another host must reach the other catalog
+services. Replace all development credentials before exposing a service beyond
+the local machine. Quote edited secrets with single quotes in
 `.env` so spaces remain intact and characters such as `$` and `#` are not
 interpreted as dotenv syntax:
 

@@ -10,8 +10,8 @@
     environment:
       - TZ=${TZ:-UTC}
     ports:
-      - ${IP_ADDRESS:-0.0.0.0}:${MAILPIT_SMTP_PORT:-1025}:1025
-      - ${IP_ADDRESS:-0.0.0.0}:${MAILPIT_HTTP_PORT:-8025}:8025
+      - ${IP_ADDRESS:-127.0.0.1}:${MAILPIT_SMTP_PORT:-1025}:1025
+      - ${IP_ADDRESS:-127.0.0.1}:${MAILPIT_HTTP_PORT:-8025}:8025
     networks:
       - backend
 {{ end -}}

@@ -264,10 +264,10 @@ profile behavior; this design does not claim a live Docker matrix for every entr
 An always-rendered catalog must be inert while disabled and explicit about local-development security
 when enabled.
 
-- Most catalog ports bind through `DEV_SERVICE_IP_ADDRESS=127.0.0.1` by default.
-- Redis, Mailpit, VictoriaMetrics, and Grafana preserve their established
-  `IP_ADDRESS=0.0.0.0` contract for compatibility. Generated guidance tells developers to set
-  `IP_ADDRESS=127.0.0.1` before enabling them on an untrusted network.
+- Catalog ports bind through `DEV_SERVICE_IP_ADDRESS=127.0.0.1` by default.
+- Redis, Mailpit, VictoriaMetrics, Grafana, MySQL, and PostgreSQL continue to
+  accept `IP_ADDRESS` as an explicit override, but no longer default it to a
+  public interface.
 - Services with bootstrap authentication use overridable local credentials. Services documented as
   unauthenticated rely on loopback isolation and must not be exposed casually.
 - RustFS authentication remains enabled, but bucket creation and App driver selection remain explicit.
@@ -360,8 +360,8 @@ catalog recipe.
   exact legacy unprofiled services without discarding owner tokens.
 - Grafana activation also includes VictoriaMetrics; component-specific vmagent and dashboard seeding
   remain conditional on the corresponding generated components.
-- Most new service ports default to loopback, while the preserved legacy `IP_ADDRESS` bindings and
-  their safety action are documented explicitly.
+- All published development-service ports default to loopback, while the legacy
+  `IP_ADDRESS` override remains documented for intentional external access.
 - Profile-aware render tests do not start the complete catalog accidentally.
 - Generated teardown can select every profile without requesting deletion of named volumes.
 

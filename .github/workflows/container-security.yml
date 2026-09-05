@@ -1,0 +1,265 @@
+name: container security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - containers/test-build/**
+      - templates/containers/**
+      - templates/docker-compose.yml.tmpl
+      - .trivyignore.yaml
+      - .github/workflows/container-security.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - containers/test-build/**
+      - templates/containers/**
+      - templates/docker-compose.yml.tmpl
+      - .trivyignore.yaml
+      - .github/workflows/container-security.yml
+  schedule:
+    - cron: "23 9 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-image:
+    name: test image vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: build test image
+        run: docker build --tag goforj-test-build:security containers/test-build
+
+      - name: inventory test image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: goforj-test-build:security
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          format: json
+          output: container-test-build-vulnerabilities.json
+
+      - name: scan test image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: goforj-test-build:security
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: 1
+
+      - name: generate test image SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: goforj-test-build:security
+          format: cyclonedx
+          output: container-test-build.cdx.json
+
+      - name: upload test image SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-test-build-sbom
+          path: |
+            container-test-build.cdx.json
+            container-test-build-vulnerabilities.json
+          retention-days: 14
+
+  template-image-inventory:
+    name: template image inventory
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.images.outputs.matrix }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: discover template images
+        id: images
+        shell: bash
+        run: |
+          matrix="$(
+            {
+              find templates/containers -type f \( -name Dockerfile -o -name 'Dockerfile*.tmpl' \) -exec awk '$1 == "FROM" { print $2 }' {} +
+              awk '$1 == "image:" { print $2 }' templates/docker-compose.yml.tmpl templates/containers/developer-services/*.yml.tmpl
+            } \
+              | sort -u \
+              | jq -Rnc '[inputs | select(length > 0) | {ref: ., name: (gsub("[^A-Za-z0-9._-]"; "-"))}] | {include: .}'
+          )"
+          jq -e '
+            .include
+            | length > 0
+              and all(.[];
+                .ref
+                | test("^[A-Za-z0-9][A-Za-z0-9._:/@-]*$")
+              )
+          ' <<<"$matrix" >/dev/null
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  template-images:
+    name: template image (${{ matrix.name }})
+    needs: template-image-inventory
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.template-image-inventory.outputs.matrix) }}
+    steps:
+      - name: pull image
+        shell: bash
+        env:
+          IMAGE_REF: ${{ matrix.ref }}
+        run: |
+          for attempt in 1 2 3
+          do
+            if docker pull "$IMAGE_REF"
+            then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 3 ]]
+            then
+              exit 1
+            fi
+            sleep "$((attempt * 20))"
+          done
+
+      - name: inventory vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ matrix.ref }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          format: json
+          output: template-image-vulnerabilities.json
+
+      - name: generate image SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ matrix.ref }}
+          format: cyclonedx
+          output: template-image.cdx.json
+
+      - name: upload image evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: template-image-${{ matrix.name }}
+          path: |
+            template-image.cdx.json
+            template-image-vulnerabilities.json
+          retention-days: 14
+
+  template-config:
+    name: generated container configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: materialize scanner inputs
+        id: materialize
+        shell: bash
+        run: |
+          scan_root="$RUNNER_TEMP/container-config"
+          mkdir -p "$scan_root/dockerfiles" "$scan_root/compose"
+
+          while IFS= read -r -d '' source
+          do
+            if awk '
+              index($0, "{{") {
+                remainder = $0
+                gsub(/\{\{[^}]*\}\}/, "", remainder)
+                if (remainder !~ /^[[:space:]]*$/) {
+                  print FNR ":" $0
+                  found = 1
+                }
+              }
+              END { exit found }
+            ' "$source"
+            then
+              continue
+            fi
+            echo "inline template content cannot be represented by the container security scan: $source" >&2
+            exit 1
+          done < <(
+            find templates/containers -type f \( -name Dockerfile -o -name 'Dockerfile*.tmpl' \) -print0
+            find templates/containers/developer-services templates/docker-compose.yml.tmpl -type f -name '*.yml.tmpl' -print0
+          )
+
+          while IFS= read -r -d '' source
+          do
+            relative="${source#templates/containers/}"
+            name="$(printf '%s' "$relative" | tr '/.' '--')"
+            destination="$scan_root/dockerfiles/$name"
+            mkdir -p "$destination"
+            cp "$source" "$destination/Dockerfile"
+          done < <(find templates/containers -type f \( -name Dockerfile -o -name 'Dockerfile*.tmpl' \) -print0)
+
+          sed '/{{/d' templates/docker-compose.yml.tmpl > "$scan_root/compose/docker-compose.yml"
+          for source in templates/containers/developer-services/*.yml.tmpl
+          do
+            name="$(basename "$source" .yml.tmpl)"
+            {
+              echo 'services:'
+              awk '
+                /define ".*-services"/ { capture = 1; next }
+                capture && /{{ end -}}/ { exit }
+                capture && $0 !~ /^{{/ { print }
+              ' "$source"
+            } > "$scan_root/compose/developer-$name.yml"
+          done
+
+          echo "path=$scan_root" >> "$GITHUB_OUTPUT"
+
+      - name: verify Compose privilege boundaries
+        shell: bash
+        run: |
+          while IFS= read -r -d '' compose_file
+          do
+            if ! IP_ADDRESS='' DEV_SERVICE_IP_ADDRESS='' docker compose -f "$compose_file" config --format json \
+              | jq -e '
+                  [
+                    .services[]?
+                    | select(
+                        (.privileged // false) == true
+                        or (.network_mode // "") == "host"
+                        or (.pid // "") == "host"
+                        or (.ipc // "") == "host"
+                        or ((.cap_add // []) | length > 0)
+                        or ((.devices // []) | length > 0)
+                        or any((.volumes // [])[]?;
+                          ((.source // "") | contains("docker.sock"))
+                          or ((.target // "") | contains("docker.sock"))
+                        )
+                        or any((.ports // [])[]?;
+                          ((.host_ip // "") as $host_ip
+                            | ($host_ip == "::1" or ($host_ip | test("^127([.][0-9]{1,3}){3}$")))
+                            | not
+                          )
+                        )
+                      )
+                  ]
+                  | length == 0
+                ' >/dev/null
+            then
+              echo "generated Compose configuration requests a prohibited host privilege: $compose_file" >&2
+              exit 1
+            fi
+          done < <(find "${{ steps.materialize.outputs.path }}/compose" -type f -name '*.yml' -print0)
+
+      - name: scan template configuration
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: ${{ steps.materialize.outputs.path }}
+          severity: CRITICAL,HIGH
+          trivyignores: .trivyignore.yaml
+          exit-code: 1

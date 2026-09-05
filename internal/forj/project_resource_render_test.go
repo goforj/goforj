@@ -463,7 +463,7 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 			t.Fatalf("default environment omitted queue operating default %q:\n%s", want, environment)
 		}
 	}
-	if !strings.Contains(environment, "IP_ADDRESS=0.0.0.0\n") {
+	if !strings.Contains(environment, "IP_ADDRESS=127.0.0.1\n") {
 		t.Fatalf("default environment omitted the Docker bind-address default:\n%s", environment)
 	}
 	if !strings.Contains(environment, "## Compose settings: https://goforj.dev/reference/env-vars#development-service-compose-settings\n") {

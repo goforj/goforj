@@ -1,0 +1,20 @@
+vulnerabilities:
+  - id: CVE-2026-17106
+    paths:
+      - usr/libexec/docker/cli-plugins/docker-buildx
+    purls:
+      - pkg:golang/github.com/moby/go-archive@v0.2.0
+    expired_at: 2026-12-04
+    statement: The latest upstream Docker Buildx 0.37.0 binary still includes this dependency. CI builds repository-controlled generated contexts only. Remove this exception when upstream rebuilds with go-archive 0.3.0 or later.
+
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - dockerfiles/mariadb-Dockerfile/Dockerfile
+    expired_at: 2026-12-04
+    statement: The official MariaDB entrypoint starts with root privileges so it can prepare mounted directories, then drops to the mysql user before starting the server. Setting USER in this derived image would bypass that supported initialization path.
+  - id: AVD-DS-0002
+    paths:
+      - dockerfiles/mariadb-Dockerfile/Dockerfile
+    expired_at: 2026-12-04
+    statement: The official MariaDB entrypoint starts with root privileges so it can prepare mounted directories, then drops to the mysql user before starting the server. Setting USER in this derived image would bypass that supported initialization path.

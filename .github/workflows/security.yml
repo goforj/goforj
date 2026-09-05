@@ -1,0 +1,270 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-inventory:
+    name: security surface inventory
+    runs-on: ubuntu-latest
+    outputs:
+      go-matrix: ${{ steps.surfaces.outputs.go-matrix }}
+      npm-matrix: ${{ steps.surfaces.outputs.npm-matrix }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: discover security surfaces
+        id: surfaces
+        shell: bash
+        run: |
+          bash scripts/check-security-inventory.sh
+          go_matrix="$(
+            {
+              while IFS= read -r manifest
+              do
+                module="$(dirname "$manifest")"
+                name="${module#./}"
+                if [[ "$module" == "." ]]
+                then
+                  name="root"
+                fi
+                printf '%s\t%s\t%s\t%s\t\n' "$name" "$module" linux amd64
+              done < <(find . -name go.mod -not -path './.git/*' -not -path '*/node_modules/*' | sort)
+              printf '%s\t%s\t%s\t%s\t%s\n' \
+                'root integrations' . linux amd64 'integration,lighthouse,multiapp,verifiercalibration' \
+                'root watcher stress' . linux amd64 'watcherstress' \
+                'root wire generator' . linux amd64 'wireinject' \
+                'integration backup' integration linux amd64 'integration_backup' \
+                'integration generator' integration linux amd64 'integration_generator' \
+                'root macOS' . darwin arm64 '' \
+                'root Windows' . windows amd64 ''
+            } | jq -Rsc '
+              split("\n")
+              | map(select(length > 0) | split("\t") | {name: .[0], module: .[1], goos: .[2], goarch: .[3], tags: .[4]})
+              | {include: .}
+            ' | jq -c .
+          )"
+          npm_matrix="$(
+            find . -name package-lock.json -not -path './.git/*' -not -path '*/node_modules/*' -exec dirname {} \; \
+              | sort -u \
+              | jq -Rsc '
+                  split("\n")
+                  | map(select(length > 0) | {directory: ., name: (if . == "." then "root" else gsub("[/.]"; "-") end)})
+                  | {include: .}
+                ' | jq -c .
+          )"
+          echo "go-matrix=$go_matrix" >> "$GITHUB_OUTPUT"
+          echo "npm-matrix=$npm_matrix" >> "$GITHUB_OUTPUT"
+
+  dependency-review:
+    name: dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
+  go-vulnerabilities:
+    name: Go vulnerabilities (${{ matrix.name }})
+    needs: security-inventory
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.security-inventory.outputs.go-matrix) }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: set up go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+      - name: verify render-warm dependency parity
+        if: matrix.module == 'tools/renderwarm'
+        run: |
+          bash scripts/generate-renderwarm.sh
+          git diff --exit-code -- tools/renderwarm/go.mod tools/renderwarm/go.sum tools/renderwarm/main.go
+
+      - name: scan module
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          GOOS: ${{ matrix.goos }}
+          MODULE: ${{ matrix.module }}
+          TAGS: ${{ matrix.tags }}
+        run: bash scripts/check-vulnerabilities.sh "$MODULE" "$TAGS"
+
+  frontend-vulnerabilities:
+    name: frontend vulnerabilities (${{ matrix.name }})
+    needs: security-inventory
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.security-inventory.outputs.npm-matrix) }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: set up node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: audit lockfile
+        working-directory: ${{ matrix.directory }}
+        run: npm audit --package-lock-only
+
+  secrets:
+    name: committed secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: set up go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: install gitleaks
+        run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
+
+      - name: scan history
+        run: gitleaks git . --config .gitleaks.toml --redact --no-banner
+
+  sbom:
+    name: software bills of materials
+    needs: security-inventory
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: set up go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: set up node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: generate Go SBOMs
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0
+          bash scripts/generate-renderwarm.sh
+          git diff --exit-code -- tools/renderwarm/go.mod tools/renderwarm/go.sum tools/renderwarm/main.go
+          while IFS= read -r manifest
+          do
+            directory="$(dirname "$manifest")"
+            name="${directory#./}"
+            if [[ "$directory" == "." ]]
+            then
+              name="root"
+            fi
+            name="$(printf '%s' "$name" | tr '/.' '--')"
+            module_path="$(cd "$directory" && GOWORK=off go list -m -f '{{.Path}}')"
+            package_names="$(cd "$directory" && GOWORK=off go list -f '{{.Name}}' ./...)"
+            component_type="library"
+            if grep -Fqx main <<<"$package_names"
+            then
+              component_type="application"
+            fi
+            output="$GITHUB_WORKSPACE/sbom/go-$name.cdx.json"
+            (cd "$directory" && cyclonedx-gomod mod -test -json -type "$component_type" -licenses -noserial -notimestamp -output "$output" .)
+            jq -e --arg module_path "$module_path" --arg component_type "$component_type" --arg purl_prefix "pkg:golang/$module_path" '
+              .bomFormat == "CycloneDX" and
+              .metadata.component.name == $module_path and
+              .metadata.component.type == $component_type and
+              (.metadata.component.purl as $purl |
+                ($purl | startswith($purl_prefix)) and
+                (($purl | ltrimstr($purl_prefix)) | startswith("?") or startswith("@"))) and
+              (.components | type == "array") and
+              (.components | length > 0) and
+              all(.components[]?; .name != ".." and (.purl // "" | contains("pkg:golang/..") | not))
+            ' "$output" >/dev/null
+          done < <(find . -name go.mod -not -path './.git/*' -not -path '*/node_modules/*' | sort)
+
+      - name: generate npm SBOMs
+        run: |
+          set -euo pipefail
+          while IFS= read -r lockfile
+          do
+            directory="$(dirname "$lockfile")"
+            if ! jq -e '(.packages // {}) | length > 1' "$lockfile" >/dev/null
+            then
+              continue
+            fi
+            name="$(printf '%s' "$directory" | sed 's#^\.$#root#; s#[/.]#-#g')"
+            output="$PWD/sbom/npm-$name.cdx.json"
+            package_name="$(jq -er '.packages[""].name // .name' "$lockfile")"
+            npx --yes @cyclonedx/cyclonedx-npm@6.0.1 \
+              --package-lock-only \
+              --output-reproducible \
+              --output-file "$output" \
+              "$directory/package.json"
+            jq -e --arg package_name "$package_name" '
+              .bomFormat == "CycloneDX" and
+              .metadata.component.name == $package_name and
+              .metadata.component.type == "application" and
+              (.components | type == "array") and
+              (.components | length > 0)
+            ' "$output" >/dev/null
+          done < <(find . -name package-lock.json -not -path './.git/*' -not -path '*/node_modules/*' | sort)
+
+      - name: verify SBOM coverage
+        run: |
+          set -euo pipefail
+          for bill in sbom/*.cdx.json
+          do
+            jq -e '.bomFormat == "CycloneDX" and ((.components // []) | length > 0)' "$bill" >/dev/null
+          done
+          npm_expected=0
+          while IFS= read -r lockfile
+          do
+            if jq -e '(.packages // {}) | length > 1' "$lockfile" >/dev/null
+            then
+              npm_expected="$((npm_expected + 1))"
+            fi
+          done < <(find . -name package-lock.json -not -path './.git/*' -not -path '*/node_modules/*' | sort)
+          expected="$(($(find . -name go.mod -not -path './.git/*' -not -path '*/node_modules/*' | wc -l) + npm_expected))"
+          actual="$(find sbom -name '*.cdx.json' | wc -l)"
+          test "$actual" -eq "$expected"
+          jq -e 'any(.components[]?; .name == "github.com/testcontainers/testcontainers-go")' sbom/go-integration.cdx.json >/dev/null
+
+      - name: upload SBOMs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom
+          path: sbom/*.cdx.json
+          retention-days: 14
