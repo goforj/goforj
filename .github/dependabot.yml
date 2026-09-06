@@ -15,6 +15,11 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: [version-update:semver-major]
+      # Cache v0.4.1 requires Go 1.27, while GoForj supports Go 1.26.
+      - dependency-name: github.com/goforj/cache
+        versions: [0.4.1]
+      - dependency-name: github.com/goforj/cache/cachecore
+        versions: [0.4.1]
   - package-ecosystem: gomod
     directory: /integration
     schedule:
@@ -23,19 +28,6 @@ updates:
     open-pull-requests-limit: 3
     groups:
       integration-go-compatible:
-        patterns: ["*"]
-        update-types: [minor, patch]
-    ignore:
-      - dependency-name: "*"
-        update-types: [version-update:semver-major]
-  - package-ecosystem: gomod
-    directory: /tools/renderwarm
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 3
-    groups:
-      renderwarm-go-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
     ignore:

@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-connections/nat"
 	_ "github.com/glebarez/go-sqlite"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/goforj/goforj/internal/backup"
@@ -679,7 +678,7 @@ func containerHost(t *testing.T, ctx context.Context, container testcontainers.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	mapped, err := container.MappedPort(ctx, nat.Port(port))
+	mapped, err := container.MappedPort(ctx, port)
 	if err != nil {
 		t.Fatal(err)
 	}
