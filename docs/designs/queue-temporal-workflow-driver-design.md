@@ -92,6 +92,32 @@ would persist transitions while Temporal persisted a second history for
 delivery wrappers. Driver-native delegation is what makes the single-driver
 model valid.
 
+### Construction Seam Required Before The Driver
+
+The current optional-driver bridge adapts a backend to queue's private
+`driverQueueBackend` and `driverRuntimeQueueBackend` interfaces before the
+high-level queue is constructed. That adaptation intentionally erases unknown
+optional interfaces. A Temporal module therefore cannot advertise native
+workflow coordination through the existing bridge unchanged.
+
+The queue repository must add one internal construction descriptor that carries
+the ordinary driver runtime and optional domain-neutral capabilities together.
+The bridge may expose that descriptor to nested driver modules, but the root
+queue module must own and validate it. Construction must reject a native
+coordinator whose lifecycle owner, job executor, or driver identity differs
+from the ordinary runtime in the same descriptor.
+
+This change must also remove ordinary registration, dispatch, and worker
+lifecycle ownership from the current `workflow.Engine`. Today `Queue.Register`,
+`Queue.Dispatch`, `Queue.StartWorkers`, and `Queue.Shutdown` all call that
+engine. The refactor is complete only when those methods use the shared job
+runtime directly and only chain, batch, state, pruning, and workflow events use
+the selected coordinator.
+
+The construction refactor and its existing-driver contract tests must land
+before the Temporal module. Shipping both in one indivisible change would make
+regressions difficult to attribute and rollback.
+
 ## Goals
 
 1. Keep all queue and workflow concepts in the existing queue ecosystem.
@@ -760,9 +786,11 @@ memo fields must be treated as metadata surfaces, not secret storage.
 No public configuration or generator should land before these spikes complete:
 
 1. Split shared handler execution from workflow coordination without changing
-   public queue behavior.
+   public queue behavior. Prove `Register`, ordinary `Dispatch`, worker start,
+   worker shutdown, and readiness no longer depend on coordinator ownership.
 2. Add a private native-workflow driver capability and prove every existing
-   driver still selects the built-in coordinator.
+   driver still selects the built-in coordinator. Prove the optional-driver
+   bridge preserves that capability instead of erasing it during adaptation.
 3. Prove the optional module can construct a normal `*queue.Queue` and expose
    its native coordinator without exporting Temporal types from the root
    module or introducing an import cycle.
