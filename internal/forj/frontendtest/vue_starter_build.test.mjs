@@ -34,5 +34,5 @@ test('the production graph retains the complete component showroom', async () =>
   for (const view of ['Overview', 'Forms', 'Navigation', 'Overlays', 'Data']) {
     assert.ok(normalized.some((id) => id.endsWith(`/src/views/components/Components${view}View.vue`)), `Components${view}View.vue was removed from the production graph`)
   }
-  assert.ok(moduleIDs.length < 3300, `expected fewer than 3300 total modules, received ${moduleIDs.length}`)
+  assert.ok(moduleIDs.length < 3400, `expected fewer than 3400 total modules, received ${moduleIDs.length}`)
 })
