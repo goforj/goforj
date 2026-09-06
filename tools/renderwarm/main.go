@@ -3,11 +3,12 @@
 package main
 
 import (
+	_ "charm.land/bubbles/v2/textinput"
+	_ "charm.land/bubbletea/v2"
+	_ "charm.land/lipgloss/v2"
 	_ "github.com/a-h/templ"
 	_ "github.com/alecthomas/kong"
-	_ "github.com/charmbracelet/bubbles/textinput"
-	_ "github.com/charmbracelet/bubbletea"
-	_ "github.com/charmbracelet/lipgloss"
+	_ "github.com/charmbracelet/x/ansi"
 	_ "github.com/glebarez/sqlite"
 	_ "github.com/goforj/cache"
 	_ "github.com/goforj/cache/cachecore"

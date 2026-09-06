@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
@@ -432,7 +432,7 @@ func TestWizardUnselectingWebAPIRemovesDependents(t *testing.T) {
 	})
 	selectAppWizardComponent(t, &model, project.ComponentWebAPI)
 
-	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	next, _ := model.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	model = next.(appWizardModel)
 
 	if !model.componentSelected(project.ComponentCLI) {
@@ -518,7 +518,7 @@ func TestWizardCanDisableDevRun(t *testing.T) {
 	})
 	model.stage = appWizardDevRun
 
-	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next, _ := model.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
 	model = next.(appWizardModel)
 
 	if got := model.devRunCommand(); got != "" {
@@ -543,7 +543,7 @@ func TestWizardBulkComponentShortcutsExposeCLIOnlyAndFullAppPaths(t *testing.T) 
 		},
 	})
 
-	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	next, _ := model.Update(tea.KeyPressMsg{Code: 'c', Text: "c"})
 	model = next.(appWizardModel)
 
 	if !model.componentSelected(project.ComponentCLI) {
@@ -563,7 +563,7 @@ func TestWizardBulkComponentShortcutsExposeCLIOnlyAndFullAppPaths(t *testing.T) 
 		}
 	}
 
-	next, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	next, _ = model.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	model = next.(appWizardModel)
 
 	for _, key := range []project.ComponentKey{
@@ -596,7 +596,7 @@ func TestWizardComponentFooterIncludesBulkShortcuts(t *testing.T) {
 		},
 	})
 
-	view := model.View()
+	view := model.View().Content
 	for _, expected := range []string{"A select all", "C select none"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("expected wizard footer to contain %q, got %q", expected, view)
@@ -617,12 +617,13 @@ func TestWizardHelpFormatPreviewHighlightsGuidedAsSecondOption(t *testing.T) {
 	model.termWidth = 160
 	model.helpFormatList.Select(1)
 
-	view := ansi.Strip(model.renderHelpFormatStage())
+	rendered := model.renderHelpFormatStage()
+	view := ansi.Strip(rendered)
 
 	if !strings.Contains(view, "Guided Preview") {
 		t.Fatalf("expected guided preview panel, got %q", view)
 	}
-	if !strings.Contains(view, wizardAccentStyle.Render(" Guided Preview ")) {
+	if !strings.Contains(rendered, wizardAccentStyle.Render("Guided Preview")) {
 		t.Fatalf("expected selected preview title to use active style, got %q", view)
 	}
 
@@ -690,7 +691,7 @@ func TestWizardMarksDefaultStarterKitSelected(t *testing.T) {
 			t.Fatalf("expected only vue starter kit to be selected, got %s", item.Key)
 		}
 	}
-	if !strings.Contains(model.renderStarterKitList(), "● Vue") {
+	if !strings.Contains(ansi.Strip(model.renderStarterKitList()), "● Vue") {
 		t.Fatalf("expected starter kit list to render selected marker, got %q", model.renderStarterKitList())
 	}
 }
@@ -746,7 +747,7 @@ func TestWizardRendersComponentLibraryAsRadioInputs(t *testing.T) {
 		}
 	}
 
-	next, _ := model.Update(tea.KeyMsg{Type: tea.KeySpace})
+	next, _ := model.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	view = ansi.Strip(next.(appWizardModel).renderStarterKitOptions())
 	for _, expected := range []string{"○ On", "● Off"} {
 		if !strings.Contains(view, expected) {
@@ -765,7 +766,7 @@ func TestWizardViewKeepsLeadingSpacingWithoutTrailingBlankLine(t *testing.T) {
 		},
 	})
 
-	view := model.View()
+	view := model.View().Content
 	if !strings.HasPrefix(view, "\n") {
 		t.Fatalf("expected wizard view to start with one spacing newline, got %q", view[:min(len(view), 12)])
 	}
