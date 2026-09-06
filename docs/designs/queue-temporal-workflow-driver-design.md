@@ -333,11 +333,17 @@ does not mean the activity completed. Workflow IDs, reuse policy, retry policy,
 and cancellation behavior must be stable parts of the Temporal driver
 contract.
 
-Every framework-owned workflow start uses a reject-duplicate workflow ID reuse
-policy across open and closed executions. The driver must not permit a
-completed ordinary job, chain, or batch ID to start a second run. Application
-native workflows choose their own reuse and conflict policies explicitly and
-do not inherit this framework default invisibly.
+Every framework-owned workflow start sets three options explicitly:
+
+- workflow ID conflict policy is fail for an already-running execution
+- workflow ID reuse policy is reject duplicate for a closed execution
+- the client returns an already-started error instead of silently returning the
+  existing run
+
+The driver must not permit an ordinary job, chain, or batch ID to start a second
+run, and it must not bypass reconciliation by accepting an existing run handle.
+Application native workflows choose their own reuse and conflict policies
+explicitly and do not inherit this framework default invisibly.
 
 Queue identity remains authoritative at the public boundary:
 
