@@ -53,7 +53,7 @@ func maintainerHelpEnabled() bool {
 		return true
 	}
 	for _, arg := range os.Args[1:] {
-		if arg == "--dev" || arg == "--dev=true" || arg == "--x" || arg == "--x=true" {
+		if arg == "--dev" || arg == "--dev=true" || arg == "--x" || arg == "--x=true" || arg == "-x" {
 			return true
 		}
 	}
