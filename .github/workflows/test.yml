@@ -86,6 +86,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - name: macos
@@ -178,6 +179,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix:
         shard: [0, 1, 2, 3, 4, 5]
     env:
@@ -256,6 +258,7 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix:
         include:
           - name: framework 1/6

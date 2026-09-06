@@ -5,16 +5,6 @@ permissions:
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - .github/workflows/verifier-calibration.yml
-      - go.mod
-      - go.sum
-      - internal/forj/atlas/**
-      - internal/forj/atlaseval/**
-      - internal/scenarios/**
-      - templates/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -33,6 +23,7 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
 
