@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // TestQueueCmdConfiguresNamedQueue verifies direct queue creation updates the queue env section.
@@ -231,7 +233,7 @@ func TestQueueResourceWizardRendersPanel(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 
 	model := newResourceWizardModel(queueResourceMaker(".env"), ResourceInput{})
-	view := model.View()
+	view := ansi.Strip(model.View().Content)
 	for _, snippet := range []string{
 		"┌ Resource name",
 		"App-facing queue identifier",
