@@ -8,7 +8,11 @@ import (
 
 // pinnedModuleVersions keeps rendered projects on the framework versions validated together by GoForj's integration suite.
 var pinnedModuleVersions = map[string]string{
+	"charm.land/bubbles/v2":                               "v2.2.1",
+	"charm.land/bubbletea/v2":                             "v2.0.9",
+	"charm.land/lipgloss/v2":                              "v2.0.6",
 	"github.com/a-h/templ":                                "v0.3.1020",
+	"github.com/charmbracelet/x/cellbuf":                  "v0.0.15",
 	"github.com/goforj/cache":                             "v0.4.0",
 	"github.com/goforj/cache/cachecore":                   "v0.4.0",
 	"github.com/goforj/cache/cachetest":                   "v0.4.0",
@@ -70,6 +74,10 @@ var pinnedModuleVersions = map[string]string{
 }
 
 var rendererSyncModules = []string{
+	"charm.land/bubbles/v2",
+	"charm.land/bubbletea/v2",
+	"charm.land/lipgloss/v2",
+	"github.com/charmbracelet/x/cellbuf",
 	"github.com/goforj/console",
 	"github.com/goforj/metrics",
 	"github.com/goforj/httpx",

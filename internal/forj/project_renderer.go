@@ -19,7 +19,7 @@ import (
 
 	"github.com/goforj/str/v2"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/goforj/console"
 	"github.com/goforj/crypt"
 	"github.com/goforj/goforj/internal/commanddiag"

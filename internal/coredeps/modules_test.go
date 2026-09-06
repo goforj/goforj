@@ -25,6 +25,10 @@ func TestSyncCoreLibrariesIncludesStr(t *testing.T) {
 // TestSyncCoreLibrariesIncludesBaseModules verifies generated Apps pin every always-rendered GoForj dependency explicitly.
 func TestSyncCoreLibrariesIncludesBaseModules(t *testing.T) {
 	modules := []string{
+		"charm.land/bubbles/v2",
+		"charm.land/bubbletea/v2",
+		"charm.land/lipgloss/v2",
+		"github.com/charmbracelet/x/cellbuf",
 		"github.com/goforj/console",
 		"github.com/goforj/metrics",
 		"github.com/goforj/httpx",

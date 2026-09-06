@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/goforj/goforj/internal/konghelp"
 	"github.com/goforj/goforj/project"
 )
@@ -162,7 +162,7 @@ func initialAppWizardModel(appName string, config *project.Config) appWizardMode
 	devRunInput.SetValue("run")
 	devRunInput.Prompt = ""
 	devRunInput.CharLimit = 160
-	devRunInput.Width = 64
+	devRunInput.SetWidth(64)
 	devRunInput.Focus()
 	return appWizardModel{
 		appName:          appName,
@@ -193,9 +193,9 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.termWidth = msg.Width
 		}
 		return m, nil
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c", "esc":
 			m.cancelled = true
 			return m, tea.Quit
 		}
@@ -212,7 +212,7 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "c":
 				m.setAllComponents(false)
 				return m, nil
-			case " ":
+			case "space":
 				index := m.componentList.Index()
 				item := m.componentList.Items()[index].(componentItem)
 				if item.Key == project.ComponentCLI {
@@ -234,8 +234,8 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.componentList, cmd = m.componentList.Update(msg)
 			return m, cmd
 		case appWizardHelpFormat:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				m.stage = appWizardComponents
 				return m, nil
 			}
@@ -253,12 +253,12 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncHelpFormatSelectionFromCursor()
 			return m, cmd
 		case appWizardStarterKit:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				m.stage = appWizardHelpFormat
 				return m, nil
 			}
-			if msg.String() == " " {
+			if msg.String() == "space" {
 				if m.highlightedStarterKit() != project.StarterKitNone {
 					m.componentLibrary = !m.componentLibrary
 				}
@@ -274,8 +274,8 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncStarterKitSelectionFromCursor()
 			return m, cmd
 		case appWizardDevRun:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				if m.components.WebUI {
 					m.stage = appWizardStarterKit
 				} else {
@@ -303,8 +303,8 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.devRunInput, cmd = m.devRunInput.Update(msg)
 			return m, cmd
 		case appWizardConfirm:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				m.stage = appWizardDevRun
 				return m, nil
 			}
@@ -318,7 +318,7 @@ func (m appWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View renders the current wizard stage with enough padding to keep terminal redraws stable.
-func (m appWizardModel) View() string {
+func (m appWizardModel) View() tea.View {
 	componentNames := strings.Join(selectedComponentNamesFromItems(m.componentList.Items()), ", ")
 	if strings.TrimSpace(componentNames) == "" {
 		componentNames = "None"
@@ -357,7 +357,7 @@ func (m appWizardModel) View() string {
 	if len(actions) > 0 {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, wizardFooter(actions, m.termWidth))
 	}
-	return "\n" + view
+	return tea.NewView("\n" + view)
 }
 
 // renderDevRunStage renders whether the app participates in the forj dev lifecycle.

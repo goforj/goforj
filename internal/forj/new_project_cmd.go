@@ -5,7 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/charmbracelet/lipgloss"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/forj/atlas"
 	"github.com/goforj/goforj/internal/konghelp"
@@ -14,14 +22,6 @@ import (
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
 	"gopkg.in/yaml.v3"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
-
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // WizardStage identifies the current step in the project creation wizard.
@@ -754,12 +754,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.termWidth = wizardWidth
 		}
 		return m, nil
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC:
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c":
 			m.cancelled = true
 			return m, tea.Quit
-		case tea.KeyEsc:
+		case "esc":
 			m.cancelled = true
 			return m, tea.Quit
 		}
@@ -778,7 +778,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moduleInput.Placeholder = "github.com/yourname/yourapp"
 				m.moduleInput.Focus()
 				m.moduleInput.CharLimit = 128
-				m.moduleInput.Width = 40
+				m.moduleInput.SetWidth(40)
 				m.errorMsg = ""
 				return m, nil
 			}
@@ -787,8 +787,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case StageModuleName:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				m.stage = StageProjectName
 				m.moduleInput.Blur()
 				m.projectInput.Focus()
@@ -813,8 +813,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case StageSelectComponents:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				m.stage = StageModuleName
 				m.moduleInput.Focus()
 				return m, nil
@@ -831,7 +831,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "c":
 				m.setAllComponents(false)
 				return m, nil
-			case " ":
+			case "space":
 				index := m.componentList.Index()
 				item := m.componentList.Items()[index].(ListItem)
 				if item.Key == project.ComponentCLI {
@@ -866,8 +866,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case StageHelpFormat:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				m.stage = StageSelectComponents
 				return m, nil
 			}
@@ -889,13 +889,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case StageStarterKit:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				m.stage = StageHelpFormat
 				return m, nil
 			}
 			switch msg.String() {
-			case " ":
+			case "space":
 				if m.highlightedStarterKit() != project.StarterKitNone {
 					m.componentLibrary = !m.componentLibrary
 				}
@@ -910,8 +910,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case StageExtras:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				if m.starterKitApplicable {
 					m.stage = StageStarterKit
 				} else {
@@ -926,7 +926,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "down", "j":
 				m.extrasIndex = 1
 				return m, nil
-			case " ":
+			case "space":
 				if m.extrasIndex == 1 {
 					m.extrasIndex = 0
 				} else {
@@ -941,8 +941,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case StageAtlasSupport:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				m.stage = StageExtras
 				return m, nil
 			}
@@ -965,8 +965,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case StageAtlasAgents:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				m.stage = StageAtlasSupport
 				return m, nil
 			}
@@ -979,7 +979,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errorMsg = ""
 				m.stage = StageAtlasSurfaces
 				return m, nil
-			case " ":
+			case "space":
 				m.toggleAtlasAgentSelection()
 				return m, nil
 			}
@@ -988,8 +988,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case StageAtlasSurfaces:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				m.stage = StageAtlasAgents
 				return m, nil
 			}
@@ -1006,7 +1006,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.pathInput.Focus()
 				return m, nil
-			case " ":
+			case "space":
 				m.toggleAtlasSurfaceSelection()
 				return m, nil
 			}
@@ -1015,8 +1015,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case StageProjectPath:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				if m.atlasMode == atlasModeCustom {
 					m.stage = StageAtlasSurfaces
 				} else {
@@ -1062,8 +1062,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 
 		case StageConfirm:
-			switch msg.Type {
-			case tea.KeyShiftTab, tea.KeyCtrlB, tea.KeyLeft:
+			switch msg.String() {
+			case "shift+tab", "ctrl+b", "left":
 				m.stage = StageProjectPath
 				m.pathInput.Focus()
 				return m, nil
@@ -1090,7 +1090,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View renders the project wizard with stable panel widths for terminal redraws.
-func (m model) View() string {
+func (m model) View() tea.View {
 	var panels []string
 	var actions []string
 
@@ -1319,7 +1319,7 @@ func (m model) View() string {
 	if m.errorMsg != "" && m.stage != StageProjectPath && m.stage != StageSelectComponents {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, errorStyle.Render(m.errorMsg))
 	}
-	return view + "\n"
+	return tea.NewView(view + "\n")
 }
 
 // panelWithTitle centralizes panel with title behavior so callers follow the same contract.
@@ -1890,7 +1890,7 @@ func (m model) selectedComponentNames() []string {
 // renderInputLine keeps the render input line representation consistent.
 func renderInputLine(input textinput.Model) string {
 	view := input.View()
-	width := input.Width
+	width := input.Width()
 	if width < lipgloss.Width(view) {
 		width = lipgloss.Width(view)
 	}
@@ -1960,11 +1960,16 @@ func styledTextInput() textinput.Model {
 	base := lipgloss.NewStyle().Foreground(primaryText)
 	ti := textinput.New()
 	ti.Prompt = ""
-	ti.PromptStyle = base
-	ti.TextStyle = base
-	ti.PlaceholderStyle = helpStyle
-	ti.CursorStyle = base
-	ti.Width = 34
+	styles := ti.Styles()
+	styles.Focused.Prompt = base
+	styles.Focused.Text = base
+	styles.Focused.Placeholder = helpStyle
+	styles.Blurred.Prompt = base
+	styles.Blurred.Text = base
+	styles.Blurred.Placeholder = helpStyle
+	styles.Cursor.Color = primaryText
+	ti.SetStyles(styles)
+	ti.SetWidth(34)
 	return ti
 }
 
