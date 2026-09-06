@@ -396,6 +396,11 @@ define whether already-started activities are requested to cancel, allowed to
 finish, or ignored after aggregate cancellation, then prove the resulting
 handler calls, counters, callbacks, and events match the established queue
 contract. It must not rely on Temporal's default scope-cancellation behavior.
+Temporal delivers activity cancellation through heartbeats, so a cancellation
+claim must also define whether the generic queue activity emits framework
+heartbeats and at what cost. The driver cannot imply prompt cancellation for a
+handler that does not participate in that mechanism. See the
+[Temporal activity timeout and heartbeat contract](https://docs.temporal.io/develop/go/activities/timeouts).
 
 Every selected activity task queue must have a known local poller or be marked
 as externally owned. An arbitrary `OnQueue` value must not schedule a Temporal
@@ -744,6 +749,35 @@ that declared set. A queue resource filter controls ownership of the whole
 Temporal driver instance; it must not start only half of that instance's
 required pollers.
 
+### Task Queue Topology
+
+One Temporal SDK worker is bound to one task queue. A queue resource that uses
+different workflow and activity task queues therefore owns a set of SDK
+workers, not one worker:
+
+```text
+Temporal queue resource
+├── client and namespace
+├── workflow-task worker
+│   ├── framework workflows
+│   └── application native workflows
+└── activity-task workers
+    ├── default queue from the existing queue `NAME`
+    └── each additional declared `OnQueue` target
+```
+
+The workflow-task worker disables activity polling unless its task queue is
+also an explicitly declared activity target. Activity-only workers disable
+workflow polling. All activity workers register the same shared queue handler
+executor. Configuration must reject duplicate, empty, or conflicting task
+queue roles and must validate every effective default queue before startup.
+
+The exact environment keys remain a Phase 0 decision, but the model has four
+distinct values: queue resource identity, Temporal namespace, workflow task
+queue, and the set of activity task queues. `QUEUE_NAME` retains its established
+meaning as the default application job queue; it is not silently repurposed as
+the workflow task queue.
+
 ## Runtime And Lifecycle
 
 Each queue runtime owns its selected driver's workers. A Temporal runtime owns
@@ -764,6 +798,24 @@ admitted work and close the client only after its worker has stopped. When the
 Jobs runtime starts several queue instances, a failure to start any instance
 must clean up those already started before returning.
 
+Temporal worker startup and ongoing failure are separate channels. A successful
+SDK worker start does not report a fatal poller error that occurs later. The
+driver must capture the SDK fatal-error callback into a single-assignment error
+signal owned by the queue runtime. `Queue.Run` must wait for either caller
+cancellation or that signal, shut down the driver, and return the fatal error.
+GoForj's Jobs runtime must run selected queues through that failure-aware path
+so a fatal Temporal worker causes `RuntimeHost` to cancel sibling runtimes.
+Readiness and logging alone are not sufficient failure propagation.
+
+The SDK worker stop operation is not an idempotent primitive and can panic when
+called repeatedly. The Temporal driver must guard start, stop, drain, and client
+close with one concurrency-safe lifecycle state machine. It must also roll back
+the already-started members when one worker in its set fails to start.
+Concurrent shutdown, startup rollback, a fatal-error path, and repeated
+`Queue.Shutdown` calls must invoke each underlying stop and the shared client
+close at most once while every caller receives the same terminal result. This
+follows the [Go SDK worker lifecycle contract](https://pkg.go.dev/go.temporal.io/sdk/worker#Worker).
+
 Phase 0 must test this ordering against the actual GoForj runtime host. It must
 not assume lifecycle hooks that the runtime host does not call.
 
@@ -773,6 +825,11 @@ the command returns. Temporal worker shutdown must therefore occur inside the
 jobs runtime after its run context is canceled. Deferring it to an application
 shutdown hook would make the runtime host wait for a worker that is itself
 waiting for a later hook.
+
+The failure-aware `Queue.Run` path must still honor the queue shutdown budget.
+It cannot call an unbounded background shutdown after cancellation. Phase 0
+must establish where that budget lives for direct queue consumers and generated
+GoForj runtimes without changing the established `Run(ctx)` signature.
 
 Temporal client creation has two modes:
 
@@ -897,10 +954,17 @@ memo fields must be treated as metadata surfaces, not secret storage.
 - Define a compatibility subset and run it against Temporal.
 - Assert unsupported options fail before execution starts.
 - Prove retry, timeout, backoff, delay, task-queue, and error translation.
+- Prove the configured activity execution timeout is always nonzero, activity
+  retry defaults are fully overridden, and heartbeat behavior matches every
+  cancellation claim.
 - Prove no application activity is repeated by workflow replay.
 - Prove worker restart resumes an execution.
 - Prove state queries for running and retained terminal executions.
 - Prove shutdown ordering and bounded activity drain.
+- Inject a fatal poller error after successful startup and prove `Queue.Run`
+  returns it, GoForj cancels sibling runtimes, and shutdown remains bounded.
+- Race concurrent startup failure, caller cancellation, fatal worker failure,
+  and repeated shutdown; prove the SDK worker is stopped at most once.
 - Run workflow determinism checks and history replay tests.
 - Prove declared payload, chain-length, and batch-fan-out limits against a real
   server and fail larger inputs before workflow acceptance.
@@ -961,7 +1025,8 @@ No public configuration or generator should land before these spikes complete:
    Verify every returned field and distinguish not-found from infrastructure
    and authorization failures.
 9. Prove worker start, partial-start rollback, poll, drain, stop, and
-   client-close ordering under the real GoForj runtime host.
+   client-close ordering under the real GoForj runtime host. Inject a fatal
+   error after successful startup and prove it reaches `RuntimeHost`.
 10. Record every unsupported existing queue and workflow option.
 11. Measure dependency and generated-binary impact when the driver is compiled
    and omitted.
@@ -1003,6 +1068,8 @@ has one outcome recorded in this design:
 | Evolution | Previous-version histories replay on forward deploy and rollback |
 | Driver protocol | Persisted framework envelopes are versioned and every supported prior driver history replays under the proposed release |
 | Lifecycle | Partial startup, cancellation, timeout, and repeated shutdown converge safely |
+| Fatal worker failure | A post-start poller failure reaches `Queue.Run` and the GoForj runtime host without polling or log inspection |
+| Stop idempotency | Concurrent lifecycle paths call the underlying worker stop and client close at most once and return one stable result |
 | Worker selection | Existing `queue:work` filters select whole queue resources, and a Temporal resource owns all pollers required by its declared task queues |
 | Observer delivery | Portable events have stable identities and workflow replay cannot create duplicates |
 | Security | Authentication modes, server identity, authorization boundaries, encryption, key rotation, redaction, retention, and audit ownership are documented and tested |
