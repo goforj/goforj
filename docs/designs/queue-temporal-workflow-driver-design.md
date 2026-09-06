@@ -10,8 +10,8 @@
 
 ## Review Record
 
-Five serial reviews were applied to this design. Each pass reviewed the result
-of the prior pass rather than the original proposal.
+Fifteen serial reviews were applied to this design. Each pass reviewed the
+result of the prior pass rather than the original proposal.
 
 | Pass | Focus | Finding resolved |
 | --- | --- | --- |
@@ -20,12 +20,24 @@ of the prior pass rather than the original proposal.
 | 3 | GoForj generation and runtime lifecycle | Existing queue-resource selection remains authoritative, workflow-specific worker modes were removed, and partial startup now requires rollback |
 | 4 | Enterprise operation and upgrades | Framework workflow definitions are versioned durable protocol, task queues are not security boundaries, and credential, codec, retention, and replay ownership are explicit |
 | 5 | Adversarial compatibility and simplification | Typed option provenance, retry-layer ownership, batch cancellation interleavings, observer replay safety, and independently releasable milestones are explicit gates |
+| 6 | Complete public API surface | Every exported queue operation, option, helper, and fake surface has an explicit Temporal support decision |
+| 7 | Worker topology and failure propagation | Workflow and activity pollers have explicit roles, fatal SDK worker failures reach the runtime host, and repeated stop races are blocked on a lifecycle proof |
+| 8 | Modules, releases, and SDK compatibility | The optional module has its own tag and downstream resolution proof, and SDK selection cannot raise the minimum Go version silently |
+| 9 | Security boundaries | Direct workflow invocation, generic activity privilege, transport authentication, authorization, codecs, secrets, retention, and audit ownership have fail-closed requirements |
+| 10 | Registration homogeneity | Reserved durable names, local collision checks, deployment fingerprints, and mixed-version task-queue isolation are explicit |
+| 11 | Staged-release authority | The ordinary-jobs milestone declares portable workflows unsupported, preventing accidental fallback to the built-in coordinator |
+| 12 | Concurrency and routing | The first release has one activity task queue per resource, and multiple queues remain blocked until total capacity and fairness are proven |
+| 13 | Dispatch idempotency | Ambiguous starts reconcile the original history and immutable input, reject collisions, and never expose payload digests as visible metadata |
+| 14 | Workflow ID semantics | Running conflict, closed-run reuse, and already-started return behavior are set independently and explicitly |
+| 15 | Cumulative architecture audit | Public API, configuration, lifecycle, persistence, security, observability, generation, modules, releases, and operational failure modes contain no unresolved architecture-level contradiction |
 
 The reviews found no reason to create a new top-level component or sibling
 library. They did find prerequisites that block an immediate implementation.
 Those prerequisites are represented below as Phase 0 decisions and release
 gates. An unproven gate disables the affected capability; it does not permit a
-silent behavior change.
+silent behavior change. The final cumulative pass found no further major design
+change. Remaining uncertainty is implementation evidence that the gates require,
+not an unowned design decision.
 
 ## Summary
 
@@ -880,8 +892,12 @@ must display the resolved namespace, task queues, registration fingerprint, and
 worker deployment identity for operational comparison.
 
 The registration fingerprint is diagnostic evidence, not an authorization or
-routing mechanism. It is computed from stable type names, protocol versions,
-and handler identities without including source paths, payloads, or secrets.
+routing mechanism. It is computed from registered job, workflow, and activity
+type names plus framework protocol versions, without including function
+pointers, source paths, payloads, or secrets. A separate deployment identity
+and Temporal worker-versioning policy account for code changes that preserve
+those names.
+
 Deployment automation should reject different fingerprints on the same task
 queue unless the selected Temporal worker-versioning rollout isolates them.
 Local process readiness can reject local collisions, but must not claim it has
@@ -1256,7 +1272,7 @@ has one outcome recorded in this design:
 | Public surface | Every existing method and option is supported with tested semantics or returns an established unsupported-capability error at the earliest possible boundary |
 | Native driver ownership | Root and named Temporal queues construct one unambiguous client, registry, worker set, and native coordinator without root-module Temporal types |
 | Temporal ordinary dispatch | `Queue.Dispatch` starts one framework-owned workflow and reports acceptance consistently |
-| Dispatch idempotency | Framework workflow IDs reject duplicate open and closed runs, and ambiguous reconciliation verifies the original start before reporting acceptance |
+| Dispatch idempotency | Framework workflow starts explicitly reject running conflicts and closed-run reuse, return already-started errors for reconciliation, and verify the original start before reporting acceptance |
 | Portable handler execution | The same registered handler and middleware execute through an existing driver and a Temporal activity |
 | Callback durability | Named continuations land, or callback-bearing portable workflows fail before acceptance |
 | State reads | `FindChain` and `FindBatch` meet their contract, or portable Temporal coordination does not ship |
