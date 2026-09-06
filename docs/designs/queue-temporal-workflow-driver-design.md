@@ -333,6 +333,12 @@ does not mean the activity completed. Workflow IDs, reuse policy, retry policy,
 and cancellation behavior must be stable parts of the Temporal driver
 contract.
 
+Every framework-owned workflow start uses a reject-duplicate workflow ID reuse
+policy across open and closed executions. The driver must not permit a
+completed ordinary job, chain, or batch ID to start a second run. Application
+native workflows choose their own reuse and conflict policies explicitly and
+do not inherit this framework default invisibly.
+
 Queue identity remains authoritative at the public boundary:
 
 | Queue value | Temporal value | Contract |
@@ -356,6 +362,22 @@ jobs this is `DispatchResult.DispatchID`; for a chain or batch it is the ID
 returned beside the error. A later already-started response is evidence to
 reconcile, not automatically a new failure or permission to generate another
 workflow ID.
+
+Reconciliation must verify that the existing execution has the expected
+framework workflow type, protocol version, queue identity, and immutable input
+before classifying an already-started response as prior acceptance. A mere
+workflow ID collision is not proof. Verification reads and decodes the original
+start event through the configured data converter and payload codec; it must
+not publish a payload digest into search attributes or other visible metadata,
+where low-entropy sensitive values could be guessed. A mismatch is a collision
+or tampering error and never dispatch success.
+
+The dispatch credential therefore needs the minimum history-read permission
+required for reconciliation in addition to workflow-start permission. If
+deployment policy withholds that permission, an ambiguous start remains an
+explicit ambiguous error for the caller; the driver must not guess acceptance.
+That reduced-permission mode and its operational recovery procedure must be
+documented separately.
 
 ## Portable Chain And Batch Workflows
 
@@ -1084,6 +1106,9 @@ control merely because it emits queue events.
 - Define a compatibility subset and run it against Temporal.
 - Assert unsupported options fail before execution starts.
 - Prove retry, timeout, backoff, delay, task-queue, and error translation.
+- Race start-response loss with an execution that completes before retry. Prove
+  reject-duplicate reuse prevents a second run and reconciliation verifies the
+  original start input before reporting prior acceptance.
 - Prove the configured activity execution timeout is always nonzero, activity
   retry defaults are fully overridden, and heartbeat behavior matches every
   cancellation claim.
@@ -1209,6 +1234,9 @@ No public configuration or generator should land before these spikes complete:
 22. Keep one activity task queue per instance, or prove a multi-queue capacity
     controller that preserves runtime-wide `WithWorkers` semantics without
     prefetch timeout or starvation.
+23. Prove ambiguous-start reconciliation before and after fast workflow
+    completion, with matching input, mismatched input, inaccessible history,
+    encrypted payloads, and namespace authorization failures.
 
 ## Release Gates
 
@@ -1222,6 +1250,7 @@ has one outcome recorded in this design:
 | Public surface | Every existing method and option is supported with tested semantics or returns an established unsupported-capability error at the earliest possible boundary |
 | Native driver ownership | Root and named Temporal queues construct one unambiguous client, registry, worker set, and native coordinator without root-module Temporal types |
 | Temporal ordinary dispatch | `Queue.Dispatch` starts one framework-owned workflow and reports acceptance consistently |
+| Dispatch idempotency | Framework workflow IDs reject duplicate open and closed runs, and ambiguous reconciliation verifies the original start before reporting acceptance |
 | Portable handler execution | The same registered handler and middleware execute through an existing driver and a Temporal activity |
 | Callback durability | Named continuations land, or callback-bearing portable workflows fail before acceptance |
 | State reads | `FindChain` and `FindBatch` meet their contract, or portable Temporal coordination does not ship |
