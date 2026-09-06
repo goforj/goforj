@@ -54,10 +54,11 @@ The integration has two levels:
   updates, durable timers, child workflows, queries, and continue-as-new.
 
 Existing drivers continue to use queue's built-in workflow coordinator.
-Temporal advertises a native workflow capability that queue detects during
-construction. This keeps one driver selection and one orchestration authority
-per queue instance without hiding Temporal's programming model behind an
-inaccurate portable abstraction.
+Temporal initially declares portable workflows unsupported, then advertises a
+native workflow capability only when that implementation passes its release
+gates. Queue reads the explicit mode during construction. This keeps one driver
+selection and one orchestration authority per queue instance without hiding
+Temporal's programming model behind an inaccurate portable abstraction.
 
 ## Existing Boundary
 
@@ -95,11 +96,26 @@ queue.Queue
     └── driver-native coordinator when the driver provides one
 ```
 
-`Queue.Dispatch` always uses the selected driver. Both coordinator paths use
-the shared registry and executor for application jobs. `Chain`, `Batch`,
-`FindChain`, `FindBatch`, and workflow-specific lifecycle behavior delegate to
-the driver's native capability when present and otherwise use the built-in
-coordinator.
+`Queue.Dispatch` always uses the selected driver. Coordinator selection is an
+explicit three-state internal value, not a boolean capability check:
+
+| Mode | Meaning |
+| --- | --- |
+| built-in | Existing drivers use queue's built-in chain and batch coordinator |
+| native | The driver provides a coordinator that owns workflow execution and state |
+| unsupported | Ordinary jobs work, but chain, batch, state-read, and prune operations return an explicit unsupported error |
+
+An unspecified mode is valid only for existing driver descriptors migrated to
+the built-in default. A new driver must declare its mode. The ordinary-jobs
+Temporal milestone declares unsupported. It must never fall through to the
+built-in coordinator. The later portable-workflow milestone changes the mode to
+native only after its gates pass.
+
+The built-in and native coordinator paths use the shared registry and executor
+for application jobs. In native mode, `Chain`, `Batch`, `FindChain`,
+`FindBatch`, and workflow-specific lifecycle behavior delegate to the driver's
+coordinator. In unsupported mode, their error-returning boundary reports the
+unsupported capability before any execution is accepted.
 
 The exact private interfaces are a queue-repository decision. GoForj must not
 design them through generated adapters or expose them solely for framework
@@ -120,7 +136,8 @@ optional interfaces. A Temporal module therefore cannot advertise native
 workflow coordination through the existing bridge unchanged.
 
 The queue repository must add one internal construction descriptor that carries
-the ordinary driver runtime and optional domain-neutral capabilities together.
+the ordinary driver runtime, workflow mode, and optional domain-neutral
+capabilities together.
 The bridge may expose that descriptor to nested driver modules, but the root
 queue module must own and validate it. Construction must reject a native
 coordinator whose lifecycle owner, job executor, or driver identity differs
@@ -471,6 +488,7 @@ the existing backends.
 | `StartWorkers` and `Run` | Start the instance's workflow and activity pollers as one lifecycle unit |
 | `Shutdown` | Drains and stops pollers, then closes the client within the supplied context budget |
 | `Ready` | Supported with distinct client and worker states |
+| `Chain` and `Batch` | Dispatch returns unsupported in the ordinary-jobs milestone; native coordination is enabled only after portable workflow gates pass |
 | `ListJobs` | Unsupported; visibility results do not satisfy the existing job listing contract without a proven adapter |
 | `RetryJob` | Unsupported; workflow reset and activity retry are not the existing job retry operation |
 | `CancelJob` | Unsupported until the ordinary dispatch identity and cancellation settlement contract are proven |
@@ -1120,8 +1138,9 @@ No public configuration or generator should land before these spikes complete:
    Preserve typed provenance for store, clock, middleware, observer, and worker
    options without changing the public `queue.Option` API.
 2. Add a private native-workflow driver capability and prove every existing
-   driver still selects the built-in coordinator. Prove the optional-driver
-   bridge preserves that capability instead of erasing it during adaptation.
+   driver still selects the built-in coordinator. Add and prove the explicit
+   unsupported mode. Prove the optional-driver bridge preserves the declared
+   mode and capability instead of erasing them during adaptation.
 3. Prove the optional module can construct a normal `*queue.Queue` and expose
    its native coordinator without exporting Temporal types from the root
    module or introducing an import cycle.
@@ -1179,6 +1198,7 @@ has one outcome recorded in this design:
 | Boundary | Required outcome |
 | --- | --- |
 | Existing driver isolation | Every existing driver contract passes unchanged when the Temporal module is available but not selected |
+| Coordinator selection | Existing drivers select built-in, ordinary-only Temporal selects unsupported, and workflow-capable Temporal selects native with no implicit fallback |
 | Public surface | Every existing method and option is supported with tested semantics or returns an established unsupported-capability error at the earliest possible boundary |
 | Native driver ownership | Root and named Temporal queues construct one unambiguous client, registry, worker set, and native coordinator without root-module Temporal types |
 | Temporal ordinary dispatch | `Queue.Dispatch` starts one framework-owned workflow and reports acceptance consistently |
