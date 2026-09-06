@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,8 +16,9 @@ import (
 
 	"github.com/goforj/str/v2"
 
-	dockercontainer "github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	testcontainers "github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"gopkg.in/yaml.v3"
@@ -327,14 +329,21 @@ func startComposeService(logf Logf, projectDir, name string, service composeServ
 	if err != nil {
 		return nil, fmt.Errorf("resolve compose service %s port: %w", name, err)
 	}
+	hostIP := netip.Addr{}
+	if resolvedPort.Binding.HostIP != "" {
+		hostIP = netip.MustParseAddr(resolvedPort.Binding.HostIP)
+	}
 	request := testcontainers.ContainerRequest{
 		Image:        service.Image,
 		Env:          cloneMap(service.Environment),
 		ExposedPorts: []string{string(resolvedPort.Container)},
 		WaitingFor:   composeServiceWaitStrategy(name, string(resolvedPort.Container)),
-		HostConfigModifier: func(hostConfig *dockercontainer.HostConfig) {
-			hostConfig.PortBindings = nat.PortMap{
-				resolvedPort.Container: []nat.PortBinding{resolvedPort.Binding},
+		HostConfigModifier: func(hostConfig *container.HostConfig) {
+			hostConfig.PortBindings = network.PortMap{
+				network.MustParsePort(string(resolvedPort.Container)): []network.PortBinding{{
+					HostIP:   hostIP,
+					HostPort: resolvedPort.Binding.HostPort,
+				}},
 			}
 		},
 	}
@@ -370,22 +379,21 @@ func composeServiceContainerPort(service composeService) (composeResolvedPort, e
 
 // composeServiceWaitStrategy centralizes compose service wait strategy behavior so callers follow the same contract.
 func composeServiceWaitStrategy(name, containerPort string) wait.Strategy {
-	port := nat.Port(containerPort)
 	switch name {
 	case "mysql":
-		return wait.ForListeningPort(port).WithStartupTimeout(90 * time.Second)
+		return wait.ForListeningPort(containerPort).WithStartupTimeout(90 * time.Second)
 	case "postgres":
 		return wait.ForAll(
-			wait.ForListeningPort(port),
+			wait.ForListeningPort(containerPort),
 			wait.ForLog("database system is ready to accept connections"),
 		).WithStartupTimeout(60 * time.Second)
 	case "redis":
 		return wait.ForAll(
-			wait.ForListeningPort(port),
+			wait.ForListeningPort(containerPort),
 			wait.ForLog("Ready to accept connections"),
 		).WithStartupTimeout(60 * time.Second)
 	default:
-		return wait.ForListeningPort(port).WithStartupTimeout(60 * time.Second)
+		return wait.ForListeningPort(containerPort).WithStartupTimeout(60 * time.Second)
 	}
 }
 

@@ -26,7 +26,6 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/docker/go-connections/nat"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/goforj/goforj/internal/generate"
@@ -574,7 +573,7 @@ func startGenericContainerResult(ctx context.Context, req testcontainers.Contain
 		_ = container.Terminate(context.Background())
 		return startedContainer{}, fmt.Errorf("container host %s: %w", req.Image, err)
 	}
-	mapped, err := container.MappedPort(ctx, nat.Port(port))
+	mapped, err := container.MappedPort(ctx, port)
 	if err != nil {
 		_ = container.Terminate(context.Background())
 		return startedContainer{}, fmt.Errorf("container mapped port %s: %w", req.Image, err)
