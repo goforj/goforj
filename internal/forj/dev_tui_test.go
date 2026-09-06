@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -16,6 +17,19 @@ import (
 )
 
 var ansiCode = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+// TestDetectDarkBackgroundSkipsRedirectedStreams verifies non-interactive commands do not wait for a terminal response.
+func TestDetectDarkBackgroundSkipsRedirectedStreams(t *testing.T) {
+	stream, err := os.CreateTemp(t.TempDir(), "redirected-stream")
+	if err != nil {
+		t.Fatalf("create redirected stream: %v", err)
+	}
+	defer stream.Close()
+
+	if !detectDarkBackground(stream, stream) {
+		t.Fatal("detectDarkBackground() = false, want dark fallback for redirected streams")
+	}
+}
 
 type devOutputControllerRecorder struct {
 	bytes.Buffer

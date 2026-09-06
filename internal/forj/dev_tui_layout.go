@@ -2,11 +2,12 @@ package forj
 
 import (
 	"fmt"
+	"image/color"
 	"os"
 	"strings"
+	"sync"
 
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/compat"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/goforj/console"
 	"golang.org/x/term"
@@ -14,12 +15,22 @@ import (
 
 const devSectionSeparatorRuleWidth = 5
 
+// devHasDarkBackground caches terminal detection because querying the terminal for every rendered color would add visible latency.
+var devHasDarkBackground = sync.OnceValue(func() bool {
+	return detectDarkBackground(os.Stdin, os.Stdout)
+})
+
 // adaptiveColor preserves the existing automatic light and dark terminal palette selection.
-func adaptiveColor(light, dark string) compat.AdaptiveColor {
-	return compat.AdaptiveColor{
-		Light: lipgloss.Color(light),
-		Dark:  lipgloss.Color(dark),
+func adaptiveColor(light, dark string) color.Color {
+	return lipgloss.LightDark(devHasDarkBackground())(lipgloss.Color(light), lipgloss.Color(dark))
+}
+
+// detectDarkBackground avoids terminal queries for redirected streams because Windows opens the console and waits for a response in that case.
+func detectDarkBackground(in, out *os.File) bool {
+	if !term.IsTerminal(int(in.Fd())) || !term.IsTerminal(int(out.Fd())) {
+		return true
 	}
+	return lipgloss.HasDarkBackground(in, out)
 }
 
 // buildDevFooterSeparatorLine keeps the build dev footer separator line representation consistent.

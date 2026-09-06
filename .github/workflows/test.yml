@@ -83,7 +83,7 @@ jobs:
   platform:
     name: platform (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.timeout_minutes }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -91,10 +91,8 @@ jobs:
         include:
           - name: macos
             os: macos-latest
-            timeout_minutes: 10
           - name: windows
             os: windows-latest
-            timeout_minutes: 20
 
     steps:
       - name: checkout
