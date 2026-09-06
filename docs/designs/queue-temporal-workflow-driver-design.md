@@ -587,6 +587,19 @@ serialized input, output, and application-error contracts still require
 compatibility. Long-running activities must heartbeat when cancellation and
 retry recovery depend on progress details.
 
+The queue Temporal module itself owns durable framework protocol. Its ordinary
+job, chain, and batch workflow type names, input envelopes, activity type
+names, search attributes, and command ordering cannot be treated as private
+implementation details after release. Each persisted envelope needs an
+explicit schema version. Decoders must retain support for every history that
+can still exist under the documented retention and maximum execution window.
+
+Every module release must replay committed history fixtures created by each
+supported prior driver version. A change that cannot replay an open history
+requires a new workflow type or an SDK-supported version marker plus a worker
+rollout that keeps the old implementation available. Dependency updates to the
+Temporal SDK are subject to the same replay gate.
+
 ## Queue Repository Ownership
 
 Reusable Temporal integration belongs in the existing queue repository. It
@@ -765,6 +778,19 @@ attributes, memo metadata, logs, metrics, and some failure text can remain
 visible outside encoded payloads. Generated identifiers and examples must not
 embed personal data or secrets in those fields.
 
+Task queues provide routing, not tenant authorization. A worker with namespace
+access may be able to poll task queues whose names it knows, subject to the
+deployment's authorization model. Enterprise isolation must use appropriately
+configured namespaces, credentials, network policy, and service-side
+authorization rather than relying on `QUEUE_NAME` or `OnQueue` values.
+
+Temporal Cloud API keys and self-hosted authentication are different
+deployment contracts. The driver must document which credential forms each
+mode supports, how server identity is verified, and whether credential or
+certificate rotation requires rebuilding the client or restarting workers.
+Production configuration must not silently fall back to plaintext when TLS
+material is missing or invalid.
+
 Error adapters must prevent secrets from being copied into Temporal failure
 messages. Inspection must bound and redact payload previews. Metrics must not
 use workflow IDs, payload values, or other unbounded identifiers as labels.
@@ -783,6 +809,13 @@ Enterprise deployment guidance must identify:
 A payload codec service that lets Temporal Web display encrypted values is a
 separate privileged decryption surface. GoForj must not enable or publish one
 without explicit authentication, authorization, network, and audit controls.
+
+Payload codecs and custom data converters execute on application-controlled
+workers and clients. Their version, key access, failure behavior, and backward
+decoding compatibility are part of the durable protocol. Encryption keys must
+remain available for retained histories and backups for as long as those
+histories must be readable, with revocation and destruction governed by the
+organization's retention policy.
 
 Generated examples must not place credentials, tokens, payment details, or
 unbounded application objects into workflow history. Search attributes and
@@ -805,6 +838,9 @@ memo fields must be treated as metadata surfaces, not secret storage.
   server and fail larger inputs before workflow acceptance.
 - Replay histories produced by the previous supported application version
   against the proposed worker version.
+- Replay committed framework workflow fixtures from every supported prior
+  Temporal driver version, including fixtures encoded by supported data
+  converter and codec versions.
 - Prove unknown activity task queues fail before workflow acceptance.
 - Exercise the real Temporal server for lifecycle and recovery boundaries that
   the SDK test environment cannot prove.
@@ -883,9 +919,10 @@ has one outcome recorded in this design:
 | Task routing | Every accepted task queue has a known local or declared external poller |
 | History limits | Payload and fan-out limits are measured and enforced before acceptance |
 | Evolution | Previous-version histories replay on forward deploy and rollback |
+| Driver protocol | Persisted framework envelopes are versioned and every supported prior driver history replays under the proposed release |
 | Lifecycle | Partial startup, cancellation, timeout, and repeated shutdown converge safely |
 | Worker selection | Existing `queue:work` filters select whole queue resources, and a Temporal resource owns all pollers required by its declared task queues |
-| Security | Authentication, encryption boundaries, redaction, retention, and audit ownership are documented and tested |
+| Security | Authentication modes, server identity, authorization boundaries, encryption, key rotation, redaction, retention, and audit ownership are documented and tested |
 | Disabled output | Renders that omit the Temporal driver contain no Temporal dependency or configuration |
 | Toolchain compatibility | The selected Temporal SDK supports the established minimum Go version, or an unavoidable increase has an explicit migration |
 
