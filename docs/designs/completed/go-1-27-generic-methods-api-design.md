@@ -2,7 +2,10 @@
 
 ## Status
 
-- Design status: implemented and merged in the sibling libraries
+- Design status: completed
+- Completion date: 2026-08-23
+- Completion boundary: sibling implementations merged; package publishing and
+  generated-consumer adoption remain independent follow-up work
 - Research date: 2026-07-13; stable revalidation: 2026-08-23
 - Language status: shipped in stable Go 1.27.0 on 2026-08-19
 - Scope: GoForj-owned sibling libraries with receiver-owned generic operations
@@ -921,9 +924,9 @@ than retaining v2 wrappers.
 
 `web.Bind[T]` and related helpers remain an independent API-design question.
 
-Collection v4 is published. Cache, HTTPX, execx, and queue still need releases
-from their merged commits according to each repository's minimum-Go release
-policy.
+Collection v4.0.0 and Cache v0.4.1 are published. HTTPX, execx, and queue still
+need releases from their merged commits according to each repository's
+minimum-Go release policy.
 
 ### Deferred: GoForj generated consumers
 
