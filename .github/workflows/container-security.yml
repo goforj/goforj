@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 8
+      max-parallel: 3
       matrix: ${{ fromJSON(needs.template-image-inventory.outputs.matrix) }}
     steps:
       - name: pull image

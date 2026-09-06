@@ -89,6 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix: ${{ fromJSON(needs.security-inventory.outputs.go-matrix) }}
     steps:
       - name: checkout
@@ -123,6 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 3
       matrix: ${{ fromJSON(needs.security-inventory.outputs.npm-matrix) }}
     steps:
       - name: checkout
