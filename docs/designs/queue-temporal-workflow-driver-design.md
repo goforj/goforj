@@ -292,7 +292,7 @@ inject an ambiguous unqualified `client.Client`.
 | `Backoff(d)` | Initial interval `d` with coefficient `1` | Requires explicit translation |
 | `Timeout(d)` | Activity start-to-close timeout | Requires an explicit nonzero default |
 | `Delay(d)` | Durable timer before activity scheduling | Clean |
-| `OnQueue(name)` | Activity task queue | Mostly clean |
+| `OnQueue(name)` | Activity task queue | Initial release accepts only the instance default; multiple targets require shared-capacity proof |
 | `AllowFailures()` | Collect member failures without early workflow failure | Must pass aggregate and interleaving contracts |
 | Worker restart recovery | Temporal history replay | Clean |
 | `FindChain` and `FindBatch` | Workflow query or derived state projection | Must be proven |
@@ -480,7 +480,7 @@ the existing backends.
 | `WithHandlerContextDecorator` | Supported around activity handler execution |
 | `WithStore` | Rejected because Temporal is the workflow state authority |
 | `WithClock` | Rejected for production execution; SDK workflow time and test-environment time remain authoritative |
-| constructor `WithWorkers` and `Queue.WithWorkers` | Activity execution concurrency; workflow-task concurrency remains driver configuration |
+| constructor `WithWorkers` and `Queue.WithWorkers` | Total application activity concurrency for the queue instance; multiple activity task queues require the shared-capacity gate |
 | `WithLegacyDirectEnvelope` | Rejected because it selects an obsolete physical-delivery envelope rather than a Temporal execution contract |
 | `WithContext` | Supported for client calls; cancellation after acceptance does not cancel the workflow |
 | `Driver` | Returns `temporal` |
@@ -503,10 +503,20 @@ the existing backends.
 
 Temporal needs separate workflow-task and activity-task concurrency settings.
 The established worker option controls concurrent application job execution,
-so the Temporal driver maps it to maximum concurrent activity execution.
-Workflow-task poller count and concurrency belong in `temporalqueue.Config`
-because they do not represent additional application job handlers. Both values
-must have documented defaults and bounds.
+so the Temporal driver maps it to total concurrent activity execution across
+the queue instance, not a value repeated for every task queue. Workflow-task
+poller count and concurrency belong in `temporalqueue.Config` because they do
+not represent additional application job handlers. Both values must have
+documented defaults and bounds.
+
+The ordinary-jobs milestone supports one activity task queue per queue resource.
+Additional isolation uses existing named queue resources. Multiple activity
+task queues within one Temporal instance remain disabled until Phase 0 proves a
+fair shared-capacity implementation that preserves the total `WithWorkers`
+limit, does not prefetch tasks into local waiters, does not cause
+schedule-to-start or start-to-close timeouts while waiting for a local slot, and
+cannot starve a low-volume task queue. Repeating the configured worker count for
+each SDK worker is not acceptable.
 
 Every unsupported constructor option must fail during construction. Every
 unsupported job or workflow option must fail before the service accepts an
@@ -784,6 +794,11 @@ that declared set. A queue resource filter controls ownership of the whole
 Temporal driver instance; it must not start only half of that instance's
 required pollers.
 
+For the initial ordinary-jobs release, that declared activity set contains
+exactly the queue resource's effective default queue. A different `OnQueue`
+target fails before workflow acceptance. The plural topology below describes a
+later capability that remains behind the shared-capacity and routing gates.
+
 ### Task Queue Topology
 
 One Temporal SDK worker is bound to one task queue. A queue resource that uses
@@ -809,9 +824,9 @@ queue roles and must validate every effective default queue before startup.
 
 The exact environment keys remain a Phase 0 decision, but the model has four
 distinct values: queue resource identity, Temporal namespace, workflow task
-queue, and the set of activity task queues. `QUEUE_NAME` retains its established
-meaning as the default application job queue; it is not silently repurposed as
-the workflow task queue.
+queue, and the declared set of activity task queues. The initial set has one
+member. `QUEUE_NAME` retains its established meaning as the default application
+job queue; it is not silently repurposed as the workflow task queue.
 
 ### Registration And Poller Homogeneity
 
@@ -1092,6 +1107,8 @@ control merely because it emits queue events.
   Temporal driver version, including fixtures encoded by supported data
   converter and codec versions.
 - Prove unknown activity task queues fail before workflow acceptance.
+- For any proposed multi-task-queue mode, prove one total activity concurrency
+  limit, bounded SDK polling, no local slot-wait timeouts, and no starvation.
 - Submit malformed, oversized, unknown-version, unknown-job, and unauthorized
   task-queue inputs directly to framework workflow and activity types; prove no
   application handler runs and the failure is terminal.
@@ -1189,6 +1206,9 @@ No public configuration or generator should land before these spikes complete:
 21. Prove registration homogeneity for every shared task queue, reserved-name
     collision handling, generated task-queue names, and worker-versioning
     isolation during a mixed-version rollout.
+22. Keep one activity task queue per instance, or prove a multi-queue capacity
+    controller that preserves runtime-wide `WithWorkers` semantics without
+    prefetch timeout or starvation.
 
 ## Release Gates
 
@@ -1211,6 +1231,7 @@ has one outcome recorded in this design:
 | Batch cancellation | Failure interleavings preserve established handler, counter, callback, and event behavior |
 | Task routing | Every accepted task queue has a known local or declared external poller |
 | Registry homogeneity | Shared task queues have compatible type and handler registrations, with reserved-name collisions rejected before polling |
+| Activity capacity | `WithWorkers` remains a total instance limit; multiple activity task queues stay disabled until fair capacity and bounded polling are proven |
 | History limits | Payload and fan-out limits are measured and enforced before acceptance |
 | Evolution | Previous-version histories replay on forward deploy and rollback |
 | Driver protocol | Persisted framework envelopes are versioned and every supported prior driver history replays under the proposed release |
