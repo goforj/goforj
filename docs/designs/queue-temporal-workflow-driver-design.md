@@ -8,6 +8,25 @@
 - Phase 0 must prove state projection, lifecycle, and compatibility before the
   framework exposes configuration or generators.
 
+## Review Record
+
+Five serial reviews were applied to this design. Each pass reviewed the result
+of the prior pass rather than the original proposal.
+
+| Pass | Focus | Finding resolved |
+| --- | --- | --- |
+| 1 | Queue API and driver construction | The existing bridge erases optional capabilities and the current workflow engine owns ordinary queue operations; an internal responsibility split and construction descriptor are prerequisites |
+| 2 | Identity, state, and error semantics | Queue IDs, Temporal workflow and run IDs, ambiguous acceptance, complete state reconstruction, and not-found translation now have explicit contracts |
+| 3 | GoForj generation and runtime lifecycle | Existing queue-resource selection remains authoritative, workflow-specific worker modes were removed, and partial startup now requires rollback |
+| 4 | Enterprise operation and upgrades | Framework workflow definitions are versioned durable protocol, task queues are not security boundaries, and credential, codec, retention, and replay ownership are explicit |
+| 5 | Adversarial compatibility and simplification | Typed option provenance, retry-layer ownership, batch cancellation interleavings, observer replay safety, and independently releasable milestones are explicit gates |
+
+The reviews found no reason to create a new top-level component or sibling
+library. They did find prerequisites that block an immediate implementation.
+Those prerequisites are represented below as Phase 0 decisions and release
+gates. An unproven gate disables the affected capability; it does not permit a
+silent behavior change.
+
 ## Summary
 
 GoForj should integrate Temporal as an optional driver in
@@ -113,6 +132,14 @@ lifecycle ownership from the current `workflow.Engine`. Today `Queue.Register`,
 engine. The refactor is complete only when those methods use the shared job
 runtime directly and only chain, batch, state, pruning, and workflow events use
 the selected coordinator.
+
+Current high-level options also collapse store, clock, and middleware settings
+into opaque `workflow.Option` functions. A native driver cannot inspect those
+functions to validate its capabilities. Queue must retain typed internal option
+provenance, including whether a value was explicitly supplied, while preserving
+the public `queue.Option` API. The built-in coordinator and native coordinator
+then consume the same parsed configuration, and construction can truthfully
+reject unsupported combinations before any client or worker starts.
 
 The construction refactor and its existing-driver contract tests must land
 before the Temporal module. Shipping both in one indivisible change would make
@@ -239,17 +266,17 @@ inject an ambiguous unqualified `client.Client`.
 
 | Queue workflow behavior | Temporal implementation | Assessment |
 | --- | --- | --- |
-| `Chain(A, B, C)` | Execute activities sequentially | Clean |
-| `Batch(A, B, C)` | Schedule activity futures in parallel and collect results | Clean |
-| Registered job handler | Generic or named Temporal activity | Clean |
-| Serialized job payload | Activity input | Clean |
-| Chain or batch ID | Temporal workflow ID | Clean |
+| `Chain(A, B, C)` | Execute activities sequentially | Structurally clean; failure and event contracts must pass |
+| `Batch(A, B, C)` | Schedule activity futures in parallel and collect results | Structure is clean; cancellation interleavings must pass |
+| Registered job handler | Generic or named Temporal activity | Signature is clean; execution contract must pass |
+| Serialized job payload | Activity input | Clean within measured payload and codec limits |
+| Chain or batch ID | Temporal workflow ID | Clean if ID constraints pass |
 | `Retry(n)` | Activity maximum attempts set to `n + 1` | Requires explicit translation |
 | `Backoff(d)` | Initial interval `d` with coefficient `1` | Requires explicit translation |
 | `Timeout(d)` | Activity start-to-close timeout | Requires an explicit nonzero default |
 | `Delay(d)` | Durable timer before activity scheduling | Clean |
 | `OnQueue(name)` | Activity task queue | Mostly clean |
-| `AllowFailures()` | Collect member failures without early workflow failure | Clean |
+| `AllowFailures()` | Collect member failures without early workflow failure | Must pass aggregate and interleaving contracts |
 | Worker restart recovery | Temporal history replay | Clean |
 | `FindChain` and `FindBatch` | Workflow query or derived state projection | Must be proven |
 | `Progress`, `Then`, `Catch`, and `Finally` closures | Process-local functions cannot be replayed | Not durable |
@@ -354,6 +381,22 @@ The adapter must translate policy deliberately:
   remains separate configuration because workflow and activity pollers have
   different operational roles.
 
+Framework-owned workflows must not add a second automatic retry layer around
+activity retries. Ordinary job, chain, and batch workflow executions use no
+workflow-level retry policy unless queue later defines one independently. The
+activity retry policy alone implements `Retry` and `Backoff`; otherwise one
+exhausted activity could cause the entire workflow to run again and exceed the
+queue retry budget.
+
+Batch failure behavior needs an interleaving contract. The built-in coordinator
+dispatches members independently and marks the aggregate cancelled after the
+first terminal failure when `AllowFailures` is absent. Work already accepted by
+a backend can still race with that state transition. A Temporal workflow must
+define whether already-started activities are requested to cancel, allowed to
+finish, or ignored after aggregate cancellation, then prove the resulting
+handler calls, counters, callbacks, and events match the established queue
+contract. It must not rely on Temporal's default scope-cancellation behavior.
+
 Every selected activity task queue must have a known local poller or be marked
 as externally owned. An arbitrary `OnQueue` value must not schedule a Temporal
 activity onto an unpolled task queue and report successful workflow acceptance.
@@ -410,7 +453,7 @@ the existing backends.
 
 | Existing surface | Temporal driver decision |
 | --- | --- |
-| `WithObserver` | Supported through replay-safe event translation |
+| `WithObserver` | Must prove replay-safe, non-duplicating event translation |
 | `WithMiddleware` | Supported around the shared activity job executor |
 | `WithStore` | Rejected because Temporal is the workflow state authority |
 | `WithClock` | Rejected for production execution; SDK workflow time and test-environment time remain authoritative |
@@ -745,6 +788,13 @@ and replay behavior. Queue observer events remain the source for the portable
 job and workflow vocabulary. The bridge must prevent one Temporal event from
 appearing as duplicate queue facts during replay.
 
+Application observers must never execute directly from replayed workflow code.
+Portable events require stable event IDs and an emission path with a documented
+delivery guarantee, such as activity-side emission with durable deduplication
+or an external history consumer. If that path cannot preserve an existing
+event kind, the driver reports that event as unsupported rather than emitting a
+plausible duplicate.
+
 Lighthouse should show:
 
 - selected queue driver and native workflow capability
@@ -872,6 +922,8 @@ No public configuration or generator should land before these spikes complete:
 1. Split shared handler execution from workflow coordination without changing
    public queue behavior. Prove `Register`, ordinary `Dispatch`, worker start,
    worker shutdown, and readiness no longer depend on coordinator ownership.
+   Preserve typed provenance for store, clock, middleware, observer, and worker
+   options without changing the public `queue.Option` API.
 2. Add a private native-workflow driver capability and prove every existing
    driver still selects the built-in coordinator. Prove the optional-driver
    bridge preserves that capability instead of erasing it during adaptation.
@@ -885,6 +937,7 @@ No public configuration or generator should land before these spikes complete:
 6. Adapt one registered queue handler into a Temporal activity without changing
    the handler's public signature.
 7. Prove exact retry, backoff, timeout, delay, and error classification.
+   Prove workflow-level retries cannot multiply the activity attempt budget.
 8. Prove `FindChain` and `FindBatch` behavior during execution, after
    completion, after worker restart, and while no compatible worker is polling.
    Verify every returned field and distinguish not-found from infrastructure
@@ -900,6 +953,11 @@ No public configuration or generator should land before these spikes complete:
     batches.
 14. Prove one forward deployment and rollback using captured workflow
     histories and the selected worker-versioning policy.
+15. Prove batch failure interleavings for queued, started, completed, failed,
+    cancellation-resistant, and cancellation-aware activities with and without
+    `AllowFailures`.
+16. Prove every portable observer event has a stable identity and cannot be
+    duplicated solely by workflow replay.
 
 ## Release Gates
 
@@ -916,12 +974,15 @@ has one outcome recorded in this design:
 | State reads | `FindChain` and `FindBatch` meet their contract, or portable Temporal coordination does not ship |
 | Uniqueness | Exact `UniqueFor` parity is proven, or the option fails before acceptance |
 | Retry and timeout policy | Every zero value and explicit value has a tested translation |
+| Retry ownership | Activity policy is the only automatic retry layer for framework workflows and never exceeds queue's attempt budget |
+| Batch cancellation | Failure interleavings preserve established handler, counter, callback, and event behavior |
 | Task routing | Every accepted task queue has a known local or declared external poller |
 | History limits | Payload and fan-out limits are measured and enforced before acceptance |
 | Evolution | Previous-version histories replay on forward deploy and rollback |
 | Driver protocol | Persisted framework envelopes are versioned and every supported prior driver history replays under the proposed release |
 | Lifecycle | Partial startup, cancellation, timeout, and repeated shutdown converge safely |
 | Worker selection | Existing `queue:work` filters select whole queue resources, and a Temporal resource owns all pollers required by its declared task queues |
+| Observer delivery | Portable events have stable identities and workflow replay cannot create duplicates |
 | Security | Authentication modes, server identity, authorization boundaries, encryption, key rotation, redaction, retention, and audit ownership are documented and tested |
 | Disabled output | Renders that omit the Temporal driver contain no Temporal dependency or configuration |
 | Toolchain compatibility | The selected Temporal SDK supports the established minimum Go version, or an unavoidable increase has an explicit migration |
@@ -935,17 +996,24 @@ component.
 1. Complete Phase 0 without changing generated applications.
 2. Add the internal queue responsibility split, native-workflow driver
    capability, and compatibility contracts.
-3. Add the optional `driver/temporalqueue` module in the queue repository.
-4. Release and consume those queue modules using their established multi-module
+3. Add the optional `driver/temporalqueue` module with ordinary job dispatch,
+   handler execution, worker lifecycle, and readiness only.
+4. Release ordinary Temporal queue support only after its own gates pass. Do
+   not wait for portable chain and batch support if ordinary jobs are sound.
+5. Add portable chain and batch coordination behind the private native
+   capability only after state, callback, cancellation, event, and replay gates
+   pass.
+6. Release and consume those queue modules using their established multi-module
    tag convention.
-5. Add GoForj environment and compile-time dependency projection under
+7. Add GoForj environment and compile-time dependency projection under
    Background Jobs.
-6. Connect the existing Temporal developer service to that consumer.
-7. Add generated worker registration and runtime hosting.
-8. Add native workflow and activity generators with determinism tests.
-9. Add inspection, metrics, security guidance, and transition guards.
-10. Enable the option in the interactive project flow only after the largest
-    generated composition passes.
+8. Connect the existing Temporal developer service to that consumer.
+9. Add generated worker registration and runtime hosting.
+10. Add native workflow and activity generators with determinism tests as a
+    separate optional milestone after the driver lifecycle is proven.
+11. Add inspection, metrics, security guidance, and transition guards.
+12. Enable each capability in the interactive project flow only after its
+    specific release gates and the largest generated composition pass.
 
 ## Decision
 
