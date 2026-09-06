@@ -683,6 +683,13 @@ must not be adopted by silently increasing either module's Go version. If a
 required SDK feature forces an increase, the design must identify that exact
 constraint, its consumer impact, and the migration before implementation.
 
+At this review, queue's root module declares Go 1.24.4. Temporal Go SDK v1.48.0
+declares Go 1.25.4, while v1.45.0 declares Go 1.24.0. Version 1.45.0 is therefore
+the initial compatibility candidate, not an unconditional pin. Phase 0 must
+prove that it contains every required stable API and is compatible with the
+selected server and local development image. Experimental SDK surfaces are not
+allowed in the portable driver contract.
+
 The module owns:
 
 - Temporal client configuration and dialing
@@ -693,6 +700,13 @@ The module owns:
 - Temporal-specific readiness and inspection
 - tests against the Temporal SDK test environment and a real development
   server
+
+The repository's release tooling discovers nested modules and gives this module
+the tag `driver/temporalqueue/vX.Y.Z`. Its `go.mod` keeps the intentional local
+replace to the root queue module for repository tests, while its release-time
+requirement must be pinned to the same published queue version. The module must
+be added to the integration and example module inventories and to every release
+dependency-closure test. A root `vX.Y.Z` tag alone does not publish the driver.
 
 The root queue module owns the smallest additive driver-capability seam needed
 to select native workflow coordination. A bridge under queue's `internal`
@@ -708,6 +722,9 @@ The GoForj repository owns:
 - developer-service activation
 - Lighthouse presentation
 - enabled and disabled render contracts
+- the Temporal driver pin in the core dependency catalog, dependency catalog
+  tests, render-warm module, generated fixture replacement inventory, and the
+  largest generated composition
 
 ## GoForj Component Model
 
@@ -800,21 +817,28 @@ must clean up those already started before returning.
 
 Temporal worker startup and ongoing failure are separate channels. A successful
 SDK worker start does not report a fatal poller error that occurs later. The
-driver must capture the SDK fatal-error callback into a single-assignment error
-signal owned by the queue runtime. `Queue.Run` must wait for either caller
-cancellation or that signal, shut down the driver, and return the fatal error.
-GoForj's Jobs runtime must run selected queues through that failure-aware path
-so a fatal Temporal worker causes `RuntimeHost` to cancel sibling runtimes.
-Readiness and logging alone are not sufficient failure propagation.
+driver needs a terminal-result signal owned by the queue runtime. `Queue.Run`
+must wait for either caller cancellation or that signal, finish the driver's
+shutdown protocol, and return the fatal error. GoForj's Jobs runtime must run
+selected queues through that failure-aware path so a fatal Temporal worker
+causes `RuntimeHost` to cancel sibling runtimes. Readiness and logging alone are
+not sufficient failure propagation.
 
-The SDK worker stop operation is not an idempotent primitive and can panic when
-called repeatedly. The Temporal driver must guard start, stop, drain, and client
-close with one concurrency-safe lifecycle state machine. It must also roll back
-the already-started members when one worker in its set fails to start.
-Concurrent shutdown, startup rollback, a fatal-error path, and repeated
-`Queue.Shutdown` calls must invoke each underlying stop and the shared client
-close at most once while every caller receives the same terminal result. This
-follows the [Go SDK worker lifecycle contract](https://pkg.go.dev/go.temporal.io/sdk/worker#Worker).
+The SDK worker stop operation is not an idempotent contract and can panic when
+called repeatedly. In the candidate SDK, the fatal-error callback is also
+followed by an SDK-owned stop. A driver that reacts to that callback by calling
+stop again can race the SDK. The Temporal driver therefore needs a proven
+lifecycle adapter that coordinates SDK-owned and driver-owned termination,
+observes when each worker has actually stopped, rolls back an already-started
+subset, and closes the shared client only after the set is terminal. The design
+does not prescribe `Start`, `Run`, or the fatal callback until Phase 0 proves
+one composition without a startup or shutdown race. This follows the
+[Go SDK worker lifecycle contract](https://pkg.go.dev/go.temporal.io/sdk/worker#Worker).
+
+Concurrent shutdown, startup rollback, fatal worker failure, and repeated
+`Queue.Shutdown` calls must leave each underlying worker stopped and the shared
+client closed exactly once from the queue consumer's perspective. No path may
+depend on recovering an SDK panic or sleeping to infer that shutdown completed.
 
 Phase 0 must test this ordering against the actual GoForj runtime host. It must
 not assume lifecycle hooks that the runtime host does not call.
@@ -976,6 +1000,11 @@ memo fields must be treated as metadata surfaces, not secret storage.
 - Prove unknown activity task queues fail before workflow acceptance.
 - Exercise the real Temporal server for lifecycle and recovery boundaries that
   the SDK test environment cannot prove.
+- Run the repository's module inventory and release-script contracts with the
+  Temporal module included. Verify its planned tag independently.
+- Validate the root, Temporal driver, integration, and examples modules
+  independently, then validate a published-version consumer with `GOWORK=off`
+  and no local replacement.
 
 ### GoForj repository
 
@@ -1044,6 +1073,12 @@ No public configuration or generator should land before these spikes complete:
 17. Exercise every exported `Queue` method, constructor option, fluent builder
     option, capability helper, and fake assertion against the documented
     Temporal support decision.
+18. Build the worker-set lifecycle adapter against the selected SDK. Prove
+    synchronous startup reporting, asynchronous fatal-error reporting,
+    observable terminal completion, partial-start rollback, and repeated queue
+    shutdown without racing an SDK-owned stop.
+19. Run module inventory, release planning, and a no-replacement downstream
+    resolution for the proposed queue and Temporal driver versions.
 
 ## Release Gates
 
@@ -1075,6 +1110,7 @@ has one outcome recorded in this design:
 | Security | Authentication modes, server identity, authorization boundaries, encryption, key rotation, redaction, retention, and audit ownership are documented and tested |
 | Disabled output | Renders that omit the Temporal driver contain no Temporal dependency or configuration |
 | Toolchain compatibility | The selected Temporal SDK supports the established minimum Go version, or an unavoidable increase has an explicit migration |
+| Module publication | The driver has its own planned tag, release-time sibling pin, proxy-resolvable module, and `GOWORK=off` downstream proof |
 
 An unresolved row blocks the affected portable feature. It does not justify a
 silent semantic downgrade, a second source of truth, or a new top-level
