@@ -795,6 +795,37 @@ queue, and the set of activity task queues. `QUEUE_NAME` retains its established
 meaning as the default application job queue; it is not silently repurposed as
 the workflow task queue.
 
+### Registration And Poller Homogeneity
+
+Every worker deployment polling the same workflow task queue must register a
+compatible implementation for every workflow type that can be routed there.
+Every deployment polling an activity task queue must expose a compatible
+generic queue activity and the same application job-handler set expected on
+that queue. Sharing a namespace and task queue does not merge or negotiate
+registries.
+
+Framework workflow and activity type names require a reserved, versioned prefix
+owned by the queue Temporal module. Application registration must fail before
+worker startup when a native workflow or activity collides with a reserved name
+or when one name is registered with incompatible signatures. The exact names
+are durable protocol and follow the driver-versioning policy.
+
+Generated defaults must namespace workflow and activity task queues by project,
+App, and queue resource consistently with existing physical queue naming. If
+operators deliberately configure two Apps or queue resources to share a task
+queue, deployment guidance must require identical registrations and compatible
+worker versions. GoForj cannot validate a remote fleet from one process, so it
+must display the resolved namespace, task queues, registration fingerprint, and
+worker deployment identity for operational comparison.
+
+The registration fingerprint is diagnostic evidence, not an authorization or
+routing mechanism. It is computed from stable type names, protocol versions,
+and handler identities without including source paths, payloads, or secrets.
+Deployment automation should reject different fingerprints on the same task
+queue unless the selected Temporal worker-versioning rollout isolates them.
+Local process readiness can reject local collisions, but must not claim it has
+verified registrations across a remote fleet.
+
 ## Runtime And Lifecycle
 
 Each queue runtime owns its selected driver's workers. A Temporal runtime owns
@@ -1034,6 +1065,9 @@ control merely because it emits queue events.
 - Run workflow determinism checks and history replay tests.
 - Prove declared payload, chain-length, and batch-fan-out limits against a real
   server and fail larger inputs before workflow acceptance.
+- Start heterogeneous worker registries against one task queue and prove the
+  deployment check detects incompatible fingerprints. Prove reserved-name and
+  signature collisions fail before polling starts.
 - Replay histories produced by the previous supported application version
   against the proposed worker version.
 - Replay committed framework workflow fixtures from every supported prior
@@ -1071,6 +1105,9 @@ control merely because it emits queue events.
   started successfully, in reverse start order and within the shared budget.
 - Verify existing `queue:work` queue-resource filters select Temporal instances
   without introducing a workflow-specific command mode.
+- Verify generated task queue defaults remain distinct across project, App, and
+  named queue scopes, and inspection exposes a redacted registration
+  fingerprint without claiming fleet-wide verification.
 - Verify secrets are blanked from examples and diagnostics.
 
 ## Phase 0 Decision Spikes
@@ -1130,6 +1167,9 @@ No public configuration or generator should land before these spikes complete:
     activity type by a namespace writer. Prove validation happens before
     application code and document the namespace isolation requirement for
     different privilege domains.
+21. Prove registration homogeneity for every shared task queue, reserved-name
+    collision handling, generated task-queue names, and worker-versioning
+    isolation during a mixed-version rollout.
 
 ## Release Gates
 
@@ -1150,6 +1190,7 @@ has one outcome recorded in this design:
 | Retry ownership | Activity policy is the only automatic retry layer for framework workflows and never exceeds queue's attempt budget |
 | Batch cancellation | Failure interleavings preserve established handler, counter, callback, and event behavior |
 | Task routing | Every accepted task queue has a known local or declared external poller |
+| Registry homogeneity | Shared task queues have compatible type and handler registrations, with reserved-name collisions rejected before polling |
 | History limits | Payload and fan-out limits are measured and enforced before acceptance |
 | Evolution | Previous-version histories replay on forward deploy and rollback |
 | Driver protocol | Persisted framework envelopes are versioned and every supported prior driver history replays under the proposed release |
