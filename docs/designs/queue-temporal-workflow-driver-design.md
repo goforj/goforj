@@ -289,12 +289,29 @@ does not mean the activity completed. Workflow IDs, reuse policy, retry policy,
 and cancellation behavior must be stable parts of the Temporal driver
 contract.
 
+Queue identity remains authoritative at the public boundary:
+
+| Queue value | Temporal value | Contract |
+| --- | --- | --- |
+| ordinary `DispatchResult.DispatchID` | framework workflow ID or a reversible component of it | Stable before the start request and stable across reconciliation |
+| chain ID returned by `Dispatch` | workflow ID | The same value accepted by `FindChain` |
+| batch ID returned by `Dispatch` | workflow ID | The same value accepted by `FindBatch` |
+| chain node ID or batch job ID | activity ID | Deterministic and stable across workflow replay |
+| Temporal run ID | driver diagnostic metadata | Never substituted for a queue ID |
+
+Queue IDs must satisfy Temporal's workflow and activity ID constraints without
+truncation or lossy rewriting. If the existing ID format cannot be used
+directly, the driver needs a collision-resistant reversible encoding and tests
+at the maximum supported length.
+
 Client cancellation or a network timeout can leave workflow-start acceptance
 ambiguous. The driver must allocate the workflow ID before the request, return
-it with any ambiguous error according to the established queue dispatch
-contract, and safely resolve or retry the same start identity. A later
-already-started response is evidence to reconcile, not automatically a new
-failure or permission to generate another workflow ID.
+the established queue identity with any ambiguous error where the current API
+permits it, and safely resolve or retry the same start identity. For ordinary
+jobs this is `DispatchResult.DispatchID`; for a chain or batch it is the ID
+returned beside the error. A later already-started response is evidence to
+reconcile, not automatically a new failure or permission to generate another
+workflow ID.
 
 ## Portable Chain And Batch Workflows
 
@@ -457,9 +474,22 @@ can be met for:
 - unavailable workers
 - continued-as-new executions where applicable
 
+The returned values must preserve every existing field, including dispatch ID,
+queue, node and job IDs, stored job policy, batch name, counters, failure text,
+and created and updated timestamps. Workflow time supplies timestamps while
+workflow code is executing. Wall-clock reads inside workflow code are not
+allowed. Unknown IDs must map to `queue.ErrWorkflowNotFound`; service,
+authorization, history-decoding, and worker-availability failures must remain
+distinguishable from not found.
+
 If queries cannot satisfy the established availability contract, a derived
 read model may be added. It must be explicitly non-authoritative, rebuildable
 from Temporal history, and never participate in workflow transition ownership.
+The driver must not claim portable state-read support if an active compatible
+worker is required but the existing queue store could answer the same read
+without one. A server-side history decoder or derived projection is required
+for that case, and its upgrade compatibility must be tested with retained old
+histories.
 If neither queries nor a derived read model can preserve the documented read
 contract, Temporal cannot ship as a drop-in coordinator for `Chain` and
 `Batch`. Native Temporal workflow support may still proceed independently.
@@ -802,7 +832,9 @@ No public configuration or generator should land before these spikes complete:
    the handler's public signature.
 7. Prove exact retry, backoff, timeout, delay, and error classification.
 8. Prove `FindChain` and `FindBatch` behavior during execution, after
-   completion, and after worker restart.
+   completion, after worker restart, and while no compatible worker is polling.
+   Verify every returned field and distinguish not-found from infrastructure
+   and authorization failures.
 9. Prove worker start, partial-start rollback, poll, drain, stop, and
    client-close ordering under the real GoForj runtime host.
 10. Record every unsupported existing queue and workflow option.
