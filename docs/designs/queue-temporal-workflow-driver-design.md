@@ -933,12 +933,46 @@ deployment's authorization model. Enterprise isolation must use appropriately
 configured namespaces, credentials, network policy, and service-side
 authorization rather than relying on `QUEUE_NAME` or `OnQueue` values.
 
+Temporal service acceptance does not make an execution payload trusted. Any
+principal with sufficient namespace write access may be able to start a
+framework-owned workflow type directly instead of entering through
+`Queue.Dispatch`. Before a framework workflow schedules an activity, it must
+validate envelope version, encoded size, queue-owned identity shape, registered
+job type, option bounds, and allowed task queue. The activity repeats the
+security-relevant checks before invoking application code. Unknown versions,
+job types, or task queues fail permanently and must not enter an unlimited
+retry loop.
+
+The generic queue activity is a confused-deputy boundary because it can invoke
+any handler registered in that worker. Deployments with different caller trust
+levels or materially different job privileges require separate Temporal
+namespaces and credentials, or a deployment-owned authorization layer that is
+verified before handler execution. Task queue naming alone is insufficient.
+GoForj does not invent a payload signature scheme because durable key rotation,
+replay, and recovery would require an independently reviewed protocol.
+
 Temporal Cloud API keys and self-hosted authentication are different
 deployment contracts. The driver must document which credential forms each
 mode supports, how server identity is verified, and whether credential or
 certificate rotation requires rebuilding the client or restarting workers.
 Production configuration must not silently fall back to plaintext when TLS
 material is missing or invalid.
+
+Authentication must fail closed. Configuring an API key, authorization token
+supplier, client certificate, or server name without the transport and trust
+material required by that mode is a construction error. Dispatch-only and
+worker deployments must document their minimum service permissions separately
+so operators can issue different credentials even when both deployments use
+the same generated binary. Static secret values are copied into client state
+and require a documented rotation action; dynamic token suppliers must bound
+refresh latency and failures without logging tokens.
+
+Self-hosted Temporal does not become authorized merely because mTLS encrypts
+and authenticates a connection. The deployment must configure and test its
+claim mapper and authorizer, or explicitly record network-level trust as an
+accepted risk. The default permissive authorizer is not an enterprise control.
+This distinction follows Temporal's
+[self-hosted security guidance](https://docs.temporal.io/self-hosted-guide/security).
 
 Error adapters must prevent secrets from being copied into Temporal failure
 messages. Inspection must bound and redact payload previews. Metrics must not
@@ -970,6 +1004,14 @@ Generated examples must not place credentials, tokens, payment details, or
 unbounded application objects into workflow history. Search attributes and
 memo fields must be treated as metadata surfaces, not secret storage.
 
+Queue observers and application logs are operational telemetry, not an
+authoritative audit trail. Enterprise evidence for workflow starts, signals,
+updates, cancellation, termination, namespace administration, and credential
+use must come from the managed service or secured self-hosted service boundary.
+The deployment owner must document availability, retention, integrity, access,
+and export of those records. GoForj documentation must not claim an audit
+control merely because it emits queue events.
+
 ## Testing Strategy
 
 ### Queue repository
@@ -998,6 +1040,11 @@ memo fields must be treated as metadata surfaces, not secret storage.
   Temporal driver version, including fixtures encoded by supported data
   converter and codec versions.
 - Prove unknown activity task queues fail before workflow acceptance.
+- Submit malformed, oversized, unknown-version, unknown-job, and unauthorized
+  task-queue inputs directly to framework workflow and activity types; prove no
+  application handler runs and the failure is terminal.
+- Prove credentials, certificate data, payloads, and failure details are absent
+  from logs, metrics labels, inspection output, and panic recovery output.
 - Exercise the real Temporal server for lifecycle and recovery boundaries that
   the SDK test environment cannot prove.
 - Run the repository's module inventory and release-script contracts with the
@@ -1079,6 +1126,10 @@ No public configuration or generator should land before these spikes complete:
     shutdown without racing an SDK-owned stop.
 19. Run module inventory, release planning, and a no-replacement downstream
     resolution for the proposed queue and Temporal driver versions.
+20. Threat-model direct invocation of every framework-owned workflow and
+    activity type by a namespace writer. Prove validation happens before
+    application code and document the namespace isolation requirement for
+    different privilege domains.
 
 ## Release Gates
 
@@ -1108,6 +1159,8 @@ has one outcome recorded in this design:
 | Worker selection | Existing `queue:work` filters select whole queue resources, and a Temporal resource owns all pollers required by its declared task queues |
 | Observer delivery | Portable events have stable identities and workflow replay cannot create duplicates |
 | Security | Authentication modes, server identity, authorization boundaries, encryption, key rotation, redaction, retention, and audit ownership are documented and tested |
+| Untrusted history input | Direct malformed or unauthorized invocation of framework workflow and activity types cannot reach application handlers or retry indefinitely |
+| Audit evidence | Service-side audit evidence ownership and retention are documented without treating application observer events as an audit control |
 | Disabled output | Renders that omit the Temporal driver contain no Temporal dependency or configuration |
 | Toolchain compatibility | The selected Temporal SDK supports the established minimum Go version, or an unavoidable increase has an explicit migration |
 | Module publication | The driver has its own planned tag, release-time sibling pin, proxy-resolvable module, and `GOWORK=off` downstream proof |
