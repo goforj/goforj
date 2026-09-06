@@ -657,11 +657,18 @@ When a queue resource selects the Temporal driver, GoForj additionally:
 
 The generated `jobs.Runtime` remains the only host runtime for both ordinary
 queue workers and Temporal pollers. Do not add a fourth top-level workflow
-runtime. `queue:work` remains the worker command. It must distinguish physical
-queue selection from workflow polling explicitly, either through separate
-flags or a small worker-mode option. An empty queue list must not ambiguously
-mean both "all physical queues" and "Temporal only", and a physical queue
-filter must not silently change Temporal polling.
+runtime. `queue:work` remains the worker command and its existing positional
+filters continue to select generated queue resources. Selecting a Redis queue
+starts Redis workers. Selecting a Temporal queue starts that instance's
+workflow and activity pollers. With no filters, all configured queue instances
+start. No separate workflow-worker mode or second set of selection flags is
+added.
+
+The Temporal driver configuration must enumerate every activity task queue it
+will poll in addition to its workflow task queue. `OnQueue` selects only from
+that declared set. A queue resource filter controls ownership of the whole
+Temporal driver instance; it must not start only half of that instance's
+required pollers.
 
 ## Runtime And Lifecycle
 
@@ -670,6 +677,13 @@ its workflow and activity pollers plus its native workflow coordinator. Other
 drivers own their physical workers and use queue's built-in coordinator. A
 client-only process may construct and dispatch through either path without
 starting a local worker.
+
+GoForj's current multi-queue startup loop returns immediately when one queue
+fails to start. It does not roll back queue instances that started earlier in
+the loop. Temporal support must not build on that behavior. The jobs runtime
+must track successful starts and shut them down in reverse start order within
+the queue shutdown budget before it returns the startup error. This correction
+protects every driver, not only Temporal.
 
 Shutdown of the Temporal driver must stop new polling before waiting for
 admitted work and close the client only after its worker has stopped. When the
@@ -699,9 +713,9 @@ latter is a failed runtime.
 
 Client-only use must remain possible. Starting or signaling a workflow from an
 HTTP handler should not require an ordinary queue worker in that process.
-Worker applications may independently poll ordinary queue names, Temporal
-workflow task queues, Temporal activity task queues, or an intentional
-combination.
+Worker applications select generated queue resources. A selected Temporal
+resource polls the workflow and activity task queues declared by its driver
+configuration as one lifecycle-owned unit.
 
 ## Observability
 
@@ -809,6 +823,10 @@ memo fields must be treated as metadata surfaces, not secret storage.
   planning, project description, and compile-time driver manifests.
 - Verify the jobs runtime performs Temporal shutdown before returning and does
   not depend on later application lifecycle hooks.
+- Verify a later queue startup failure shuts down every earlier queue that
+  started successfully, in reverse start order and within the shared budget.
+- Verify existing `queue:work` queue-resource filters select Temporal instances
+  without introducing a workflow-specific command mode.
 - Verify secrets are blanked from examples and diagnostics.
 
 ## Phase 0 Decision Spikes
@@ -866,6 +884,7 @@ has one outcome recorded in this design:
 | History limits | Payload and fan-out limits are measured and enforced before acceptance |
 | Evolution | Previous-version histories replay on forward deploy and rollback |
 | Lifecycle | Partial startup, cancellation, timeout, and repeated shutdown converge safely |
+| Worker selection | Existing `queue:work` filters select whole queue resources, and a Temporal resource owns all pollers required by its declared task queues |
 | Security | Authentication, encryption boundaries, redaction, retention, and audit ownership are documented and tested |
 | Disabled output | Renders that omit the Temporal driver contain no Temporal dependency or configuration |
 | Toolchain compatibility | The selected Temporal SDK supports the established minimum Go version, or an unavoidable increase has an explicit migration |
