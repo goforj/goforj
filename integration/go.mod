@@ -13,7 +13,7 @@ require (
 	github.com/goforj/goforj v0.0.0
 	github.com/goftp/server v0.0.0-20200708154336-f64f7c2d8a42
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/johannesboyne/gofakes3 v0.0.0-20260208201424-4c385a1f6a73
+	github.com/johannesboyne/gofakes3 v1.2.0
 	github.com/pkg/sftp v1.13.11
 	github.com/testcontainers/testcontainers-go v0.44.0
 	golang.org/x/crypto v0.56.0
