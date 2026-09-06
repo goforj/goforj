@@ -88,6 +88,7 @@ func main() {
 			args = remaining
 		}
 	}
+	args = normalizeLegacyLongAliases(args)
 	args = insertBuildPassthroughBoundary(args)
 	app.RootCmd().RootCmd.RunCmd.Env = delegatedAppEnv()
 
@@ -253,6 +254,32 @@ func loadAppScopedEnv() error {
 	return nil
 }
 
+// normalizeLegacyLongAliases preserves existing invocations after Kong changed single-character aliases into short flags.
+func normalizeLegacyLongAliases(args []string) []string {
+	normalized := args
+	copied := false
+	for index, argument := range args {
+		if argument == "--" {
+			break
+		}
+		replacement := ""
+		switch {
+		case argument == "--x":
+			replacement = "--dev"
+		case strings.HasPrefix(argument, "--x="):
+			replacement = "--dev=" + strings.TrimPrefix(argument, "--x=")
+		default:
+			continue
+		}
+		if !copied {
+			normalized = append([]string(nil), args...)
+			copied = true
+		}
+		normalized[index] = replacement
+	}
+	return normalized
+}
+
 // insertBuildPassthroughBoundary prevents Kong from splitting Go's single-dash flags into framework short options.
 func insertBuildPassthroughBoundary(args []string) []string {
 	buildIndex := buildCommandIndex(args)
@@ -322,7 +349,7 @@ func buildFrameworkFlagValueCount(argument string) (int, bool) {
 func buildRootFlag(argument string) bool {
 	name, _, _ := strings.Cut(argument, "=")
 	switch name {
-	case "--dev", "--x", "--version", "--help", "-h":
+	case "--dev", "--x", "-x", "--version", "--help", "-h":
 		return true
 	default:
 		return false
