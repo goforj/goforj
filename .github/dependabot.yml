@@ -20,6 +20,9 @@ updates:
         versions: [0.4.1]
       - dependency-name: github.com/goforj/cache/cachecore
         versions: [0.4.1]
+      # Kong v1.16.1 changes passthrough parsing used by GoForj commands.
+      - dependency-name: github.com/alecthomas/kong
+        versions: [1.16.1]
   - package-ecosystem: gomod
     directory: /integration
     schedule:
