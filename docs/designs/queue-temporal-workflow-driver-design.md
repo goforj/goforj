@@ -455,23 +455,41 @@ the existing backends.
 | --- | --- |
 | `WithObserver` | Must prove replay-safe, non-duplicating event translation |
 | `WithMiddleware` | Supported around the shared activity job executor |
+| `WithHandlerContextDecorator` | Supported around activity handler execution |
 | `WithStore` | Rejected because Temporal is the workflow state authority |
 | `WithClock` | Rejected for production execution; SDK workflow time and test-environment time remain authoritative |
-| `WithWorkers` | Must not guess how one number divides workflow and activity poller concurrency |
+| constructor `WithWorkers` and `Queue.WithWorkers` | Activity execution concurrency; workflow-task concurrency remains driver configuration |
+| `WithLegacyDirectEnvelope` | Rejected because it selects an obsolete physical-delivery envelope rather than a Temporal execution contract |
+| `WithContext` | Supported for client calls; cancellation after acceptance does not cancel the workflow |
+| `Driver` | Returns `temporal` |
+| `Register` | Registers the shared handler as a Temporal activity target |
+| `StartWorkers` and `Run` | Start the instance's workflow and activity pollers as one lifecycle unit |
+| `Shutdown` | Drains and stops pollers, then closes the client within the supplied context budget |
 | `Ready` | Supported with distinct client and worker states |
-| queue admin operations | Unsupported unless each operation receives a precise Temporal contract |
-| native stats | Unsupported unless values map to the established queue snapshot without fabrication |
-| pause and resume | Unsupported until task acceptance and in-flight behavior are defined |
+| `ListJobs` | Unsupported; visibility results do not satisfy the existing job listing contract without a proven adapter |
+| `RetryJob` | Unsupported; workflow reset and activity retry are not the existing job retry operation |
+| `CancelJob` | Unsupported until the ordinary dispatch identity and cancellation settlement contract are proven |
+| `DeleteJob` | Unsupported; history deletion is an administrative retention operation |
+| `ClearQueue` | Unsupported; Temporal has no equivalent queue-clearing contract |
+| `History` | Unsupported; Temporal execution history is not the queue throughput timeline |
+| `Stats` and native stats helpers | Unsupported unless values map to the established queue snapshot without fabrication |
+| `Pause` and `Resume` | Unsupported until task acceptance and in-flight behavior are defined |
+| `FindChain` and `FindBatch` | Supported only if the state-read release gate passes |
+| `Prune` | Unsupported unless a permission-aware retention mapping is proven |
+| `NewFake` and fake assertions | Remain the portable domain test surface; they do not emulate Temporal replay |
 
 Temporal needs separate workflow-task and activity-task concurrency settings.
-Until queue has a domain-neutral worker policy that can express both, those
-settings belong in `temporalqueue.Config`. `WithWorkers` must either receive a
-documented activity-only meaning or fail construction. It must not silently
-control one poller while leaving the other at an SDK default.
+The established worker option controls concurrent application job execution,
+so the Temporal driver maps it to maximum concurrent activity execution.
+Workflow-task poller count and concurrency belong in `temporalqueue.Config`
+because they do not represent additional application job handlers. Both values
+must have documented defaults and bounds.
 
 Every unsupported constructor option must fail during construction. Every
 unsupported job or workflow option must fail before the service accepts an
-execution. Capability helpers must report the same result as the operation.
+execution. A post-construction operation with an error return must return its
+established unsupported-capability error. Capability helpers must report the
+same result as the operation.
 
 ## Callback Migration
 
@@ -958,6 +976,9 @@ No public configuration or generator should land before these spikes complete:
     `AllowFailures`.
 16. Prove every portable observer event has a stable identity and cannot be
     duplicated solely by workflow replay.
+17. Exercise every exported `Queue` method, constructor option, fluent builder
+    option, capability helper, and fake assertion against the documented
+    Temporal support decision.
 
 ## Release Gates
 
@@ -967,6 +988,7 @@ has one outcome recorded in this design:
 | Boundary | Required outcome |
 | --- | --- |
 | Existing driver isolation | Every existing driver contract passes unchanged when the Temporal module is available but not selected |
+| Public surface | Every existing method and option is supported with tested semantics or returns an established unsupported-capability error at the earliest possible boundary |
 | Native driver ownership | Root and named Temporal queues construct one unambiguous client, registry, worker set, and native coordinator without root-module Temporal types |
 | Temporal ordinary dispatch | `Queue.Dispatch` starts one framework-owned workflow and reports acceptance consistently |
 | Portable handler execution | The same registered handler and middleware execute through an existing driver and a Temporal activity |
