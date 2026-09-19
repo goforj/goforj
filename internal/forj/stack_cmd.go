@@ -163,7 +163,7 @@ func chooseStack(ui *console.Console, names []string) (string, error) {
 
 // showStackDrivers reveals provider choices without printing private endpoints or credentials.
 func showStackDrivers(ui *console.Console, s *stacks.Session, values map[string]string) {
-	for _, resource := range s.Resources {
+	for _, resource := range s.ResourcesFor(values) {
 		driver := values[resource.Key]
 		if driver == "" {
 			driver = "(inherited/default)"
@@ -194,8 +194,9 @@ func editStackDrivers(ui *console.Console, s *stacks.Session, values map[string]
 	values = copyStackValues(values)
 	for {
 		showStackDrivers(ui, s, values)
+		inventory := s.ResourcesFor(values)
 		labels := []string{"Done"}
-		for _, resource := range s.Resources {
+		for _, resource := range inventory {
 			labels = append(labels, resource.Key)
 		}
 		labels = append(labels, "Compose profiles", "Connection or resource setting")
@@ -206,7 +207,7 @@ func editStackDrivers(ui *console.Console, s *stacks.Session, values map[string]
 		if index == 0 {
 			return values, s.Validate(values)
 		}
-		if index == len(s.Resources)+1 {
+		if index == len(inventory)+1 {
 			profiles, err := ui.Ask("Compose profiles (comma-separated; blank disables dependencies)")
 			if err != nil {
 				return nil, err
@@ -214,7 +215,7 @@ func editStackDrivers(ui *console.Console, s *stacks.Session, values map[string]
 			values["COMPOSE_PROFILES"] = profiles
 			continue
 		}
-		if index == len(s.Resources)+2 {
+		if index == len(inventory)+2 {
 			key, err := ui.Ask("Environment key (blank cancels)")
 			if err != nil {
 				return nil, err
@@ -235,7 +236,7 @@ func editStackDrivers(ui *console.Console, s *stacks.Session, values map[string]
 			values = candidate
 			continue
 		}
-		resource := s.Resources[index-1]
+		resource := inventory[index-1]
 		drivers := resource.Definition.Drivers
 		choices := make([]string, len(drivers))
 		selected := 0

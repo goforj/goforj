@@ -17,6 +17,22 @@ type Resource struct {
 	Definition               project.ResourceDefinition
 }
 
+// ResourcesFor includes resources declared by the selected values while retaining the project's active and example accessor inventory.
+func (s *Session) ResourcesFor(values map[string]string) []Resource {
+	byKey := map[string]Resource{}
+	for _, resource := range s.Resources {
+		byKey[resource.Key] = resource
+	}
+	for _, resource := range resources(s.Root, s.config, values) {
+		byKey[resource.Key] = resource
+	}
+	result := make([]Resource, 0, len(byKey))
+	for _, key := range keys(byKey) {
+		result = append(result, byKey[key])
+	}
+	return result
+}
+
 // resources discovers enabled roots and concrete named overrides from project-owned configuration.
 func resources(root string, config *project.Config, values map[string]string) []Resource {
 	byKey := map[string]Resource{}

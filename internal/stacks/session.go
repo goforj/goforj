@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -266,11 +265,9 @@ func (s *Session) write(updates map[string][]byte) error {
 		if err != nil {
 			return err
 		}
-		if strings.HasSuffix(name, ".local") {
-			command := exec.Command("git", "ls-files", "--error-unmatch", "--", name)
-			command.Dir = s.Root
-			if err := command.Run(); err == nil {
-				return fmt.Errorf("%s is tracked by Git; remove it from the index before storing private stack settings", name)
+		if isPrivateStackFile(name) {
+			if err := verifyPrivateFileUntracked(s.Root, name); err != nil {
+				return err
 			}
 		}
 		f.after = updates[name]
