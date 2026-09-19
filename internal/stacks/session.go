@@ -88,6 +88,9 @@ func Open(root string) (*Session, error) {
 		if err := ValidateName(s.state.Active); err != nil {
 			return nil, fmt.Errorf("invalid active stack in private state: %w", err)
 		}
+		if _, err := s.read(DefinitionPath(s.state.Active) + ".local"); err != nil {
+			return nil, err
+		}
 	}
 	s.Active = s.state.Active
 	return s, nil
@@ -337,8 +340,8 @@ func AppDefaults(root string, values map[string]string, app string) (map[string]
 // Overrides lists other runtime layers containing resource settings without exposing their values.
 func (s *Session) Overrides() ([]string, error) {
 	var result []string
-	for _, name := range []string{".env.local", ".env.staging", ".env.production", ".env.host"} {
-		f, err := readFile(s.Root, name)
+	for _, name := range []string{".env.local", ".env.staging", ".env.production", ".env.host", ".env.testing"} {
+		f, err := nearestRuntimeLayer(s.Root, name)
 		if err != nil {
 			return nil, err
 		}
@@ -347,11 +350,11 @@ func (s *Session) Overrides() ([]string, error) {
 		}
 		d, err := parseDocument(f.before)
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", name, err)
+			return nil, fmt.Errorf("read %s: %w", f.name, err)
 		}
 		managed := managedValues(s.config, d.values)
 		if len(managed) > 0 {
-			result = append(result, name+": "+strings.Join(keys(managed), ", "))
+			result = append(result, f.name+": "+strings.Join(keys(managed), ", "))
 		}
 	}
 	var inherited []string
