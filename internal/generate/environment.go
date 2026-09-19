@@ -65,9 +65,42 @@ type generationEnvironmentFilter struct {
 
 // generationInput keeps project ownership and its environment snapshot together across generator tasks.
 type generationInput struct {
-	projectDir  string
-	environment generationEnvironment
-	appPrefixes []string
+	projectDir    string
+	environment   generationEnvironment
+	appPrefixes   []string
+	resourceNames map[string][]string
+}
+
+// withoutResourceSettings retains accessor declarations while removing provider and connection choices from the active environment.
+func withoutResourceSettings(input generationInput) generationInput {
+	input.resourceNames = map[string][]string{}
+	for _, resource := range generationEnvironmentResources() {
+		input.resourceNames[resource.prefix] = discoverPrimitiveChildNames(input, resource.prefix, resource.rootKeys)
+	}
+	for key := range input.environment.values {
+		if isResourceSetting(key, input.appPrefixes) {
+			delete(input.environment.values, key)
+		}
+	}
+	return input
+}
+
+// isResourceSetting separates replaceable provider configuration from unrelated generation inputs such as observability ports.
+func isResourceSetting(key string, appPrefixes []string) bool {
+	if key == "COMPOSE_PROFILES" {
+		return true
+	}
+	for _, prefix := range []string{"DB_", "CACHE_", "QUEUE_", "EVENTS_", "STORAGE_", "MAIL_", "REDIS_"} {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+		for _, app := range appPrefixes {
+			if strings.HasPrefix(key, app+"_"+prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // loadProjectGenerationInput reads one project-owned environment snapshot without changing process state.
