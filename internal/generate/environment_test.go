@@ -11,6 +11,23 @@ import (
 // generationEnvironmentTestTimeout bounds concurrent generation regressions without shaping normal execution.
 const generationEnvironmentTestTimeout = 5 * time.Second
 
+// TestWithoutResourceSettingsRetainsUnrelatedInputs keeps Stack selection isolated from observability and application settings.
+func TestWithoutResourceSettingsRetainsUnrelatedInputs(t *testing.T) {
+	values := map[string]string{"APP_NAME": "demo", "OBSERVABILITY_ENABLED": "true", "ADMIN_API_HTTP_PORT": "8081", "COMPOSE_PROFILES": "all"}
+	for _, prefix := range []string{"DB", "CACHE", "QUEUE", "EVENTS", "STORAGE", "MAIL", "REDIS"} {
+		for _, scope := range []string{"", "ADMIN_"} {
+			values[scope+prefix+"_DRIVER"] = "external"
+			values[scope+prefix+"_SUPPORTED_DRIVERS"] = "external"
+			values[scope+prefix+"_PASSWORD"] = "private"
+		}
+	}
+	input := generationInput{environment: generationEnvironment{values: values}, appPrefixes: []string{"ADMIN"}}
+	input = withoutResourceSettings(input)
+	if len(input.environment.values) != 3 || input.environment.Get("APP_NAME", "") != "demo" || input.environment.Get("OBSERVABILITY_ENABLED", "") != "true" || input.environment.Get("ADMIN_API_HTTP_PORT", "") != "8081" {
+		t.Fatalf("unexpected retained inputs: %v", input.environment.values)
+	}
+}
+
 // TestGenerateProjectFilesUsesEnvironmentExampleFallback verifies a clean checkout retains its compiled driver set without a runtime .env file.
 func TestGenerateProjectFilesUsesEnvironmentExampleFallback(t *testing.T) {
 	root := newGenerationCacheProject(t)

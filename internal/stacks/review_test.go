@@ -38,7 +38,7 @@ func TestStackDriverAliasesRoundTrip(t *testing.T) {
 				for _, resource := range s.Resources {
 					if resource.Key == "DB_DRIVER" {
 						values["DB_SUPPORTED_DRIVERS"] = " " + pair[1] + "," + pair[0]
-						if err := SetDriver(values, resource, active); err != nil {
+						if err := s.SetDriver(values, resource, active); err != nil {
 							t.Fatal(err)
 						}
 						if values["DB_SUPPORTED_DRIVERS"] != pair[0] {
@@ -88,7 +88,7 @@ func TestStackPortableRetainsPrivateServiceDatabaseNames(t *testing.T) {
 	for _, driver := range []string{"mysql", "postgres"} {
 		for _, resource := range s.Resources {
 			if resource.Definition.Key == project.ResourceDatabase {
-				if err := SetDriver(loaded, resource, driver); err != nil {
+				if err := s.SetDriver(loaded, resource, driver); err != nil {
 					t.Fatal(err)
 				}
 			}

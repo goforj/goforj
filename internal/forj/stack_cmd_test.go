@@ -7,12 +7,94 @@ import (
 	"github.com/goforj/console"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/stacks"
 )
+
+// TestStackDriverPickerRetainsCurrentSelection prevents Enter from changing aliases, inherited providers, or existing SQLite paths.
+func TestStackDriverPickerRetainsCurrentSelection(t *testing.T) {
+	for _, current := range []string{"postgresql", "sqlite3", "mariadb", "sqlite", "", " "} {
+		for _, key := range []string{"DB_DRIVER", "DB_ANALYTICS_DRIVER", "ADMIN_DB_DRIVER", "QUEUE_DRIVER"} {
+			if key == "QUEUE_DRIVER" && strings.TrimSpace(current) != "" {
+				continue
+			}
+			t.Run(key+"/"+current, func(t *testing.T) {
+				root := stackWizardFixture(t)
+				config := "project_name: demo\nmodule_name: example.org/demo\napps:\n  app:\n    components:\n      database_mysql: true\n      jobs: true\n  admin:\n    components:\n      database_mysql: true\n"
+				if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0600); err != nil {
+					t.Fatal(err)
+				}
+				content := "DB_DRIVER=postgres\nDB_ANALYTICS_DATABASE=analytics\nADMIN_DB_DATABASE=admin\nDB_SQLITE_DATABASE=./existing.db\n"
+				if strings.TrimSpace(current) != "" {
+					content += key + "=" + current + "\n"
+				} else if key == "DB_DRIVER" {
+					content = strings.ReplaceAll(content, "DB_DRIVER=postgres\n", "")
+				}
+				if current == " " {
+					content += key + "=' '\n"
+				}
+				if err := os.WriteFile(filepath.Join(root, ".env"), []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+				s, err := stacks.Open(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				index := -1
+				for i, resource := range s.Resources {
+					if resource.Key == key {
+						index = i + 2
+					}
+				}
+				if index < 0 {
+					t.Fatal("missing test resource")
+				}
+				var output bytes.Buffer
+				values, err := editStackDrivers(moduleRenameTestConsole(fmt.Sprintf("%d\n\n1\n", index), &output), s, copyStackValues(s.Current))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(values, s.Current) {
+					t.Fatalf("accepting the current selection changed settings: got %v, want %v", values, s.Current)
+				}
+			})
+		}
+	}
+}
+
+// TestStackDriverPickerCanOverrideInheritance keeps concrete choices aligned after the inherited option is inserted.
+func TestStackDriverPickerCanOverrideInheritance(t *testing.T) {
+	root := stackWizardFixture(t)
+	if err := os.WriteFile(filepath.Join(root, ".env"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := stacks.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, resource := range s.Resources {
+		if resource.Key != "DB_DRIVER" {
+			continue
+		}
+		for choice, driver := range resource.Definition.Drivers {
+			t.Run(driver.Name, func(t *testing.T) {
+				var output bytes.Buffer
+				input := fmt.Sprintf("%d\n%d\n1\n", index+2, choice+2)
+				values, err := editStackDrivers(moduleRenameTestConsole(input, &output), s, copyStackValues(s.Current))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if values[resource.Key] != driver.Name {
+					t.Fatalf("selected %s, got %s", driver.Name, values[resource.Key])
+				}
+			})
+		}
+	}
+}
 
 // stackWizardFixture models the no-argument services-to-portable authoring flow.
 func stackWizardFixture(t *testing.T) string {

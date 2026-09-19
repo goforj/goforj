@@ -126,14 +126,19 @@ func managedValues(config *project.Config, values map[string]string) map[string]
 }
 
 // SetDriver selects a driver and retains the compiled support needed to switch back later.
-func SetDriver(values map[string]string, resource Resource, driver string) error {
+func (s *Session) SetDriver(values map[string]string, resource Resource, driver string) error {
 	driver = project.CanonicalResourceDriver(resource.Definition.Key, driver)
 	if _, ok := resource.Definition.Driver(driver); !ok {
 		return fmt.Errorf("%s has no driver %q", resource.Key, driver)
 	}
 	old := values[resource.Key]
-	values[resource.Key] = driver
 	supported := append(strings.Split(values[resource.SupportedKey], ","), old, driver)
+	for _, sibling := range resources(s.Root, s.config, values) {
+		if sibling.SupportedKey == resource.SupportedKey {
+			supported = append(supported, values[sibling.Key])
+		}
+	}
+	values[resource.Key] = driver
 	var normalized []string
 	seen := map[string]bool{}
 	for _, name := range supported {
@@ -160,7 +165,7 @@ func SetDriver(values map[string]string, resource Resource, driver string) error
 func (s *Session) Portable() (map[string]string, error) {
 	values := clone(s.Current)
 	for _, resource := range s.Resources {
-		if err := SetDriver(values, resource, resource.Definition.DefaultDriver); err != nil {
+		if err := s.SetDriver(values, resource, resource.Definition.DefaultDriver); err != nil {
 			return nil, err
 		}
 	}

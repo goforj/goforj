@@ -500,6 +500,7 @@ func (p Pipeline) generateProjectFiles(root string) (string, error) {
 		selection = generate.GenerationSelectionFromComponents(project.ProjectComponents(config))
 	}
 	selection.Environment = p.stackEnvironment
+	selection.ReplaceResourceEnvironment = p.stackEnvironment != nil
 	result, err := generate.GenerateProjectFiles(root, selection)
 	if err != nil {
 		return "", fmt.Errorf("generate project files: %w", err)
