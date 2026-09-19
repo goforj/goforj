@@ -19,6 +19,12 @@ type file struct {
 	exists        bool
 }
 
+// isPrivateStackFile distinguishes working copies and recovery state from the public definition named local.
+func isPrivateStackFile(name string) bool {
+	profile, definition := strings.CutPrefix(name, ".env.stack.")
+	return name == stateName || (definition && strings.HasSuffix(profile, ".local"))
+}
+
 // readFile rejects symlinks and special files before opening project-owned configuration.
 func readFile(root, name string) (file, error) {
 	f := file{name: name, mode: 0600}
@@ -53,7 +59,9 @@ func stage(root string, f file, data []byte) (string, error) {
 	}
 	err = errors.Join(err, tmp.Close())
 	if err != nil {
-		_ = os.Remove(name)
+		if removeErr := os.Remove(name); removeErr != nil {
+			return name, errors.Join(err, fmt.Errorf("remove temporary stack file: %w", removeErr))
+		}
 		return "", err
 	}
 	return name, nil
@@ -71,15 +79,7 @@ func commit(root string, files []file, rename func(string, string) error) error 
 		}
 		return files[i].name != ".env" && files[j].name == ".env"
 	})
-	staged := make([]string, len(files))
-	defer func() {
-		for _, name := range staged {
-			if name != "" {
-				_ = os.Remove(name)
-			}
-		}
-	}()
-	for i, f := range files {
+	for _, f := range files {
 		current, err := readFile(root, f.name)
 		if err != nil {
 			return err
@@ -90,38 +90,52 @@ func commit(root string, files []file, rename func(string, string) error) error 
 		if f.exists && f.mode&0222 == 0 {
 			return fmt.Errorf("%s is read-only", f.name)
 		}
+	}
+	for i, f := range files {
 		replacement := f
-		if strings.HasSuffix(f.name, ".local") {
+		if isPrivateStackFile(f.name) {
 			// Keep the original mode for conflict detection and rollback, but publish secrets only to their owner.
 			replacement.mode = 0600
 		}
-		staged[i], err = stage(root, replacement, f.after)
+		// Publish the ignore rules before creating any temporary file containing private settings.
+		staged, err := stage(root, replacement, f.after)
 		if err != nil {
-			return err
+			return rollback(root, files[:i], err, staged != "")
 		}
-	}
-	for i, f := range files {
-		if err := rename(staged[i], filepath.Join(root, f.name)); err != nil {
+		if err := rename(staged, filepath.Join(root, f.name)); err != nil {
 			failure := fmt.Errorf("replace %s: %w", f.name, err)
-			for j := i - 1; j >= 0; j-- {
-				original := files[j]
-				var restoreErr error
-				if !original.exists {
-					restoreErr = os.Remove(filepath.Join(root, original.name))
-				} else {
-					var backup string
-					backup, restoreErr = stage(root, original, original.before)
-					if restoreErr == nil {
-						restoreErr = os.Rename(backup, filepath.Join(root, original.name))
-						_ = os.Remove(backup)
-					}
-				}
-				if restoreErr != nil {
-					failure = errors.Join(failure, fmt.Errorf("restore %s: %w", original.name, restoreErr))
-				}
+			removeErr := os.Remove(staged)
+			if removeErr != nil {
+				failure = errors.Join(failure, fmt.Errorf("remove temporary stack file: %w", removeErr))
 			}
-			return failure
+			return rollback(root, files[:i], failure, removeErr != nil)
 		}
 	}
 	return nil
+}
+
+// rollback restores published files in reverse order so ignore rules remain in place while private replacements are removed.
+func rollback(root string, files []file, failure error, preserveIgnore bool) error {
+	for j := len(files) - 1; j >= 0; j-- {
+		original := files[j]
+		if original.name == ".gitignore" && preserveIgnore {
+			continue
+		}
+		var restoreErr error
+		if !original.exists {
+			restoreErr = os.Remove(filepath.Join(root, original.name))
+		} else {
+			var backup string
+			backup, restoreErr = stage(root, original, original.before)
+			if restoreErr == nil {
+				restoreErr = os.Rename(backup, filepath.Join(root, original.name))
+				_ = os.Remove(backup)
+			}
+		}
+		if restoreErr != nil {
+			preserveIgnore = true
+			failure = errors.Join(failure, fmt.Errorf("restore %s: %w", original.name, restoreErr))
+		}
+	}
+	return failure
 }
