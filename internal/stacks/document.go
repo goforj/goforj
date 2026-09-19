@@ -20,15 +20,15 @@ type document struct {
 // chunk includes an entire multiline assignment and its original line endings.
 type chunk struct{ key, text string }
 
-// parseDocument delegates dotenv semantics while retaining complete assignment boundaries.
+// parseDocument retains assignment boundaries while keeping parser errors from exposing private values.
 func parseDocument(raw []byte) (document, error) {
 	d := document{raw: raw}
 	if err := envfile.ValidatePortableDocument(raw); err != nil {
-		return d, err
+		return d, fmt.Errorf("invalid dotenv document")
 	}
 	values, err := godotenv.Unmarshal(string(raw))
 	if err != nil {
-		return d, err
+		return d, fmt.Errorf("invalid dotenv document")
 	}
 	d.values = values
 	lines := strings.SplitAfter(string(raw), "\n")

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // file retains absence and permissions for optimistic concurrency checks and rollback.
@@ -89,7 +90,12 @@ func commit(root string, files []file, rename func(string, string) error) error 
 		if f.exists && f.mode&0222 == 0 {
 			return fmt.Errorf("%s is read-only", f.name)
 		}
-		staged[i], err = stage(root, f, f.after)
+		replacement := f
+		if strings.HasSuffix(f.name, ".local") {
+			// Keep the original mode for conflict detection and rollback, but publish secrets only to their owner.
+			replacement.mode = 0600
+		}
+		staged[i], err = stage(root, replacement, f.after)
 		if err != nil {
 			return err
 		}

@@ -144,6 +144,32 @@ func TestStackCommandNoArgumentsPreviewsAndConfirms(t *testing.T) {
 	}
 }
 
+// TestStackWizardReportsAncestorOverridesBeforeConfirmation keeps competing runtime configuration visible without exposing its credentials.
+func TestStackWizardReportsAncestorOverridesBeforeConfirmation(t *testing.T) {
+	root := stackWizardFixture(t)
+	parent := filepath.Join(filepath.Dir(root), ".env.production")
+	if err := os.WriteFile(parent, []byte("DB_DRIVER=postgres\nDB_PASSWORD=must-not-display\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(root, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := (&StackCmd{root: root, ui: moduleRenameTestConsole("1\n1\n1\nno\n", &output)}).Run(); err != nil {
+		t.Fatal(err)
+	}
+	warning := strings.Index(output.String(), filepath.Join("..", ".env.production"))
+	confirmation := strings.Index(output.String(), "Apply these settings to .env")
+	if warning < 0 || confirmation < warning || strings.Contains(output.String(), "must-not-display") {
+		t.Fatalf("missing safe override preview before confirmation: %s", output.String())
+	}
+	after, err := os.ReadFile(filepath.Join(root, ".env"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("canceled activation changed .env: %v", err)
+	}
+}
+
 // TestStackCancellationNeverWrites covers EOF, menu cancellation, and rejected activation.
 func TestStackCancellationNeverWrites(t *testing.T) {
 	for _, input := range []string{"7\n", "1\n1\n1\nno\n", "1\n1\n1\n", ""} {
