@@ -2,11 +2,68 @@ package stacks
 
 import (
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/project"
 )
+
+// TestStackSingleDriverEditPreservesSiblingSupport keeps inferred contracts valid when only one root, named resource, or App changes.
+func TestStackSingleDriverEditPreservesSiblingSupport(t *testing.T) {
+	for _, definition := range project.ResourceCatalog() {
+		for index, scope := range []string{"", "REPORTS_", "ADMIN_", "ADMIN_REPORTS_"} {
+			t.Run(string(definition.Key)+"/"+scope, func(t *testing.T) {
+				s := openTest(t, fixture(t))
+				prefix := definition.EnvironmentPrefix + "_"
+				resourceKeys := []string{prefix + "DRIVER", prefix + "REPORTS_DRIVER", "ADMIN_" + prefix + "DRIVER", "ADMIN_" + prefix + "REPORTS_DRIVER"}
+				values := map[string]string{}
+				for i, key := range resourceKeys {
+					values[key] = definition.Drivers[(i+1)%len(definition.Drivers)].Name
+				}
+				before := clone(values)
+				if err := s.Validate(values); err != nil {
+					t.Fatal(err)
+				}
+				for _, resource := range resources(s.Root, s.config, values) {
+					if resource.Key == resourceKeys[index] {
+						if err := s.SetDriver(values, resource, definition.DefaultDriver); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if values[resourceKeys[index]] != definition.DefaultDriver {
+					t.Fatal("selected resource was not edited")
+				}
+				if err := s.Validate(values); err != nil {
+					t.Fatal(err)
+				}
+				supported := strings.Split(values[definition.EnvironmentKey("SUPPORTED_DRIVERS")], ",")
+				for key, driver := range before {
+					if !slices.Contains(supported, project.CanonicalResourceDriver(definition.Key, driver)) {
+						t.Fatalf("lost support for %s=%s: %v", key, driver, supported)
+					}
+					if key != resourceKeys[index] && values[key] != driver {
+						t.Fatalf("changed sibling %s", key)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestStackInvalidDriverEditLeavesValuesUntouched prevents failed wizard choices from changing the working configuration.
+func TestStackInvalidDriverEditLeavesValuesUntouched(t *testing.T) {
+	s := openTest(t, fixture(t))
+	values := clone(s.Current)
+	if err := s.SetDriver(values, s.Resources[0], "invalid"); err == nil {
+		t.Fatal("accepted an unknown driver")
+	}
+	if !reflect.DeepEqual(values, s.Current) {
+		t.Fatal("failed driver edit changed configuration")
+	}
+}
 
 // TestPortableNamedDatabaseDiscoveryStaysStable protects repeated conversion and real names containing sqlite.
 func TestPortableNamedDatabaseDiscoveryStaysStable(t *testing.T) {

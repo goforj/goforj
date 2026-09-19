@@ -8,6 +8,7 @@ import (
 
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/internal/stacks"
+	"github.com/goforj/goforj/project"
 )
 
 // StackCmd offers reversible resource configuration without requiring command arguments.
@@ -238,6 +239,7 @@ func editStackDrivers(ui *console.Console, s *stacks.Session, values map[string]
 		drivers := resource.Definition.Drivers
 		choices := make([]string, len(drivers))
 		selected := 0
+		current := project.CanonicalResourceDriver(resource.Definition.Key, values[resource.Key])
 		for i, driver := range drivers {
 			label := driver.Name
 			if driver.Name == resource.Definition.DefaultDriver {
@@ -246,15 +248,27 @@ func editStackDrivers(ui *console.Console, s *stacks.Session, values map[string]
 				label += " (external service)"
 			}
 			choices[i] = label
-			if driver.Name == values[resource.Key] {
+			if driver.Name == current {
 				selected = i
 			}
+		}
+		if current == "" {
+			choices = append([]string{"Keep inherited driver"}, choices...)
 		}
 		choice, err := ui.ChooseIndex("Driver for "+resource.Key, choices, selected)
 		if err != nil {
 			return nil, err
 		}
-		if err := stacks.SetDriver(values, resource, drivers[choice].Name); err != nil {
+		if current == "" {
+			if choice == 0 {
+				continue
+			}
+			choice--
+		}
+		if drivers[choice].Name == current {
+			continue
+		}
+		if err := s.SetDriver(values, resource, drivers[choice].Name); err != nil {
 			return nil, err
 		}
 		if drivers[choice].Service != "" {
