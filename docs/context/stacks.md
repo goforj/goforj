@@ -35,9 +35,9 @@ Saving and activating are separate confirmations. Saving alone leaves `.env` unc
 .env.stack-state.local       Active name and previous managed configuration
 ```
 
-Definitions contain driver selections, supported driver lists, Compose profiles, and SQLite file paths when SQLite is selected. Other resource settings, including connection endpoints and credentials, are private by default. The wizard updates `.gitignore` to make definitions shareable while keeping private files ignored. It refuses to write a private file already tracked by Git.
+Definitions contain driver selections, supported driver lists, Compose profiles, and SQLite file paths when SQLite is selected. Other resource settings, including connection endpoints and credentials, are private by default. The wizard updates `.gitignore` to make definitions shareable while keeping private files ignored. It refuses to write a private file already tracked by Git. On successful writes, private working copies and recovery files use owner-only permissions (`0600`), including existing files with broader permissions.
 
-Stack definitions do not contain `APP_KEY`, `APP_ENV`, or unrelated application settings. A Stack is independent of the existing `APP_ENV` environment layers. Before activation, the wizard identifies standard dotenv overlays and inherited process variables containing resource settings, without displaying their values. Their existing runtime precedence still applies.
+Stack definitions do not contain `APP_KEY`, `APP_ENV`, or unrelated application settings. A Stack is independent of the existing `APP_ENV` environment layers. Before activation, the wizard identifies standard dotenv overlays and inherited process variables containing resource settings, without displaying their values. Discovery checks the nearest file for each standard layer, including `.env.testing`, through the same bounded ancestor search as the runtime. The preview lists potential layers even when the current environment does not select them; their existing runtime precedence still applies.
 
 ## Switching to portable providers
 
@@ -83,7 +83,7 @@ Switching back to a saved services stack restores its connection settings. Activ
 
 If the active stack has manual edits, the wizard asks whether to retain them in a private working copy, discard them when leaving, or cancel. Keeping them does not rewrite the shareable definition. A private working copy preserves absent keys as well as explicitly empty values. Unchanged Stacks do not acquire a complete private working copy when switching away, so later edits to their shareable definition remain effective. Selecting the already-active Stack leaves current edits untouched. To deliberately update a shareable definition, save the current configuration under the same name; this also marks those settings as saved without replacing recovery history.
 
-The final preview masks connection values and requires confirmation. A failed file replacement rolls back earlier writes. Concurrent changes detected while the wizard was open require starting again. Stack operations use `.env.stack-lock.local`; after an interrupted process, remove a stale lock only after verifying no Stack operation is still running.
+The final preview masks connection values and requires confirmation. Malformed dotenv errors identify the affected file without echoing its values. A failed file replacement rolls back earlier writes. Concurrent changes detected while the wizard was open require starting again, including changes to the active private working copy that Keep edits would replace. Stack operations use `.env.stack-lock.local`; after an interrupted process, remove a stale lock only after verifying no Stack operation is still running.
 
 ## Building a Stack
 
