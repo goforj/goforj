@@ -164,13 +164,33 @@ func chooseStack(ui *console.Console, names []string) (string, error) {
 // showStackDrivers reveals provider choices without printing private endpoints or credentials.
 func showStackDrivers(ui *console.Console, s *stacks.Session, values map[string]string) {
 	for _, resource := range s.ResourcesFor(values) {
-		driver := values[resource.Key]
+		driver := stackDriverDisplay(resource.Definition, values[resource.Key], false)
 		if driver == "" {
 			driver = "(inherited/default)"
 		}
 		ui.Infof("  %s: %s", resource.Key, driver)
 	}
 	ui.Infof("  COMPOSE_PROFILES: %s", values["COMPOSE_PROFILES"])
+}
+
+// stackDriverDisplay keeps misplaced connection strings out of previews while preserving recognized aliases and supported-driver lists.
+func stackDriverDisplay(definition project.ResourceDefinition, value string, multiple bool) string {
+	if strings.TrimSpace(value) == "" {
+		return value
+	}
+	drivers := []string{value}
+	if multiple {
+		drivers = strings.Split(value, ",")
+	}
+	for _, driver := range drivers {
+		if multiple && strings.TrimSpace(driver) == "" {
+			continue
+		}
+		if _, valid := definition.Driver(driver); !valid {
+			return "(invalid)"
+		}
+	}
+	return value
 }
 
 // editStack offers the portable preset without requiring the owner to name a stack.
@@ -341,7 +361,10 @@ func activateStack(ui *console.Console, s *stacks.Session, name string, values m
 		all[key] = value
 	}
 	sqlitePaths := map[string]bool{}
+	driverDefinitions := map[string]project.ResourceDefinition{}
 	for _, resource := range s.ResourcesFor(all) {
+		driverDefinitions[resource.Key] = resource.Definition
+		driverDefinitions[resource.SupportedKey] = resource.Definition
 		if resource.Definition.Key == project.ResourceDatabase {
 			sqlitePaths[strings.TrimSuffix(resource.Key, "DRIVER")+"SQLITE_DATABASE"] = true
 		}
@@ -360,7 +383,13 @@ func activateStack(ui *console.Console, s *stacks.Session, name string, values m
 		if had == has && before == after {
 			continue
 		}
-		if strings.HasSuffix(key, "_DRIVER") || strings.HasSuffix(key, "_SUPPORTED_DRIVERS") || key == "COMPOSE_PROFILES" || sqlitePaths[key] {
+		definition, driverSetting := driverDefinitions[key]
+		if driverSetting {
+			multiple := strings.HasSuffix(key, "_SUPPORTED_DRIVERS")
+			before = stackDriverDisplay(definition, before, multiple)
+			after = stackDriverDisplay(definition, after, multiple)
+		}
+		if driverSetting || key == "COMPOSE_PROFILES" || sqlitePaths[key] {
 			if !had {
 				before = "(unset)"
 			}
