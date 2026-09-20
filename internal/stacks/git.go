@@ -14,26 +14,38 @@ func verifyPrivateFileUntracked(root, name string) error {
 	if err != nil {
 		return fmt.Errorf("inspect Git context for %s: %w", name, err)
 	}
-	if !configured {
-		explicit := false
-		for _, key := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"} {
-			if _, set := os.LookupEnv(key); set {
-				explicit = true
-			}
-		}
-		if !explicit {
-			return nil
+	explicit := false
+	for _, key := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"} {
+		if _, set := os.LookupEnv(key); set {
+			explicit = true
 		}
 	}
+	if configured {
+		if err := inspectPrivateFileIndex(root, name, false, false); err != nil {
+			return err
+		}
+	}
+	if explicit {
+		if err := inspectPrivateFileIndex(root, name, true, false); err != nil {
+			return err
+		}
+		if _, selected := os.LookupEnv("GIT_INDEX_FILE"); selected {
+			return inspectPrivateFileIndex(root, name, true, true)
+		}
+	}
+	return nil
+}
+
+// inspectPrivateFileIndex checks a normal or explicitly selected index without allowing unrelated Git configuration overrides to redirect inspection.
+func inspectPrivateFileIndex(root, name string, external, alternate bool) error {
 	command := exec.Command("git", "ls-files", "--cached", "-z", "--", name)
 	command.Dir = root
-	if configured {
-		// Git subprocess overrides must not redirect this check away from the project's real index.
-		command.Env = []string{}
-		for _, entry := range os.Environ() {
-			if !strings.HasPrefix(entry, "GIT_") {
-				command.Env = append(command.Env, entry)
-			}
+	command.Env = []string{}
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		location := key == "GIT_DIR" || key == "GIT_WORK_TREE" || key == "GIT_COMMON_DIR"
+		if !strings.HasPrefix(key, "GIT_") || (external && location) || (alternate && key == "GIT_INDEX_FILE") {
+			command.Env = append(command.Env, entry)
 		}
 	}
 	tracked, err := command.Output()
