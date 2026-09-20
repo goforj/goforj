@@ -107,9 +107,18 @@ func TestDevWatcherMultiAppChurnIsolation(t *testing.T) {
 	betaInitial := waitForDevWatcherChurnState(t, beta.state, func(state devWatcherChurnState) bool {
 		return state.version == "beta-initial"
 	})
+	// A direct editor save can be incomplete when debounce expires; neither healthy App should restart on that failed build.
+	writeDevWatcherChurnFile(t, filepath.Join(alpha.root, "cmd", "app", "main.go"), "package main\nfunc main() {\n", 0o644)
+	waitForDevWatcherChurnBuildLine(t, alpha.buildLog, "build-failed:")
+	waitForDevWatcherChurnTaskIdle(t, controller.tasks[alphaBuildID])
+	waitForDevWatcherChurnHeartbeat(t, alpha.state, alphaInitial)
+	waitForDevWatcherChurnHeartbeat(t, beta.state, betaInitial)
+	for _, paths := range []devWatcherChurnPaths{alpha, beta} {
+		if starts := countDevWatcherChurnLines(paths.lifecycle, "runtime-start:"); starts != 1 {
+			t.Fatalf("failed compilation restarted an App: starts=%d\n%s", starts, readDevWatcherChurnFile(paths.lifecycle))
+		}
+	}
 	runAdditionalStressConcurrentChurn(t, alpha.root, beta.root)
-	waitForDevWatcherChurnBuildLine(t, alpha.buildLog, "build-success:2")
-	waitForDevWatcherChurnBuildLine(t, beta.buildLog, "build-success:2")
 	alphaTogether := waitForDevWatcherChurnState(t, alpha.state, func(state devWatcherChurnState) bool {
 		return state.version == "alpha-together" && state.pid != alphaInitial.pid
 	})
@@ -118,26 +127,34 @@ func TestDevWatcherMultiAppChurnIsolation(t *testing.T) {
 	})
 	waitForDevWatcherChurnTaskIdle(t, controller.tasks[alphaBuildID])
 	waitForDevWatcherChurnTaskIdle(t, controller.tasks[betaBuildID])
-	assertDevWatcherChurnBuildCountStable(t, alpha.buildLog, 2)
-	assertDevWatcherChurnBuildCountStable(t, beta.buildLog, 2)
+	alphaBuilds := countDevWatcherChurnLines(alpha.buildLog, "build-start:")
+	betaBuilds := countDevWatcherChurnLines(beta.buildLog, "build-start:")
+	assertDevWatcherChurnBuildCountStable(t, alpha.buildLog, alphaBuilds)
+	assertDevWatcherChurnBuildCountStable(t, beta.buildLog, betaBuilds)
+	alphaStarts := countDevWatcherChurnLines(alpha.lifecycle, "runtime-start:")
+	betaStarts := countDevWatcherChurnLines(beta.lifecycle, "runtime-start:")
 
 	for index := range 24 {
 		mustWriteAdditionalStressSource(t, alpha.root, fmt.Sprintf("alpha-only-%02d", index), index%2 == 0)
 	}
 	mustWriteAdditionalStressSource(t, alpha.root, "alpha-isolated", true)
-	waitForDevWatcherChurnBuildLine(t, alpha.buildLog, "build-success:3")
 	alphaIsolated := waitForDevWatcherChurnState(t, alpha.state, func(state devWatcherChurnState) bool {
 		return state.version == "alpha-isolated" && state.pid != alphaTogether.pid
 	})
 	waitForDevWatcherChurnHeartbeat(t, beta.state, betaTogether)
 	waitForDevWatcherChurnTaskIdle(t, controller.tasks[alphaBuildID])
-	assertDevWatcherChurnBuildCountStable(t, alpha.buildLog, 3)
-	assertDevWatcherChurnBuildCountStable(t, beta.buildLog, 2)
-	if starts := countDevWatcherChurnLines(alpha.lifecycle, "runtime-start:"); starts != 3 {
-		t.Fatalf("alpha runtime starts=%d, want 3\n%s", starts, readDevWatcherChurnFile(alpha.lifecycle))
+	assertDevWatcherChurnBuildCountStable(t, alpha.buildLog, countDevWatcherChurnLines(alpha.buildLog, "build-start:"))
+	assertDevWatcherChurnBuildCountStable(t, beta.buildLog, betaBuilds)
+	if starts := countDevWatcherChurnLines(alpha.lifecycle, "runtime-start:"); starts <= alphaStarts {
+		t.Fatalf("alpha runtime was not replaced: starts=%d, previous=%d\n%s", starts, alphaStarts, readDevWatcherChurnFile(alpha.lifecycle))
 	}
-	if starts := countDevWatcherChurnLines(beta.lifecycle, "runtime-start:"); starts != 2 {
-		t.Fatalf("beta runtime starts=%d, want 2\n%s", starts, readDevWatcherChurnFile(beta.lifecycle))
+	if starts := countDevWatcherChurnLines(beta.lifecycle, "runtime-start:"); starts != betaStarts {
+		t.Fatalf("alpha edits restarted beta: starts=%d, previous=%d\n%s", starts, betaStarts, readDevWatcherChurnFile(beta.lifecycle))
+	}
+	for _, paths := range []devWatcherChurnPaths{alpha, beta} {
+		if countDevWatcherChurnLines(paths.lifecycle, "runtime-start:") > countDevWatcherChurnLines(paths.buildLog, "build-success:") {
+			t.Fatalf("runtime restarted without a successful build\n%s", readDevWatcherChurnFile(paths.lifecycle))
+		}
 	}
 	assertNoDevWatcherChurnExit(t, controller)
 
