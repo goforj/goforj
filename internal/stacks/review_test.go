@@ -103,13 +103,14 @@ func TestStackPortableRetainsPrivateServiceDatabaseNames(t *testing.T) {
 
 // TestStackSQLiteShareableFallback preserves legacy SQLite paths while keeping unused service names private.
 func TestStackSQLiteShareableFallback(t *testing.T) {
+	s := openTest(t, fixture(t))
 	for _, driver := range []string{"sqlite", "sqlite3"} {
 		values := map[string]string{"DB_DRIVER": driver, "DB_DATABASE": "legacy.db"}
-		if shareable(values)["DB_DATABASE"] != "legacy.db" {
+		if s.shareable(values)["DB_DATABASE"] != "legacy.db" {
 			t.Fatal("lost legacy SQLite database path")
 		}
 		values["DB_SQLITE_DATABASE"] = "portable.db"
-		public := shareable(values)
+		public := s.shareable(values)
 		if _, ok := public["DB_DATABASE"]; ok {
 			t.Fatal("included unused generic database name")
 		}
