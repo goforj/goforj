@@ -340,18 +340,27 @@ func activateStack(ui *console.Console, s *stacks.Session, name string, values m
 	for key, value := range values {
 		all[key] = value
 	}
+	sqlitePaths := map[string]bool{}
+	for _, resource := range s.ResourcesFor(all) {
+		if resource.Definition.Key == project.ResourceDatabase {
+			sqlitePaths[strings.TrimSuffix(resource.Key, "DRIVER")+"SQLITE_DATABASE"] = true
+		}
+	}
 	keys := make([]string, 0, len(all))
 	for key := range all {
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
 	for _, key := range keys {
+		if key == stacks.SQLiteDSNsKey {
+			continue
+		}
 		before, had := s.Current[key]
 		after, has := values[key]
 		if had == has && before == after {
 			continue
 		}
-		if strings.HasSuffix(key, "_DRIVER") || strings.HasSuffix(key, "_SUPPORTED_DRIVERS") || key == "COMPOSE_PROFILES" {
+		if strings.HasSuffix(key, "_DRIVER") || strings.HasSuffix(key, "_SUPPORTED_DRIVERS") || key == "COMPOSE_PROFILES" || sqlitePaths[key] {
 			if !had {
 				before = "(unset)"
 			}

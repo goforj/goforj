@@ -44,6 +44,18 @@ func readFile(root, name string) (file, error) {
 	return f, err
 }
 
+// checkFile prevents publication or rollback from replacing a destination changed by another writer.
+func checkFile(root string, expected file) error {
+	current, err := readFile(root, expected.name)
+	if err != nil {
+		return err
+	}
+	if current.exists != expected.exists || !bytes.Equal(current.before, expected.before) || current.mode != expected.mode {
+		return fmt.Errorf("%s changed while the wizard was open; run forj stack again", expected.name)
+	}
+	return nil
+}
+
 // stage writes a complete replacement on the destination filesystem before publishing it.
 func stage(root string, f file, data []byte) (string, error) {
 	tmp, err := os.CreateTemp(root, ".env.stack-tmp-*.local")
@@ -80,12 +92,8 @@ func commit(root string, files []file, rename func(string, string) error) error 
 		return files[i].name != ".env" && files[j].name == ".env"
 	})
 	for _, f := range files {
-		current, err := readFile(root, f.name)
-		if err != nil {
+		if err := checkFile(root, f); err != nil {
 			return err
-		}
-		if current.exists != f.exists || !bytes.Equal(current.before, f.before) || current.mode != f.mode {
-			return fmt.Errorf("%s changed while the wizard was open; run forj stack again", f.name)
 		}
 		if f.exists && f.mode&0222 == 0 {
 			return fmt.Errorf("%s is read-only", f.name)
@@ -102,13 +110,18 @@ func commit(root string, files []file, rename func(string, string) error) error 
 		if err != nil {
 			return rollback(root, files[:i], err, staged != "")
 		}
-		if err := rename(staged, filepath.Join(root, f.name)); err != nil {
+		err = checkFile(root, f)
+		privateConflict := err != nil && isPrivateStackFile(f.name)
+		if err == nil {
+			err = rename(staged, filepath.Join(root, f.name))
+		}
+		if err != nil {
 			failure := fmt.Errorf("replace %s: %w", f.name, err)
 			removeErr := os.Remove(staged)
 			if removeErr != nil {
 				failure = errors.Join(failure, fmt.Errorf("remove temporary stack file: %w", removeErr))
 			}
-			return rollback(root, files[:i], failure, removeErr != nil)
+			return rollback(root, files[:i], failure, removeErr != nil || privateConflict)
 		}
 	}
 	return nil
@@ -121,6 +134,17 @@ func rollback(root string, files []file, failure error, preserveIgnore bool) err
 		if original.name == ".gitignore" && preserveIgnore {
 			continue
 		}
+		published := original
+		published.exists = true
+		published.before = original.after
+		if isPrivateStackFile(original.name) {
+			published.mode = 0600
+		}
+		if err := checkFile(root, published); err != nil {
+			preserveIgnore = true
+			failure = errors.Join(failure, fmt.Errorf("restore %s: %w", original.name, err))
+			continue
+		}
 		var restoreErr error
 		if !original.exists {
 			restoreErr = os.Remove(filepath.Join(root, original.name))
@@ -128,7 +152,10 @@ func rollback(root string, files []file, failure error, preserveIgnore bool) err
 			var backup string
 			backup, restoreErr = stage(root, original, original.before)
 			if restoreErr == nil {
-				restoreErr = os.Rename(backup, filepath.Join(root, original.name))
+				restoreErr = checkFile(root, published)
+				if restoreErr == nil {
+					restoreErr = os.Rename(backup, filepath.Join(root, original.name))
+				}
 				_ = os.Remove(backup)
 			}
 		}

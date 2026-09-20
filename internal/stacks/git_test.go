@@ -8,6 +8,86 @@ import (
 	"testing"
 )
 
+// TestExternalGitWorktreeChecksNormalIndex prevents an alternate index from concealing tracked private files in a supported external repository.
+func TestExternalGitWorktreeChecksNormalIndex(t *testing.T) {
+	for _, corrupt := range []bool{false, true} {
+		t.Run(map[bool]string{false: "tracked", true: "corrupt"}[corrupt], func(t *testing.T) {
+			root := fixture(t)
+			repository := t.TempDir()
+			runStackGit(t, repository, "init", "--bare", "-q")
+			t.Setenv("GIT_DIR", repository)
+			t.Setenv("GIT_WORK_TREE", root)
+			name := ".env.stack.services.local"
+			put(t, root, name, "")
+			runStackGit(t, root, "add", name)
+			if corrupt {
+				put(t, repository, "index", "corrupt index")
+			}
+			t.Setenv("GIT_INDEX_FILE", filepath.Join(repository, "alternate-index"))
+			s := openTest(t, root)
+			if err := s.Save("services", s.Current); err == nil {
+				t.Fatal("alternate index bypassed the repository tracking check")
+			}
+			data, err := os.ReadFile(filepath.Join(root, name))
+			if err != nil || len(data) != 0 {
+				t.Fatalf("private credentials were written: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".env.stack.services")); !os.IsNotExist(err) {
+				t.Fatal("published before checking the real index")
+			}
+		})
+	}
+}
+
+// TestGitProtectionChecksEverySelectedRepository keeps ancestor discovery and explicit worktree selection from masking each other's tracked paths.
+func TestGitProtectionChecksEverySelectedRepository(t *testing.T) {
+	for _, scenario := range []string{"external beneath ancestor", "alternate index only", "untracked alternate index", "invalid external context"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := fixture(t)
+			if scenario == "external beneath ancestor" {
+				outer := t.TempDir()
+				runStackGit(t, outer, "init", "-q")
+				nested := filepath.Join(outer, "project")
+				if err := os.Rename(root, nested); err != nil {
+					t.Fatal(err)
+				}
+				root = nested
+				external := t.TempDir()
+				runStackGit(t, external, "init", "--bare", "-q")
+				t.Setenv("GIT_DIR", external)
+				t.Setenv("GIT_WORK_TREE", root)
+			} else {
+				runStackGit(t, root, "init", "-q")
+				if scenario == "invalid external context" {
+					t.Setenv("GIT_DIR", filepath.Join(root, "missing"))
+				} else {
+					t.Setenv("GIT_INDEX_FILE", filepath.Join(root, ".git", "alternate-index"))
+				}
+			}
+			name := ".env.stack.services.local"
+			put(t, root, name, "")
+			if scenario == "external beneath ancestor" || scenario == "alternate index only" {
+				runStackGit(t, root, "add", name)
+			}
+			s := openTest(t, root)
+			err := s.Save("services", s.Current)
+			if scenario == "untracked alternate index" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("ignored another selected repository or an unverifiable context")
+			}
+			data, err := os.ReadFile(filepath.Join(root, name))
+			if err != nil || len(data) != 0 {
+				t.Fatalf("private destination changed: %v", err)
+			}
+		})
+	}
+}
+
 // runStackGit prepares real repository state for private-file protection tests.
 func runStackGit(t *testing.T, root string, args ...string) {
 	t.Helper()
