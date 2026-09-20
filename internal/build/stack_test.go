@@ -43,7 +43,7 @@ func TestBuildArgsUsesStructuredStackDefaults(t *testing.T) {
 
 // TestBuildStackFailsBeforeGenerationForMissingDefinitionsOrRuntimeSupport protects existing projects from an unsupported linker contract.
 func TestBuildStackFailsBeforeGenerationForMissingDefinitionsOrRuntimeSupport(t *testing.T) {
-	for _, scenario := range []string{"missing", "private", "old-runtime"} {
+	for _, scenario := range []string{"missing", "private", "old-runtime", "old-stack-runtime"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			for name, content := range map[string]string{"go.mod": "module example.org/stack\n", ".goforj.yml": "project_name: stack\nmodule_name: example.org/stack\napps:\n  app:\n    components: [cli]\n"} {
@@ -61,11 +61,20 @@ func TestBuildStackFailsBeforeGenerationForMissingDefinitionsOrRuntimeSupport(t 
 				}
 			}
 			c := Cmd{Root: root, Stack: "test"}
+			if scenario == "old-stack-runtime" {
+				path := filepath.Join(root, "internal", "cmd")
+				if err := os.MkdirAll(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(path, "env_defaults.go"), []byte("var CompiledStackDefaultsBase64 string\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			err := c.Run()
 			if err == nil {
 				t.Fatal("build unexpectedly proceeded")
 			}
-			if scenario == "old-runtime" && !strings.Contains(err.Error(), "forj render") {
+			if strings.HasSuffix(scenario, "runtime") && !strings.Contains(err.Error(), "forj render") {
 				t.Fatalf("missing upgrade instruction: %v", err)
 			}
 		})
@@ -159,7 +168,7 @@ func TestBuildStackRejectsAmbiguousTargetsBeforeGeneration(t *testing.T) {
 				"go.mod":                       "module example.org/stack\n",
 				".goforj.yml":                  "project_name: stack\nmodule_name: example.org/stack\napps:\n  app:\n    components: [cli]\n",
 				".env.stack.portable":          "COMPOSE_PROFILES=\n",
-				"internal/cmd/env_defaults.go": "var CompiledStackDefaultsBase64 string\n",
+				"internal/cmd/env_defaults.go": "var CompiledStackDefaultsBase64 string\nconst compiledStackDefaultsVersion = 2\n",
 			} {
 				if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700); err != nil {
 					t.Fatal(err)
