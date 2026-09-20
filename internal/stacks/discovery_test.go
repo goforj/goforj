@@ -147,7 +147,7 @@ func TestStackStillRejectsDriversOutsideTheCompiledContract(t *testing.T) {
 	}
 }
 
-// TestStackOverlappingAppsUseLongestPrefix keeps validation, ownership, and baked defaults deterministic.
+// TestStackOverlappingAppsUseLongestPrefix keeps ownership deterministic while binary defaults follow the selected App's runtime overlay.
 func TestStackOverlappingAppsUseLongestPrefix(t *testing.T) {
 	root := fixture(t)
 	put(t, root, ".goforj.yml", "project_name: demo\nmodule_name: example.org/demo\nrender:\n  components: [cli]\napps:\n  admin:\n    components: [cli]\n  admin-db:\n    components: [cli, cache]\n")
@@ -172,10 +172,8 @@ func TestStackOverlappingAppsUseLongestPrefix(t *testing.T) {
 				if defaults["DB_DRIVER"] != "mysql" {
 					t.Fatal("lost shorter App's database driver")
 				}
-				for key := range defaults {
-					if key == "DB_CACHE_DRIVER" {
-						t.Fatal("included another App's defaults")
-					}
+				if defaults["DB_CACHE_DRIVER"] != "redis" {
+					t.Fatal("lost the shorter App's runtime overlay")
 				}
 			}
 		}

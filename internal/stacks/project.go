@@ -92,28 +92,47 @@ func resources(root string, config *project.Config, values map[string]string) []
 	return out
 }
 
-// resourceKey removes only configured App prefixes, preventing unrelated application keys from being claimed.
+// resourceKey prefers participating resource scopes so an App without cache cannot claim a root database named cache.
 func resourceKey(config *project.Config, key string) string {
 	longest := ""
-	for name := range config.Apps {
+	participating := ""
+	for name, app := range config.Apps {
 		if name == project.DefaultAppName {
 			continue
 		}
 		prefix := project.AppEnvironmentPrefix(name) + "_"
-		if len(prefix) > len(longest) && strings.HasPrefix(key, prefix) {
+		if strings.HasPrefix(key, prefix) {
 			candidate := strings.TrimPrefix(key, prefix)
-			for _, resource := range []string{"DB_", "CACHE_", "QUEUE_", "EVENTS_", "STORAGE_", "MAIL_", "REDIS_"} {
-				if strings.HasPrefix(candidate, resource) {
+			if rootResourceKey(candidate) {
+				if len(prefix) > len(longest) {
 					longest = prefix
-					break
+				}
+				if len(prefix) > len(participating) && resourceAppliesTo(candidate, project.NormalizeConfiguredAppComponents(config, app.Components)) {
+					participating = prefix
 				}
 			}
 		}
+	}
+	if participating != "" {
+		return strings.TrimPrefix(key, participating)
+	}
+	if resourceAppliesTo(key, project.ProjectComponents(config)) {
+		return key
 	}
 	if longest != "" {
 		return strings.TrimPrefix(key, longest)
 	}
 	return key
+}
+
+// resourceAppliesTo distinguishes live resource scopes while allowing definitions for future components to retain their fallback interpretation.
+func resourceAppliesTo(key string, components project.Components) bool {
+	for _, definition := range project.ResourceCatalog() {
+		if strings.HasPrefix(key, definition.EnvironmentPrefix+"_") {
+			return definition.AppliesTo(components)
+		}
+	}
+	return false
 }
 
 // managedKey limits stack ownership to resource settings and Compose selection.
@@ -196,6 +215,12 @@ func (s *Session) databaseValue(values map[string]string, key, suffix string) st
 func (s *Session) databaseSetting(values map[string]string, key, suffix string) (string, string) {
 	base := resourceKey(s.config, key)
 	app := strings.TrimSuffix(key, base)
+	return databaseSettingInScope(values, key, suffix, app)
+}
+
+// databaseSettingInScope follows one App's exact runtime overlay so overlapping App names can retain independent inheritance.
+func databaseSettingInScope(values map[string]string, key, suffix, app string) (string, string) {
+	base := strings.TrimPrefix(key, app)
 	for _, prefix := range []string{strings.TrimSuffix(base, "DRIVER"), "DB_"} {
 		source := prefix + suffix
 		value := values[source]
@@ -210,10 +235,114 @@ func (s *Session) databaseSetting(values map[string]string, key, suffix string) 
 	return "", ""
 }
 
+// databaseScopes includes every participating database interpretation of a key, retaining the conventional fallback for future components.
+func (s *Session) databaseScopes(key string) []string {
+	scopes := map[string]bool{}
+	if base := resourceKey(s.config, key); strings.HasPrefix(base, "DB_") {
+		scopes[strings.TrimSuffix(key, base)] = true
+	}
+	if strings.HasPrefix(key, "DB_") && project.ProjectComponents(s.config).HasDatabase() {
+		scopes[""] = true
+	}
+	for name, app := range s.config.Apps {
+		if name == project.DefaultAppName {
+			continue
+		}
+		prefix := project.AppEnvironmentPrefix(name) + "_"
+		if strings.HasPrefix(key, prefix+"DB_") && project.NormalizeConfiguredAppComponents(s.config, app.Components).HasDatabase() {
+			scopes[prefix] = true
+		}
+	}
+	return keys(scopes)
+}
+
+// sqlitePathInScope mirrors SQLite's named-to-root path fallback without conflating overlapping App prefixes.
+func sqlitePathInScope(values map[string]string, key, app string) string {
+	for _, suffix := range []string{"SQLITE_DATABASE", "DATABASE"} {
+		if _, path := databaseSettingInScope(values, key, suffix, app); path != "" {
+			return path
+		}
+	}
+	base := strings.TrimPrefix(key, app)
+	name := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(base, "DB_"), "_DRIVER"))
+	if name == "driver" {
+		name = "app"
+	}
+	return "./_data/sqlite/" + name + ".db"
+}
+
+// databaseTarget identifies the connection selected before a driver edit without exposing private values in diagnostics.
+type databaseTarget struct {
+	driver, dsn, path, host, port, database, username string
+}
+
+// databaseTargetInScope compares effective targets so identical inherited connections can still transition together.
+func databaseTargetInScope(values map[string]string, key, app string) databaseTarget {
+	_, selected := databaseSettingInScope(values, key, "DRIVER", app)
+	target := databaseTarget{driver: project.CanonicalResourceDriver(project.ResourceDatabase, selected)}
+	if target.driver == "" {
+		target.driver = "sqlite"
+	}
+	_, target.dsn = databaseSettingInScope(values, key, "DSN", app)
+	if target.dsn != "" {
+		return target
+	}
+	if target.driver == "sqlite" {
+		target.path = sqlitePathInScope(values, key, app)
+		return target
+	}
+	_, target.host = databaseSettingInScope(values, key, "HOST", app)
+	_, target.port = databaseSettingInScope(values, key, "PORT", app)
+	_, target.database = databaseSettingInScope(values, key, "DATABASE", app)
+	_, target.username = databaseSettingInScope(values, key, "USERNAME", app)
+	return target
+}
+
+// declaredDatabaseScopes excludes synthetic named interpretations until the project actually declares their accessors.
+func (s *Session) declaredDatabaseScopes(previous map[string]string, key string) []string {
+	names := append(slices.Clone(s.databaseNames), generate.ResourceNames(s.Root, previous)[project.ResourceDatabase]...)
+	var scopes []string
+	for _, app := range s.databaseScopes(key) {
+		base := strings.TrimPrefix(key, app)
+		name := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(base, "DB_"), "_DRIVER"))
+		if base != "DB_DRIVER" && !slices.Contains(names, name) {
+			// App overlays synthesized by the editor must not invent additional source database names during the same preset.
+			continue
+		}
+		scopes = append(scopes, app)
+	}
+	return scopes
+}
+
+// preserveSQLiteScopes avoids pinning unchanged SQLite inheritance and rejects transitions that cannot preserve overlapping targets.
+func (s *Session) preserveSQLiteScopes(values, previous map[string]string, key, driver string) (bool, error) {
+	targets := map[databaseTarget]bool{}
+	changing, unchanged := false, true
+	legacyPath := false
+	for _, app := range s.declaredDatabaseScopes(previous, key) {
+		target := databaseTargetInScope(previous, key, app)
+		targets[target] = true
+		changing = changing || target.driver != driver
+		unchanged = unchanged && databaseTargetInScope(values, key, app) == target
+		_, dedicated := databaseSettingInScope(values, key, "SQLITE_DATABASE", app)
+		_, generic := databaseSettingInScope(values, key, "DATABASE", app)
+		legacyPath = legacyPath || target.driver == "sqlite" && target.dsn == "" && dedicated == "" && generic != ""
+	}
+	if len(targets) > 1 && (changing || !unchanged) {
+		return false, fmt.Errorf("%s has conflicting database targets across App scopes; use distinct App or resource names before changing drivers", key)
+	}
+	// Legacy DATABASE paths still need their dedicated setting before that generic key can be reused for a service database.
+	return len(targets) > 1 || len(targets) > 0 && driver == "sqlite" && !changing && unchanged && !legacyPath, nil
+}
+
 // prepareSQLiteTarget retains existing SQLite files, including legacy and inherited paths, before a driver edit can change their interpretation.
 func (s *Session) prepareSQLiteTarget(values, previous map[string]string, key, driver string) error {
 	retained, err := sqliteDSNs(values)
 	if err != nil {
+		return err
+	}
+	preserve, err := s.preserveSQLiteScopes(values, previous, key, driver)
+	if err != nil || preserve {
 		return err
 	}
 	prefix := strings.TrimSuffix(key, "DRIVER")
@@ -234,20 +363,8 @@ func (s *Session) prepareSQLiteTarget(values, previous map[string]string, key, d
 		storeSQLiteDSNs(values, retained)
 	}
 	if old == "sqlite" && dsn == "" && strings.TrimSpace(values[prefix+"SQLITE_DATABASE"]) == "" {
-		target := s.databaseValue(previous, key, "SQLITE_DATABASE")
-		if target == "" {
-			target = s.databaseValue(previous, key, "DATABASE")
-		}
-		if target == "" && s.databaseValue(previous, key, "DSN") == "" {
-			name := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(resourceKey(s.config, key), "DB_"), "_DRIVER"))
-			if name == "driver" {
-				name = "app"
-			}
-			target = "./_data/sqlite/" + name + ".db"
-		}
-		if target != "" {
-			values[prefix+"SQLITE_DATABASE"] = target
-		}
+		app := strings.TrimSuffix(key, resourceKey(s.config, key))
+		values[prefix+"SQLITE_DATABASE"] = sqlitePathInScope(previous, key, app)
 	}
 	if driver == "sqlite" && old != "sqlite" {
 		if retained[key] != "" {
@@ -377,37 +494,45 @@ func (s *Session) shareable(values map[string]string) map[string]string {
 		if strings.HasSuffix(key, "_DRIVER") || strings.HasSuffix(key, "_SUPPORTED_DRIVERS") || key == "COMPOSE_PROFILES" {
 			result[key] = value
 		}
-		if strings.HasSuffix(key, "_DRIVER") && strings.HasPrefix(resourceKey(s.config, key), "DB_") {
+		if strings.HasSuffix(key, "_DRIVER") && len(s.databaseScopes(key)) > 0 {
 			databases[key] = true
 		}
 	}
 	for _, resource := range resources(s.Root, s.config, values) {
-		if resource.Definition.Key == project.ResourceDatabase {
+		if len(s.databaseScopes(resource.Key)) > 0 {
 			databases[resource.Key] = true
 		}
 	}
+	privateNames := map[string]bool{}
 	for key := range databases {
-		driver := project.CanonicalResourceDriver(project.ResourceDatabase, s.databaseValue(values, key, "DRIVER"))
-		if driver != "" && driver != "sqlite" {
-			continue
-		}
-		prefix := strings.TrimSuffix(key, "DRIVER")
-		source, path := s.databaseSetting(values, key, "SQLITE_DATABASE")
-		if path != "" {
-			result[source] = path
-		}
-		for _, suffix := range []string{"DATABASE", "SQLITE_DATABASE"} {
-			// A dedicated SQLite path leaves DATABASE available for private service connection settings.
-			if suffix == "DATABASE" && path != "" {
+		for _, app := range s.databaseScopes(key) {
+			_, selected := databaseSettingInScope(values, key, "DRIVER", app)
+			driver := project.CanonicalResourceDriver(project.ResourceDatabase, selected)
+			if driver != "" && driver != "sqlite" {
 				continue
 			}
-			if value, ok := values[prefix+suffix]; ok {
-				result[prefix+suffix] = value
+			prefix := strings.TrimSuffix(key, "DRIVER")
+			source, path := databaseSettingInScope(values, key, "SQLITE_DATABASE", app)
+			if path != "" {
+				result[source] = path
+			}
+			_, dsn := databaseSettingInScope(values, key, "DSN", app)
+			if path != "" || dsn != "" {
+				// A generic name bypassed by an overlapping SQLite scope stays private; explicit SQLITE_DATABASE paths remain shareable.
+				privateNames[prefix+"DATABASE"] = true
+			}
+			for _, suffix := range []string{"DATABASE", "SQLITE_DATABASE"} {
+				if value, ok := values[prefix+suffix]; ok {
+					result[prefix+suffix] = value
+				}
+			}
+			if value, ok := values[prefix+"DSN"]; ok && value == "" {
+				result[prefix+"DSN"] = ""
 			}
 		}
-		if value, ok := values[prefix+"DSN"]; ok && value == "" {
-			result[prefix+"DSN"] = ""
-		}
+	}
+	for key := range privateNames {
+		delete(result, key)
 	}
 	return result
 }

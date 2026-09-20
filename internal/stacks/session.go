@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/project"
 )
 
@@ -30,14 +31,15 @@ type state struct {
 
 // Session retains the configuration reviewed by the wizard until its final confirmation.
 type Session struct {
-	Root      string
-	Current   map[string]string
-	Resources []Resource
-	Active    string
-	config    *project.Config
-	env       document
-	files     map[string]file
-	state     state
+	Root          string
+	Current       map[string]string
+	Resources     []Resource
+	Active        string
+	config        *project.Config
+	env           document
+	files         map[string]file
+	state         state
+	databaseNames []string
 }
 
 // Open reads configuration without creating files or loading values into the process environment.
@@ -75,6 +77,7 @@ func Open(root string) (*Session, error) {
 		}
 	}
 	s.Resources = resources(root, config, inventory)
+	s.databaseNames = generate.ResourceNames(root, inventory)[project.ResourceDatabase]
 	if s.files[stateName].exists {
 		if err := json.Unmarshal(s.files[stateName].before, &s.state); err != nil {
 			return nil, fmt.Errorf("read private stack state: %w", err)
@@ -325,8 +328,8 @@ func AppDefaults(root string, values map[string]string, app string) (map[string]
 	if app != "" && app != project.DefaultAppName {
 		prefix := project.AppEnvironmentPrefix(app) + "_"
 		for key, value := range values {
-			base := resourceKey(config, key)
-			if key == prefix+base {
+			base, matches := strings.CutPrefix(key, prefix)
+			if matches && rootResourceKey(base) {
 				result[base] = value
 			}
 		}
