@@ -19,6 +19,9 @@ var CompiledEnvDefaultsBase64 string
 // CompiledStackDefaultsBase64 stores structured, unset-only resource defaults.
 var CompiledStackDefaultsBase64 string
 
+// compiledStackDefaultsVersion identifies runtime support for defaults whose resource names overlap App prefixes.
+const compiledStackDefaultsVersion = 2
+
 // CompiledEnvOverridesBase64 stores build-time forced env overrides.
 var CompiledEnvOverridesBase64 string
 
@@ -47,9 +50,6 @@ func LoadEnv() error {
 		return err
 	}
 	if err := ApplyCompiledEnvDefaults(); err != nil {
-		return err
-	}
-	if err := ApplyCompiledStackDefaults(); err != nil {
 		return err
 	}
 	if err := ApplyCompiledEnvOverrides(); err != nil {
@@ -81,6 +81,10 @@ func LoadEnv() error {
 		if err := ApplyAppEnvOverlay(); err != nil {
 			return err
 		}
+	}
+	// Stack payloads are already folded for this App; applying them after overlays prevents a named resource from being promoted again.
+	if err := ApplyCompiledStackDefaults(); err != nil {
+		return err
 	}
 	if err := ApplyCompiledEnvOverrides(); err != nil {
 		return err

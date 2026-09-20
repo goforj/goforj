@@ -598,3 +598,57 @@ func unsetTestStackEnv(t *testing.T, key string) {
     t.Setenv(key, "")
     if err := os.Unsetenv(key); err != nil { t.Fatal(err) }
 }
+
+// TestStackDefaultsAfterAppOverlays keeps folded named-resource defaults from acting as runtime App overrides.
+func TestStackDefaultsAfterAppOverlays(t *testing.T) {
+	if os.Getenv("GO_WANT_STACK_NAMESPACE_HELPER") == "1" {
+		CompiledStackDefaultsBase64 = base64.StdEncoding.EncodeToString([]byte(`{"DB_DRIVER":"sqlite","DB_SQLITE_DATABASE":"./data/baked-root.db","DB_DB_DRIVER":"mysql","DB_DB_SQLITE_DATABASE":"./data/baked-named.db"}`))
+		CompiledEnvDefaultsBase64 = base64.StdEncoding.EncodeToString([]byte(os.Getenv("GO_STACK_EXPLICIT_DEFAULTS")))
+		CompiledEnvOverridesBase64 = base64.StdEncoding.EncodeToString([]byte(os.Getenv("GO_STACK_FORCED_OVERRIDES")))
+		if err := LoadEnv(); err != nil {
+			t.Fatal(err)
+		}
+		printEnvDefaultsOutput("DB_DRIVER", "DB_DB_DRIVER", "DB_SQLITE_DATABASE", "DB_DB_SQLITE_DATABASE")
+		os.Exit(0)
+	}
+	for _, tc := range []struct {
+		name, app, dotenv, defaults, overrides, wantRoot, wantNamed string
+		environment                                                 []string
+	}{
+		{name: "default-app", app: "app", wantRoot: "sqlite", wantNamed: "mysql"},
+		{name: "resource-app", app: "db", wantRoot: "sqlite", wantNamed: "mysql"},
+		{name: "runtime-base", app: "db", environment: []string{"DB_DRIVER=postgres"}, wantRoot: "postgres", wantNamed: "mysql"},
+		{name: "runtime-empty", app: "db", environment: []string{"DB_DRIVER="}, wantRoot: "", wantNamed: "mysql"},
+		{name: "runtime-app", app: "db", environment: []string{"DB_DB_DRIVER=postgres"}, wantRoot: "postgres", wantNamed: "postgres"},
+		{name: "dotenv-base", app: "db", dotenv: "DB_DRIVER=postgres\n", wantRoot: "postgres", wantNamed: "mysql"},
+		{name: "dotenv-app", app: "db", dotenv: "DB_DB_DRIVER=postgres\n", wantRoot: "postgres", wantNamed: "postgres"},
+		{name: "explicit-default", app: "db", defaults: "DB_DRIVER=postgres", wantRoot: "postgres", wantNamed: "mysql"},
+		{name: "forced-override", app: "db", environment: []string{"DB_DB_DRIVER=postgres"}, overrides: "DB_DRIVER=sqlite", wantRoot: "sqlite", wantNamed: "postgres"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestEnvFile(t, filepath.Join(dir, ".env"), tc.dotenv+"\n")
+			command := exec.Command(os.Args[0], "-test.run=^TestStackDefaultsAfterAppOverlays$")
+			command.Dir = dir
+			for _, entry := range os.Environ() {
+				key, _, _ := strings.Cut(entry, "=")
+				if strings.HasPrefix(key, "DB_") || key == "FORJ_APP" || key == "APP_ENV" || strings.HasPrefix(key, "GO_STACK_") {
+					continue
+				}
+				command.Env = append(command.Env, entry)
+			}
+			command.Env = append(command.Env, "GO_WANT_STACK_NAMESPACE_HELPER=1", "FORJ_APP="+tc.app, "APP_ENV=local", "GO_STACK_EXPLICIT_DEFAULTS="+tc.defaults, "GO_STACK_FORCED_OVERRIDES="+tc.overrides)
+			command.Env = append(command.Env, tc.environment...)
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("runtime helper: %v\n%s", err, output)
+			}
+			got := parseEnvDefaultsOutput(t, string(output))
+			for key, want := range map[string]string{"DB_DRIVER": tc.wantRoot, "DB_DB_DRIVER": tc.wantNamed, "DB_SQLITE_DATABASE": "./data/baked-root.db", "DB_DB_SQLITE_DATABASE": "./data/baked-named.db"} {
+				if got[key] != want {
+					t.Errorf("%s=%q, want %q", key, got[key], want)
+				}
+			}
+		})
+	}
+}

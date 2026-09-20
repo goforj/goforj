@@ -318,7 +318,7 @@ func AppDefaults(root string, values map[string]string, app string) (map[string]
 	}
 	result := map[string]string{}
 	for key, value := range values {
-		if resourceKey(config, key) == key {
+		if resourceKey(config, key) == key || rootResourceKey(key) {
 			result[key] = value
 		}
 	}

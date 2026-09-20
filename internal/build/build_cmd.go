@@ -80,7 +80,7 @@ func (c *Cmd) Run() error {
 			return err
 		}
 		source, readErr := os.ReadFile(filepath.Join(root, "internal", "cmd", "env_defaults.go"))
-		if readErr != nil || !strings.Contains(string(source), "var CompiledStackDefaultsBase64 string") {
+		if readErr != nil || !strings.Contains(string(source), "var CompiledStackDefaultsBase64 string") || !strings.Contains(string(source), "const compiledStackDefaultsVersion = 2") {
 			return fmt.Errorf("this project needs refreshed Stack runtime support; run forj render before building --stack")
 		}
 		c.pipeline.stackEnvironment = c.stackDefaults
