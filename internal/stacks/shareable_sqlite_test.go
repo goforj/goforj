@@ -6,6 +6,51 @@ import (
 	"testing"
 )
 
+// TestPrivateSQLiteDSNKeepsUnusedDatabaseNamesPrivate prevents private DSN omission from promoting an inactive service name into a binary's SQLite target.
+func TestPrivateSQLiteDSNKeepsUnusedDatabaseNamesPrivate(t *testing.T) {
+	for _, tc := range []struct {
+		name, prefix, dsnKey string
+	}{
+		{"root", "DB_", "DB_DSN"},
+		{"named", "DB_REPORTS_", "DB_REPORTS_DSN"},
+		{"named-inherited", "DB_REPORTS_", "DB_DSN"},
+		{"app", "ADMIN_DB_", "ADMIN_DB_DSN"},
+		{"app-inherited", "ADMIN_DB_", "DB_DSN"},
+		{"app-named", "ADMIN_DB_REPORTS_", "ADMIN_DB_REPORTS_DSN"},
+		{"app-named-inherited", "ADMIN_DB_REPORTS_", "ADMIN_DB_DSN"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := fixture(t)
+			values := map[string]string{"DB_DRIVER": "sqlite", tc.dsnKey: "file:actual.db?mode=rwc", tc.prefix + "DATABASE": "production"}
+			put(t, root, ".env", string(encodeDocument(values)))
+			s := openTest(t, root)
+			if err := s.Save("saved", s.Current); err != nil {
+				t.Fatal(err)
+			}
+			defaults, err := BuildDefaults(root, "saved")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{tc.dsnKey, tc.prefix + "DATABASE"} {
+				if _, present := defaults[key]; present {
+					t.Errorf("inactive or private setting %s was published", key)
+				}
+			}
+			s = openTest(t, root)
+			loaded, err := s.Load("saved", true)
+			if err != nil || !equalValues(loaded, values) {
+				t.Fatalf("private round trip changed settings: %v, %v", loaded, err)
+			}
+			if err := s.Activate("saved", loaded, false); err != nil {
+				t.Fatal(err)
+			}
+			if !equalValues(openTest(t, root).Current, values) {
+				t.Fatal("activation changed the DSN or service database name")
+			}
+		})
+	}
+}
+
 // TestSavedSQLitePathsFollowDriverInheritance preserves explicit targets in definitions, private round trips, and App-specific binary defaults.
 func TestSavedSQLitePathsFollowDriverInheritance(t *testing.T) {
 	for _, tc := range []struct {
