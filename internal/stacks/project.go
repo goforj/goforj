@@ -52,7 +52,7 @@ func resources(root string, config *project.Config, values map[string]string) []
 			byKey[key] = Resource{Key: key, SupportedKey: definition.EnvironmentKey("SUPPORTED_DRIVERS"), Label: key, Definition: definition}
 		}
 		for app, appConfig := range config.Apps {
-			if app == project.DefaultAppName || !definition.AppliesTo(appConfig.Components.WithResolvedDependencies()) {
+			if app == project.DefaultAppName || !definition.AppliesTo(project.NormalizeConfiguredAppComponents(config, appConfig.Components)) {
 				continue
 			}
 			prefix := project.AppEnvironmentPrefix(app) + "_"
