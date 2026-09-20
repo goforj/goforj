@@ -183,18 +183,26 @@ func (s *Session) setDriver(values map[string]string, resource Resource, driver 
 
 // databaseValue follows the runtime App overlay and named-to-root fallback without reading ambient credentials.
 func (s *Session) databaseValue(values map[string]string, key, suffix string) string {
+	_, value := s.databaseSetting(values, key, suffix)
+	return value
+}
+
+// databaseSetting retains the source key so shared SQLite paths can be published without copying private service settings.
+func (s *Session) databaseSetting(values map[string]string, key, suffix string) (string, string) {
 	base := resourceKey(s.config, key)
 	app := strings.TrimSuffix(key, base)
 	for _, prefix := range []string{strings.TrimSuffix(base, "DRIVER"), "DB_"} {
-		value := values[prefix+suffix]
+		source := prefix + suffix
+		value := values[source]
 		if overlay, present := values[app+prefix+suffix]; app != "" && present {
+			source = app + prefix + suffix
 			value = overlay
 		}
 		if strings.TrimSpace(value) != "" {
-			return value
+			return source, value
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // prepareSQLiteTarget retains existing SQLite files, including legacy and inherited paths, before a driver edit can change their interpretation.
@@ -356,25 +364,36 @@ func (s *Session) Validate(values map[string]string) error {
 	return nil
 }
 
-// shareable copies only explicit provider selections; connection settings remain private by default.
-func shareable(values map[string]string) map[string]string {
+// shareable retains explicit provider choices and SQLite paths selected through runtime inheritance while keeping service connection settings private.
+func (s *Session) shareable(values map[string]string) map[string]string {
 	result := map[string]string{}
+	databases := map[string]bool{}
 	for key, value := range values {
 		if strings.HasSuffix(key, "_DRIVER") || strings.HasSuffix(key, "_SUPPORTED_DRIVERS") || key == "COMPOSE_PROFILES" {
 			result[key] = value
 		}
+		if strings.HasSuffix(key, "_DRIVER") && strings.HasPrefix(resourceKey(s.config, key), "DB_") {
+			databases[key] = true
+		}
 	}
-	for key, driver := range values {
-		if project.CanonicalResourceDriver(project.ResourceDatabase, driver) != "sqlite" || !strings.HasSuffix(key, "_DRIVER") {
+	for _, resource := range resources(s.Root, s.config, values) {
+		if resource.Definition.Key == project.ResourceDatabase {
+			databases[resource.Key] = true
+		}
+	}
+	for key := range databases {
+		driver := project.CanonicalResourceDriver(project.ResourceDatabase, s.databaseValue(values, key, "DRIVER"))
+		if driver != "" && driver != "sqlite" {
 			continue
 		}
 		prefix := strings.TrimSuffix(key, "DRIVER")
-		if !strings.Contains(prefix, "DB_") {
-			continue
+		source, path := s.databaseSetting(values, key, "SQLITE_DATABASE")
+		if path != "" {
+			result[source] = path
 		}
 		for _, suffix := range []string{"DATABASE", "SQLITE_DATABASE"} {
 			// A dedicated SQLite path leaves DATABASE available for private service connection settings.
-			if suffix == "DATABASE" && values[prefix+"SQLITE_DATABASE"] != "" {
+			if suffix == "DATABASE" && path != "" {
 				continue
 			}
 			if value, ok := values[prefix+suffix]; ok {

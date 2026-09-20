@@ -190,7 +190,7 @@ func (s *Session) Save(name string, values map[string]string) error {
 	if err := s.Validate(values); err != nil {
 		return err
 	}
-	public := shareable(values)
+	public := s.shareable(values)
 	private := clone(values)
 	for key := range public {
 		delete(private, key)
@@ -301,7 +301,7 @@ func BuildDefaults(root, name string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !equalValues(values, shareable(values)) {
+	if !equalValues(values, s.shareable(values)) {
 		return nil, fmt.Errorf("stack %s contains connection settings; keep them in .env.stack.%s.local before building", name, name)
 	}
 	return values, nil
