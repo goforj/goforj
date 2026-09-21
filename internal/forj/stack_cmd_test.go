@@ -603,3 +603,72 @@ func TestStackConfigureAliasRunsTheWizard(t *testing.T) {
 		t.Fatal("alias did not open wizard")
 	}
 }
+
+// TestStackGenericDriverEditsUseTransitions covers hidden driver entry through activation, including newly declared named resources.
+func TestStackGenericDriverEditsUseTransitions(t *testing.T) {
+	for _, key := range []string{"DB_DRIVER", "DB_REPORTS_DRIVER"} {
+		for _, value := range []string{"sqlite", "private-invalid-driver"} {
+			t.Run(key+"/"+value, func(t *testing.T) {
+				root := stackWizardFixture(t)
+				content := "DB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql\nDB_DATABASE=service\nDB_DSN=private-service-dsn\n"
+				if err := os.WriteFile(filepath.Join(root, ".env"), []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+				s, err := stacks.Open(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var output bytes.Buffer
+				interactive, enabled := true, false
+				ui := console.New(console.Config{Stdin: strings.NewReader(fmt.Sprintf("%d\n%s\n1\n", len(s.ResourcesFor(s.Current))+3, key)), Stdout: &output, Stderr: &output, InteractiveEnabled: &interactive, ColorEnabled: &enabled, UnicodeEnabled: &enabled, ReadSecret: func() (string, error) { return value, nil }})
+				values, err := editStackDrivers(ui, s, s.Current)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if value != "sqlite" {
+					if !reflect.DeepEqual(values, s.Current) || strings.Contains(output.String(), value) {
+						t.Fatal("invalid hidden edit was applied or echoed")
+					}
+					return
+				}
+				if err := s.Activate("", values, false); err != nil {
+					t.Fatal(err)
+				}
+				updated, err := stacks.Open(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				prefix := strings.TrimSuffix(key, "DRIVER")
+				if updated.Current[key] != "sqlite" || (updated.Current[prefix+"DSN"] != "" && updated.Current[prefix+"DSN"] != updated.Current[prefix+"SQLITE_DATABASE"]) || updated.Current[prefix+"SQLITE_DATABASE"] == "" || !strings.Contains(updated.Current["DB_SUPPORTED_DRIVERS"], "mysql") || !strings.Contains(updated.Current["DB_SUPPORTED_DRIVERS"], "sqlite") {
+					t.Fatal("generic edit bypassed driver transition settings")
+				}
+			})
+		}
+	}
+}
+
+// TestStackDriverPickerExplainsEmptySharedChoices avoids opening an empty selection menu for incompatible resource names.
+func TestStackDriverPickerExplainsEmptySharedChoices(t *testing.T) {
+	root := stackWizardFixture(t)
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("project_name: demo\nmodule_name: example.org/demo\nrender:\n  components: [database_mysql, events]\napps:\n  db:\n    components: [events]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("DB_DRIVER=mysql\nDB_EVENTS_DRIVER=\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := stacks.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, resource := range s.Resources {
+		if resource.Key == "DB_EVENTS_DRIVER" {
+			var output bytes.Buffer
+			values, err := editStackDrivers(moduleRenameTestConsole(fmt.Sprintf("%d\n1\n", index+2), &output), s, s.Current)
+			if err != nil || !reflect.DeepEqual(values, s.Current) || !strings.Contains(output.String(), "no driver supported") {
+				t.Fatalf("empty shared choices were not explained safely: %v", err)
+			}
+			return
+		}
+	}
+	t.Fatal("shared resource was not discovered")
+}
