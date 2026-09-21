@@ -248,8 +248,7 @@ func editStackDrivers(ui *console.Console, s *stacks.Session, values map[string]
 				return nil, err
 			}
 			candidate := copyStackValues(values)
-			candidate[key] = value
-			if err := s.Validate(candidate); err != nil {
+			if err := s.SetValue(candidate, key, value); err != nil {
 				ui.Errorf("%v", err)
 				continue
 			}
@@ -258,6 +257,10 @@ func editStackDrivers(ui *console.Console, s *stacks.Session, values map[string]
 		}
 		resource := inventory[index-1]
 		drivers := resource.Definition.Drivers
+		if len(drivers) == 0 {
+			ui.Errorf("%s has no driver supported by every shared resource; use distinct App or resource names", resource.Key)
+			continue
+		}
 		choices := make([]string, len(drivers))
 		selected := 0
 		current := project.CanonicalResourceDriver(resource.Definition.Key, values[resource.Key])

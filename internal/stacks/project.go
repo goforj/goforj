@@ -87,7 +87,7 @@ func resources(root string, config *project.Config, values map[string]string) []
 	}
 	out := make([]Resource, 0, len(byKey))
 	for _, key := range keys(byKey) {
-		out = append(out, byKey[key])
+		out = append(out, sharedResourceChoices(config, byKey[key]))
 	}
 	return out
 }
@@ -174,35 +174,57 @@ func (s *Session) SetDriver(values map[string]string, resource Resource, driver 
 func (s *Session) setDriver(values map[string]string, resource Resource, driver string, previous map[string]string) error {
 	driver = project.CanonicalResourceDriver(resource.Definition.Key, driver)
 	if _, ok := resource.Definition.Driver(driver); !ok {
-		return fmt.Errorf("%s has no driver %q", resource.Key, driver)
+		return fmt.Errorf("%s selects an unsupported driver; shared settings require a driver supported by every resource", resource.Key)
+	}
+	definitions := resourceDefinitions(s.config, resource.Key)
+	if !supportsResourceDriver(definitions, driver) {
+		return fmt.Errorf("%s selects an unsupported driver for a shared resource; use distinct App or resource names for independent drivers", resource.Key)
 	}
 	old := values[resource.Key]
-	if resource.Definition.Key == project.ResourceDatabase {
-		if err := s.prepareSQLiteTarget(values, previous, resource.Key, driver); err != nil {
-			return err
+	for _, definition := range definitions {
+		if definition.Key == project.ResourceDatabase {
+			if err := s.prepareSQLiteTarget(values, previous, resource.Key, driver); err != nil {
+				return err
+			}
 		}
 	}
-	supported := append(strings.Split(values[resource.SupportedKey], ","), old, driver)
-	for _, sibling := range resources(s.Root, s.config, values) {
-		if sibling.SupportedKey == resource.SupportedKey {
-			supported = append(supported, values[sibling.Key])
-		}
-	}
+	s.retainDriverSupport(values, resource.Key, old, driver)
 	values[resource.Key] = driver
-	var normalized []string
-	seen := map[string]bool{}
-	for _, name := range supported {
-		name = project.CanonicalResourceDriver(resource.Definition.Key, name)
-		if name == "" {
-			continue
+	return nil
+}
+
+// retainDriverSupport keeps previous selections and unchanged siblings compiled for every consumer of a shared key.
+func (s *Session) retainDriverSupport(values map[string]string, key, old, driver string) {
+	inventory := resources(s.Root, s.config, values)
+	for _, definition := range resourceDefinitions(s.config, key) {
+		supportedKey := definition.EnvironmentKey("SUPPORTED_DRIVERS")
+		supported := strings.Split(values[supportedKey], ",")
+		selections := []string{old, driver}
+		for _, sibling := range inventory {
+			for _, consumer := range resourceDefinitions(s.config, sibling.Key) {
+				if consumer.Key == definition.Key {
+					selections = append(selections, values[sibling.Key])
+				}
+			}
 		}
-		if !seen[name] {
-			normalized = append(normalized, name)
-			seen[name] = true
+		for _, selected := range selections {
+			if _, ok := definition.Driver(selected); ok {
+				supported = append(supported, selected)
+			}
+		}
+		var normalized []string
+		seen := map[string]bool{}
+		for _, name := range supported {
+			name = project.CanonicalResourceDriver(definition.Key, name)
+			if name != "" && !seen[name] {
+				normalized = append(normalized, name)
+				seen[name] = true
+			}
+		}
+		if len(normalized) > 0 {
+			values[supportedKey] = strings.Join(normalized, ",")
 		}
 	}
-	values[resource.SupportedKey] = strings.Join(normalized, ",")
-	return nil
 }
 
 // databaseValue follows the runtime App overlay and named-to-root fallback without reading ambient credentials.
@@ -213,9 +235,19 @@ func (s *Session) databaseValue(values map[string]string, key, suffix string) st
 
 // databaseSetting retains the source key so shared SQLite paths can be published without copying private service settings.
 func (s *Session) databaseSetting(values map[string]string, key, suffix string) (string, string) {
+	return databaseSettingInScope(values, key, suffix, s.databaseScope(key))
+}
+
+// databaseScope keeps database inheritance independent of another resource family's display precedence.
+func (s *Session) databaseScope(key string) string {
 	base := resourceKey(s.config, key)
-	app := strings.TrimSuffix(key, base)
-	return databaseSettingInScope(values, key, suffix, app)
+	if strings.HasPrefix(base, "DB_") {
+		return strings.TrimSuffix(key, base)
+	}
+	for _, app := range s.databaseScopes(key) {
+		return app
+	}
+	return ""
 }
 
 // databaseSettingInScope follows one App's exact runtime overlay so overlapping App names can retain independent inheritance.
@@ -363,7 +395,7 @@ func (s *Session) prepareSQLiteTarget(values, previous map[string]string, key, d
 		storeSQLiteDSNs(values, retained)
 	}
 	if old == "sqlite" && dsn == "" && strings.TrimSpace(values[prefix+"SQLITE_DATABASE"]) == "" {
-		app := strings.TrimSuffix(key, resourceKey(s.config, key))
+		app := s.databaseScope(key)
 		values[prefix+"SQLITE_DATABASE"] = sqlitePathInScope(previous, key, app)
 	}
 	if driver == "sqlite" && old != "sqlite" {
@@ -392,6 +424,9 @@ func (s *Session) Portable() (map[string]string, error) {
 		return s.portableOrder(a) - s.portableOrder(b)
 	})
 	for _, resource := range ordered {
+		if resource.Definition.DefaultDriver == "" {
+			return nil, fmt.Errorf("%s has no portable driver supported by every shared resource; use distinct App or resource names", resource.Key)
+		}
 		if err := s.setDriver(values, resource, resource.Definition.DefaultDriver, s.Current); err != nil {
 			return nil, err
 		}
@@ -427,14 +462,10 @@ func (s *Session) Validate(values map[string]string) error {
 		}
 	}
 	for key, value := range values {
-		base := resourceKey(s.config, key)
-		if !strings.HasSuffix(base, "_DRIVER") && !strings.HasSuffix(base, "_SUPPORTED_DRIVERS") {
+		if !strings.HasSuffix(key, "_DRIVER") && !strings.HasSuffix(key, "_SUPPORTED_DRIVERS") {
 			continue
 		}
-		for _, definition := range project.ResourceCatalog() {
-			if !strings.HasPrefix(base, definition.EnvironmentPrefix+"_") {
-				continue
-			}
+		for _, definition := range resourceDefinitions(s.config, key) {
 			for _, driver := range strings.Split(value, ",") {
 				driver = strings.TrimSpace(driver)
 				if driver == "" {
@@ -447,41 +478,52 @@ func (s *Session) Validate(values map[string]string) error {
 		}
 	}
 	for _, resource := range resources(s.Root, s.config, values) {
-		driver := project.CanonicalResourceDriver(resource.Definition.Key, values[resource.Key])
-		if driver == "" {
+		for _, definition := range resourceDefinitions(s.config, resource.Key) {
+			if err := validateResourceContract(values, resource.Key, definition); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateResourceContract checks compiled support for each consumer of a shared driver setting.
+func validateResourceContract(values map[string]string, key string, definition project.ResourceDefinition) error {
+	driver := project.CanonicalResourceDriver(definition.Key, values[key])
+	if driver == "" {
+		return nil
+	}
+	if _, ok := definition.Driver(driver); !ok {
+		return fmt.Errorf("%s selects unsupported driver", key)
+	}
+	supportedKey := definition.EnvironmentKey("SUPPORTED_DRIVERS")
+	supported := strings.TrimSpace(values[supportedKey])
+	if supported == "" {
+		return nil
+	}
+	found := slices.Contains(generate.BaselineDrivers(definition.Key), driver)
+	count := 0
+	for _, name := range strings.Split(supported, ",") {
+		name = project.CanonicalResourceDriver(definition.Key, name)
+		if name == "" {
 			continue
 		}
-		if _, ok := resource.Definition.Driver(driver); !ok {
-			return fmt.Errorf("%s selects unsupported driver %q", resource.Key, driver)
+		if _, ok := definition.Driver(name); !ok {
+			return fmt.Errorf("%s contains unsupported driver", supportedKey)
 		}
-		supported := strings.TrimSpace(values[resource.SupportedKey])
-		if supported == "" {
-			continue
+		count++
+		if name == driver {
+			found = true
 		}
-		found := slices.Contains(generate.BaselineDrivers(resource.Definition.Key), driver)
-		count := 0
-		for _, name := range strings.Split(supported, ",") {
-			name = project.CanonicalResourceDriver(resource.Definition.Key, name)
-			if name == "" {
-				continue
-			}
-			if _, ok := resource.Definition.Driver(name); !ok {
-				return fmt.Errorf("%s contains unsupported driver %q", resource.SupportedKey, name)
-			}
-			count++
-			if name == driver {
-				found = true
-			}
+	}
+	if count == 0 {
+		if definition.Key == project.ResourceDatabase {
+			return fmt.Errorf("%s must include at least one driver", supportedKey)
 		}
-		if count == 0 {
-			if resource.Definition.Key == project.ResourceDatabase {
-				return fmt.Errorf("%s must include at least one driver", resource.SupportedKey)
-			}
-			continue
-		}
-		if !found {
-			return fmt.Errorf("%s must include %s for %s", resource.SupportedKey, driver, resource.Key)
-		}
+		return nil
+	}
+	if !found {
+		return fmt.Errorf("%s must include %s for %s", supportedKey, driver, key)
 	}
 	return nil
 }
@@ -508,10 +550,14 @@ func (s *Session) shareable(values map[string]string) map[string]string {
 		for _, app := range s.databaseScopes(key) {
 			_, selected := databaseSettingInScope(values, key, "DRIVER", app)
 			driver := project.CanonicalResourceDriver(project.ResourceDatabase, selected)
+			prefix := strings.TrimSuffix(key, "DRIVER")
 			if driver != "" && driver != "sqlite" {
+				privateNames[prefix+"DATABASE"] = true
+				if source, _ := databaseSettingInScope(values, key, "DATABASE", app); source != "" {
+					privateNames[source] = true
+				}
 				continue
 			}
-			prefix := strings.TrimSuffix(key, "DRIVER")
 			source, path := databaseSettingInScope(values, key, "SQLITE_DATABASE", app)
 			if path != "" {
 				result[source] = path
