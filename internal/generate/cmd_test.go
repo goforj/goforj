@@ -1,6 +1,7 @@
 package generate
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -486,5 +487,94 @@ func TestGenerateProjectFilesSkipsGoModTidyForObservabilityOnlyChanges(t *testin
 	}
 	if called != 0 {
 		t.Fatalf("tidy calls = %d, want 0", called)
+	}
+}
+
+// TestGenerateProjectFilesUsesExplicitEnvironmentWithoutActivatingIt prevents builds from compiling the active stack instead of the selected definition.
+func TestGenerateProjectFilesUsesExplicitEnvironmentWithoutActivatingIt(t *testing.T) {
+	root := t.TempDir()
+	local := "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n"
+	for name, content := range map[string]string{".env": local, "go.mod": "module example.org/stack\n\ngo 1.26.0\n"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	selection := GenerationSelection{Cache: true, Environment: map[string]string{"CACHE_DRIVER": "redis", "CACHE_SUPPORTED_DRIVERS": "memory,redis"}}
+	if _, err := generateProjectFiles(root, selection, skipModuleTidy); err != nil {
+		t.Fatal(err)
+	}
+	generated, err := os.ReadFile(filepath.Join(root, "internal", "caches", "manager_gen.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(generated), "/redis") {
+		t.Fatalf("selected driver missing from generated support: %s", generated)
+	}
+	current, err := os.ReadFile(filepath.Join(root, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != local {
+		t.Fatal("generation activated the selected stack")
+	}
+}
+
+// TestGenerateProjectFilesReplacesResourceSettings preserves accessors without inheriting drivers or connection settings from active and example environments.
+func TestGenerateProjectFilesReplacesResourceSettings(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprint(explicit), func(t *testing.T) {
+			root := t.TempDir()
+			files := map[string]string{
+				"go.mod":       "module example.org/stack\n\ngo 1.26.0\n",
+				".goforj.yml":  "project_name: stack\nmodule_name: example.org/stack\napps:\n  app:\n    components:\n      database_mysql: true\n      cache: true\n  admin:\n    components:\n      database_mysql: true\n      cache: true\n",
+				".env":         "DB_DRIVER=mysql\nDB_ANALYTICS_DRIVER=postgres\nDB_ANALYTICS_DATABASE=analytics\nADMIN_DB_DRIVER=postgres\nCACHE_DRIVER=redis\nCACHE_SESSIONS_DRIVER=redis\nADMIN_CACHE_DRIVER=redis\n",
+				".env.example": "DB_SUPPORTED_DRIVERS=mysql,postgres\nDB_REPORTS_DATABASE=reports\nCACHE_SUPPORTED_DRIVERS=redis\nADMIN_CACHE_EXAMPLE_DRIVER=redis\n",
+			}
+			for name, content := range files {
+				if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			values := map[string]string{"DB_DRIVER": "sqlite", "CACHE_DRIVER": "memory"}
+			if explicit {
+				values["DB_SUPPORTED_DRIVERS"] = "sqlite"
+				values["CACHE_SUPPORTED_DRIVERS"] = "memory"
+			}
+			selection := GenerationSelection{Database: true, Cache: true, Environment: values, ReplaceResourceEnvironment: true}
+			if result, err := generateProjectFiles(root, selection, skipModuleTidy); err != nil {
+				t.Fatal(err)
+			} else if result.ChangedFiles == 0 {
+				t.Fatal("generation did not produce resource files")
+			}
+			for file, expected := range map[string][]string{
+				"internal/database/connections_gen.go": {"Analytics(", "Reports(", "sqlite"},
+				"internal/caches/accessors_gen.go":     {"Sessions(", "Example("},
+				"internal/caches/manager_gen.go":       {"memory"},
+			} {
+				data, err := os.ReadFile(filepath.Join(root, file))
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, want := range expected {
+					if !strings.Contains(string(data), want) {
+						t.Errorf("%s missing %s", file, want)
+					}
+				}
+				for _, unwanted := range []string{"/postgres", "/mysql", "/redis"} {
+					if strings.Contains(string(data), unwanted) {
+						t.Errorf("%s retained active provider %s", file, unwanted)
+					}
+				}
+			}
+			active, err := os.ReadFile(filepath.Join(root, ".env"))
+			if err != nil || string(active) != files[".env"] {
+				t.Fatalf("active configuration changed: %v", err)
+			}
+			if result, err := generateProjectFiles(root, selection, skipModuleTidy); err != nil {
+				t.Fatal(err)
+			} else if result.ChangedFiles != 0 {
+				t.Fatalf("repeat generation changed %d files", result.ChangedFiles)
+			}
+		})
 	}
 }

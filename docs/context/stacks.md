@@ -1,0 +1,130 @@
+# Stacks
+
+A Stack selects the providers behind an App's resources. `forj stack` opens an interactive wizard from the project root, with no required arguments.
+
+The wizard supports two workflows:
+
+- Change the current `.env` directly, without naming or saving a stack.
+- Create reusable dotenv definitions, then switch between them or build their defaults into a binary.
+
+## Current configuration and saved definitions
+
+```text
+forj stack
+
+What would you like to do?
+1. Change current configuration
+2. Switch to a saved stack
+3. Save current configuration as a stack
+4. Create a stack
+5. Build a saved stack
+6. Restore previous configuration
+7. Cancel
+```
+
+The wizard lists existing stacks and current resource drivers. Creating a stack starts from portable defaults, the current configuration, or an existing stack. The editor uses the resource catalog for driver choices, resolves App dependencies consistently with generation (including databases required by Auth and OAuth), includes named resources and configured App overrides, and lets owners enter additional connection settings through hidden input. Resources declared only by the selected Stack appear in the editor and build preview. Adding a resource setting refreshes the editor's driver list immediately. Compose profiles can be edited explicitly, including an empty selection. Entering a driver through the generic setting editor uses the same connection transition and compiled-support handling as the driver picker. Clearing a driver retains inherited or default selection while preserving previous provider support.
+
+Saving and activating are separate confirmations. Saving alone leaves `.env` unchanged. The dev environment watcher ignores saved Stack definitions and private metadata, so saving an inactive Stack does not request an environment rebuild. Reusing a name asks before replacing its definition and private settings.
+
+```text
+.env                         Active private configuration
+.env.stack.services          Shareable provider choices
+.env.stack.services.local    Private connection settings or working copy
+.env.stack.portable          Shareable portable provider choices
+.env.stack.portable.local    Private portable settings
+.env.stack-state.local       Active name and previous managed configuration
+```
+
+Definitions contain driver selections, supported driver lists, Compose profiles, and SQLite file paths when SQLite is selected, including implicit root defaults and inherited named or App drivers. Shared dedicated SQLite paths remain available to Apps that inherit them. Use `*_SQLITE_DATABASE` for a shareable path when a SQLite connection would otherwise inherit a service database's private `DATABASE` value. If a shared `DATABASE` key serves both a SQLite connection and a service database, the service interpretation keeps that value private. Use a dedicated `SQLITE_DATABASE` path for shareable binary defaults. Other resource settings, including connection endpoints and credentials, are private by default. The wizard updates `.gitignore` to make definitions shareable while keeping private files ignored. It refuses to write a private file already tracked by Git, or when Git tracking cannot be verified in a Git project. Tracking checks inspect the physical repository and any worktree configured through `GIT_DIR` and `GIT_WORK_TREE`, including their normal indexes and an explicitly selected alternate `GIT_INDEX_FILE`. Projects outside Git repositories can use Stacks without Git installed. On successful writes, private working copies and recovery files use owner-only permissions (`0600`), including existing files with broader permissions. A Stack named `local` uses the shareable definition `.env.stack.local` and the private working copy `.env.stack.local.local`; its tracked definition remains editable.
+
+Stack definitions do not contain `APP_KEY`, `APP_ENV`, or unrelated application settings. A Stack is independent of the existing `APP_ENV` environment layers. Before activation, the wizard identifies standard dotenv overlays and inherited process variables containing resource settings, without displaying their values. Discovery checks the nearest file for each standard layer, including `.env.testing`, through the same bounded ancestor search as the runtime. The preview lists potential layers even when the current environment does not select them; their existing runtime precedence still applies.
+
+## Switching to portable providers
+
+For enabled resources, the portable preset suggests:
+
+| Resource | Provider |
+|---|---|
+| Database | SQLite |
+| Cache | Memory |
+| Queue | Workerpool |
+| Events | Inproc |
+| Storage | Local |
+| Mail | Log |
+| Compose profiles | Empty |
+
+Example before:
+
+```dotenv
+DB_DRIVER=mysql
+DB_SUPPORTED_DRIVERS=mysql
+DB_DATABASE=app
+CACHE_DRIVER=redis
+CACHE_SUPPORTED_DRIVERS=memory,redis
+COMPOSE_PROFILES=mysql,redis
+```
+
+After choosing portable defaults and confirming activation:
+
+```dotenv
+DB_DRIVER=sqlite
+DB_SUPPORTED_DRIVERS=mysql,sqlite
+DB_DATABASE=app
+DB_SQLITE_DATABASE=./_data/stacks/portable/db.db
+DB_DSN=
+CACHE_DRIVER=memory
+CACHE_SUPPORTED_DRIVERS=memory,redis
+COMPOSE_PROFILES=
+```
+
+When converting a service database to SQLite, portable settings clear its stale service DSN and assign a distinct path if no SQLite path has been retained. Existing SQLite paths survive driver round-trips, including paths previously supplied through `DATABASE` or inherited from another scope. Already-SQLite databases keep their targets when portable defaults change other providers, including explicit and inherited SQLite DSNs. DSN-based targets also survive switches to service drivers and back across saved profiles and sessions. Stacks retain them in the private `FORJ_STACK_SQLITE_DSNS` metadata value, separate from public paths and service database names. This metadata follows private working copies and recovery snapshots, is excluded from shareable definitions and binary defaults, and does not change runtime DSN precedence. When a private SQLite DSN controls the connection, its unused `DATABASE` value also stays private. Set `SQLITE_DATABASE` explicitly to choose a path for a portable binary without embedding the private DSN. Generic service database names remain private and unchanged, so selecting MySQL or Postgres later does not reuse a generated SQLite filepath as the database name. Review the target endpoint and credentials when changing service drivers. Existing supported drivers remain available in the generated build contract. Editing one driver also retains support selected by unchanged named resources and Apps when the previous supported-driver list was inferred. Baseline local providers remain valid even when omitted from `*_SUPPORTED_DRIVERS`, matching the generator. The driver picker recognizes aliases and keeps inherited settings unless you explicitly choose a provider. Accepting the current selection leaves connection settings unchanged. Run `forj build` after activation to regenerate and compile driver support.
+
+If overlapping App names make one setting control distinct existing databases, the wizard rejects driver changes before writing files. Use distinct App or resource names to give those databases independent settings. Identical inherited targets can still transition together, and already-SQLite targets keep their existing inheritance when the preset does not change their driver.
+
+Switching back to a saved services stack restores its connection settings. Activation preserves unrelated `.env` text, comments, and multiline values. Before every switch, GoForj saves the previous managed settings privately. Restore previous configuration works even when the previous configuration had no stack name. This stores one previous configuration, not an unlimited history.
+
+If the active stack has manual edits, the wizard asks whether to retain them in a private working copy, discard them when leaving, or cancel. Keeping them does not rewrite the shareable definition. A private working copy preserves absent keys as well as explicitly empty values. Unchanged Stacks do not acquire a complete private working copy when switching away, so later edits to their shareable definition remain effective. Selecting the already-active Stack leaves current edits untouched. To deliberately update a shareable definition, save the current configuration under the same name; this also marks those settings as saved without replacing recovery history.
+
+The opening screen and final preview show only recognized driver values; malformed driver values and supported-driver lists are marked invalid without echoing their contents, including the previous values when repairing configuration. The final preview shows dedicated SQLite file-path changes, masks DSNs and other connection values, and requires confirmation. Malformed dotenv errors identify the affected file without echoing its values. Ignore rules take effect before temporary files containing private settings are created. A failed file replacement rolls back earlier writes; if a private destination changes concurrently or cleanup or restoration fails, the updated ignore rules remain to protect private files. Destinations are checked before publication begins and again immediately before each replacement. Rollback also checks that published files have not since changed, preserving newer edits and reporting a conflict. These are optimistic filesystem checks; the lock serializes Stack commands, while external editors do not share that lock. Concurrent changes detected during either preflight require starting again, including changes to the active private working copy that Keep edits would replace. After an interrupted process, remove a stale `.env.stack-lock.local` only after verifying no Stack operation is still running.
+
+## Building a Stack
+
+```bash
+forj build --stack portable
+forj customer-portal build --stack portable
+forj build --stack portable ./cmd/customer-portal
+```
+
+The build reads the shareable definition directly. It does not activate that stack, read its `.local` file, or copy credentials from the current `.env` into the binary. During generation, the definition replaces resource settings from both `.env` and `.env.example`. Omitted driver settings use normal provider defaults or resource inheritance. Named accessor declarations remain available even when their active provider overrides are absent from the definition. Unrelated generation settings, such as observability ports, remain in effect. Normal build generation still updates generated source and dependency support.
+
+The compiled App's defaults are folded into its binary's base configuration keys using that App's exact prefix, matching runtime overlays. With Apps named `foo` and `foo-db`, `FOO_DB_DB_SQLITE_DATABASE` becomes `DB_DB_SQLITE_DATABASE` in `foo` and `DB_SQLITE_DATABASE` in `foo-db`. Resource validation also accounts for enabled App components, so an App named `db` without cache does not reinterpret a named database's `DB_CACHE_DRIVER` as a cache driver. When multiple enabled resource families consume the same key, validation checks every consumer, the picker offers their common drivers, and edits retain compiled support for each family. For example, a named database and App cache sharing `DB_CACHE_DRIVER` can use SQLite but cannot both use memory. Portable defaults select a common local provider when one exists. If no common portable provider exists, the wizard explains the conflict and requires distinct App or resource names before applying the preset. Root named-resource keys remain available even when they also match another App's prefix. For example, configuring an App named `db` does not remove the default App's `DB_DB_DRIVER` or `DB_DB_SQLITE_DATABASE`. Baked defaults are applied after runtime App overlays so those retained keys cannot override explicit deployment settings. An explicit conventional package such as `./cmd/customer-portal` selects that App's defaults, including when `FORJ_APP` selects another App. Stack builds require one identifiable App package; package patterns, multiple packages, and custom entrypoints are rejected before generation. Build each App separately. Use `--root` to select another project directory; Stack builds reject Go's `-C` flag so generation and compilation stay in the same project. Values use a structured payload, preserving commas and explicitly empty settings. Existing runtime environment precedence remains in place:
+
+1. Existing forced `--env-overrides`, when explicitly supplied.
+2. Runtime process and dotenv configuration, with the existing App overlay rules.
+3. Explicit `--env-defaults`.
+4. Baked Stack defaults.
+5. Resource runtime defaults.
+
+An existing services `.env` therefore still selects services when running a portable-default binary from that project directory. Run the binary with the intended deployment configuration. An explicit provider failure does not trigger an automatic switch to SQLite or memory. Runtime driver selections must be among the binary's compiled providers.
+
+Run `forj render` to install or refresh the Stack runtime helper, including projects rendered with older Stack support. Stack builds reject older helpers before generation so outdated precedence cannot silently affect the binary. Existing `forj build` behavior and explicit project configuration remain unchanged when `--stack` is omitted. `stack` is reserved for new App names. Existing Apps already named `stack` keep their `forj stack ...` route and remain visible in help. In those projects, use `forj stack:configure` to open the Stack wizard; that alias also works in projects without a name collision.
+
+## Database transitions
+
+Activating a Stack edits `.env`. The wizard does not directly start or stop containers, restart Apps, translate migrations, create schemas, or transfer data. A running `forj dev` session can react to that edit, rebuild, and run its configured startup tasks. Stop the dev session before preparing a database transition or building a different deployment Stack. An empty Compose profile selection prevents automatic dependency startup; use `forj down` to stop existing containers.
+
+SQLite, MySQL, and Postgres can require different SQL. Memory caches, workerpool queues, and inproc events also have different persistence and process-sharing behavior. Portable configuration cannot prove that custom application SQL or external integrations are portable.
+
+The intended database transition workflow is:
+
+```text
+Select target Stack
+Review the driver and connection changes
+Translate and review target-dialect migrations
+Validate migrations on the target database
+Transfer data explicitly and verify the result
+Activate the target Stack
+Build and restart the App
+```
+
+The [migration translation design](../designs/migration-translation-design.md) owns SQL translation. Translation and data transfer remain explicit operations with separately reviewed targets. This Stack implementation does not add a SQL translator or invoke one implicitly. Returning to another Stack selects that Stack's data; it does not synchronize writes made since leaving it.

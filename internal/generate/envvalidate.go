@@ -57,6 +57,9 @@ func discoverPrimitiveChildNames(input generationInput, resourcePrefix string, r
 		return nil
 	}
 	names := map[string]struct{}{}
+	for _, name := range input.resourceNames[resourcePrefix] {
+		names[name] = struct{}{}
+	}
 	add := func(prefix string) {
 		for _, name := range exactScopedChildNames(input.environment, prefix, rootKeys) {
 			name = str.Of(name).ToUpper().Trim().String()

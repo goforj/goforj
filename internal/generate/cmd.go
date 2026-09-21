@@ -21,6 +21,12 @@ type moduleTidyRunner func(projectDir string) error
 
 // GenerationSelection names the project-owned surfaces that should be regenerated.
 type GenerationSelection struct {
+	// Environment overlays explicit build inputs without changing the active dotenv file.
+	Environment map[string]string
+
+	// ReplaceResourceEnvironment uses Environment as the complete resource configuration while retaining named accessors.
+	ReplaceResourceEnvironment bool
+
 	Storage       bool
 	Cache         bool
 	Mail          bool
@@ -142,6 +148,13 @@ func generateProjectFiles(projectDir string, selection GenerationSelection, tidy
 	if err != nil {
 		return GenerationResult{}, err
 	}
+	if selection.ReplaceResourceEnvironment {
+		input = withoutResourceSettings(input)
+	}
+	for key, value := range selection.Environment {
+		input.environment.values[key] = value
+	}
+	input.appPrefixes = newGenerationEnvironmentFilter(projectDir, input.environment).sortedAppPrefixes()
 	run, err := runGenerationLifecycle(input, selection)
 	result := GenerationResult{TotalFiles: run.totalFiles, ChangedFiles: run.changedFiles}
 	if err != nil {
