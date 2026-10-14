@@ -15,7 +15,7 @@ import (
 	"github.com/goforj/goforj/internal/logger"
 )
 
-// TestPrepareAssetsWireAndAPIIndexUsesSafeConcurrency verifies assets overlap both Go phases while API indexing waits for Wire.
+// TestPrepareAssetsWireAndAPIIndexUsesSafeConcurrency verifies API indexing waits for both assets and Wire.
 func TestPrepareAssetsWireAndAPIIndexUsesSafeConcurrency(t *testing.T) {
 	root := t.TempDir()
 	entered := make(chan string, 3)
@@ -64,21 +64,20 @@ func TestPrepareAssetsWireAndAPIIndexUsesSafeConcurrency(t *testing.T) {
 	close(releaseWire)
 	select {
 	case phase := <-entered:
-		if phase != "api-index" {
-			close(releaseAssets)
-			t.Fatalf("phase after Wire = %q, want api-index", phase)
-		}
-	case <-time.After(pipelineAPIIndexTestTimeout):
 		close(releaseAssets)
-		t.Fatal("API index did not start after Wire")
-	}
-	select {
-	case result := <-done:
-		close(releaseAssets)
-		t.Fatalf("preparation completed before assets joined: %+v", result)
-	default:
+		t.Fatalf("phase started before assets stabilized: %q", phase)
+	case <-time.After(25 * time.Millisecond):
 	}
 	close(releaseAssets)
+	select {
+	case phase := <-entered:
+		if phase != "api-index" {
+			t.Fatalf("next phase = %q", phase)
+		}
+	case <-time.After(pipelineAPIIndexTestTimeout):
+		t.Fatal("API index did not start after assets and Wire")
+	}
+
 	select {
 	case result := <-done:
 		if result.err != nil {
@@ -126,7 +125,7 @@ func TestPipelineDiscardsParallelAPIIndexCandidateAfterAssetFailure(t *testing.T
 	if !errors.Is(err, assetErr) {
 		t.Fatalf("pipeline error = %v, want asset failure", err)
 	}
-	if finalCalled || published != 0 || discarded != 1 {
+	if finalCalled || published != 0 || discarded != 0 {
 		t.Fatalf("failed parallel preparation: final=%t published=%d discarded=%d", finalCalled, published, discarded)
 	}
 }

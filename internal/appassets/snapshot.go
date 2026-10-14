@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-const snapshotVersion = 2
+const snapshotVersion = 3
 
 // Asset identifies one App-owned frontend and the command that produces its dist output.
 type Asset struct {
@@ -197,7 +197,7 @@ func scanOutputs(root string) (treeState, error) {
 	return scanTree(root, nil)
 }
 
-// scanTree streams deterministic metadata without opening regular file contents or retaining per-file records.
+// scanTree hashes content so a fresh checkout can reuse unchanged frontend output despite different timestamps.
 func scanTree(root string, skip func(relative string, entry os.DirEntry) bool) (treeState, error) {
 	encoded := make([]byte, 0, 4096)
 	files := 0
@@ -233,7 +233,14 @@ func scanTree(root string, skip func(relative string, entry os.DirEntry) bool) (
 		}
 		encoded = appendTreeStateString(encoded, relative)
 		encoded = binary.LittleEndian.AppendUint64(encoded, uint64(info.Size()))
-		encoded = binary.LittleEndian.AppendUint64(encoded, uint64(info.ModTime().UnixNano()))
+		if info.Mode().IsRegular() {
+			contents, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			digest := sha256.Sum256(contents)
+			encoded = append(encoded, digest[:]...)
+		}
 		encoded = binary.LittleEndian.AppendUint32(encoded, uint32(info.Mode()))
 		encoded = appendTreeStateString(encoded, linkTarget)
 		files++

@@ -202,3 +202,25 @@ func writeSnapshotBenchmarkFile(b *testing.B, root string, relative string, cont
 		b.Fatalf("write %s: %v", relative, err)
 	}
 }
+
+// TestSnapshotReusesFreshCheckoutAndDetectsSameMetadataEdits checks content instead of checkout timestamps.
+func TestSnapshotReusesFreshCheckoutAndDetectsSameMetadataEdits(t *testing.T) {
+	root := t.TempDir()
+	asset := Asset{App: "app", Name: "frontend", Root: "frontend", Command: "vite build"}
+	writeSnapshotTestFile(t, root, "frontend/src/app.ts", "before")
+	writeSnapshotTestFile(t, root, "frontend/dist/app.js", "built")
+	if err := Record(root, asset); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "frontend/src/app.ts")
+	checkoutTime := time.Now().Add(time.Hour)
+	if err := os.Chtimes(path, checkoutTime, checkoutTime); err != nil {
+		t.Fatal(err)
+	}
+	requireSnapshotCurrent(t, root, asset, true)
+	writeSnapshotTestFile(t, root, "frontend/src/app.ts", "change")
+	if err := os.Chtimes(path, checkoutTime, checkoutTime); err != nil {
+		t.Fatal(err)
+	}
+	requireSnapshotCurrent(t, root, asset, false)
+}

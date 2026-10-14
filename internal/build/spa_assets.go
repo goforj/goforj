@@ -91,9 +91,16 @@ func prepareAppAssetsWithRunner(root string, assets []appassets.Asset, run asset
 		if current {
 			continue
 		}
-		if strings.TrimSpace(asset.Prepare) != "" {
+		dependenciesCurrent, err := appDependenciesCurrent(root, asset)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(asset.Prepare) != "" && !dependenciesCurrent {
 			if err := run(root, asset, "prepare", asset.Prepare); err != nil {
 				return "", fmt.Errorf("prepare SPA %s/%s dependencies: %w", asset.App, asset.Name, err)
+			}
+			if err := recordAppDependencies(root, asset); err != nil {
+				return "", err
 			}
 		}
 		if err := run(root, asset, "build", asset.Command); err != nil {

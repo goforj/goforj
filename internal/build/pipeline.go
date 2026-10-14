@@ -237,7 +237,7 @@ type apiIndexPreparationResult struct {
 	err         error
 }
 
-// prepareAssetsWireAndAPIIndex overlaps assets with Go preparation while keeping Wire's writes ahead of API-index reads.
+// prepareAssetsWireAndAPIIndex overlaps assets with Wire, then indexes stable source and embedded file membership.
 func (p Pipeline) prepareAssetsWireAndAPIIndex(root string, assets []appassets.Asset, runWire bool, strict bool, buildTags ...string) (string, apiindex.Candidate, error) {
 	assetResults := make(chan assetPreparationResult, 1)
 	go func() {
@@ -249,11 +249,11 @@ func (p Pipeline) prepareAssetsWireAndAPIIndex(root string, assets []appassets.A
 	if runWire {
 		wireStatus, wireErr = p.prepareWire(root)
 	}
+	assetsResult := <-assetResults
 	apiIndexResult := apiIndexPreparationResult{}
-	if wireErr == nil {
+	if wireErr == nil && assetsResult.err == nil {
 		apiIndexResult.preparation, apiIndexResult.err = p.prepareAPIIndex(root, strict, buildTags...)
 	}
-	assetsResult := <-assetResults
 	statuses := make([]string, 0, 3)
 	if strings.TrimSpace(assetsResult.status) != "" {
 		statuses = append(statuses, "assets "+assetsResult.status)
