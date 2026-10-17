@@ -1,6 +1,8 @@
 package bench
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -59,6 +61,36 @@ func TestStandaloneHTTPProfileSourceDependencies(t *testing.T) {
 			source := cmd.standaloneHTTPProfileSource()
 			if present := strings.Contains(source, test.token); present != test.present {
 				t.Fatalf("source contains %q = %t, want %t: %q", test.token, present, test.present, source)
+			}
+		})
+	}
+}
+
+// TestStandaloneHTTPProfileSecurityMinimums keeps comparison Apps on the same fixed HTTP dependencies as rendered Apps.
+func TestStandaloneHTTPProfileSecurityMinimums(t *testing.T) {
+	for _, stack := range []string{"echonative", "rawnethttp", "rawdirect"} {
+		t.Run(stack, func(t *testing.T) {
+			dir := t.TempDir()
+			cmd := &HTTPLiveProfileCmd{ServerStack: stack}
+			if err := cmd.writeStandaloneHTTPProfileApp(dir); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(data)
+			if !strings.Contains(text, "go 1.25.0") {
+				t.Fatalf("comparison App Go floor changed: %s", text)
+			}
+			if stack == "echonative" {
+				for _, minimum := range []string{"github.com/labstack/echo/v5 v5.4.0", "golang.org/x/net v0.61.0"} {
+					if !strings.Contains(text, minimum) {
+						t.Fatalf("comparison App lacks security minimum %s: %s", minimum, text)
+					}
+				}
+			} else if strings.Contains(text, "github.com/labstack/echo") {
+				t.Fatalf("standard-library comparison unexpectedly selects Echo: %s", text)
 			}
 		})
 	}

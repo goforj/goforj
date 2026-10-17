@@ -48,6 +48,14 @@ The test image rebuilds Buildx and Compose from their configured releases. It al
 
 An upstream advisory can be public before it appears in the global advisory index or Go vulnerability database. The two-block fixture in `internal/backup/zstd_security_test.go` independently verifies decoder rejection, so a clean scanner result alone does not establish this fix.
 
+## HTTP Security Minimum
+
+Generated and resynchronized Apps must select Echo v5.4.0 or newer, alongside the compatible GoForj web adapter. The framework pins the verified web main commit `dead104e4d6c` as immutable Go pseudoversion `v0.6.3-0.20261017042014-dead104e4d6c`: the v0.6.2 adapter captured middleware before registration, which loses maintenance admission and request metrics with Echo's compiled middleware chain. The renderer catalog, render-warm generator, and standalone HTTP profiling fixture enforce the fixed dependency pair; newer consumer selections and local replacements remain intact. [GHSA-2ffq-g2xg-c22p](https://github.com/labstack/echo/security/advisories/GHSA-2ffq-g2xg-c22p) covers forwarded-scheme spoofing, and the [Echo release notes](https://github.com/labstack/echo/releases/tag/v5.4.0) describe the related proxy, static-path, JSONP, and method-override fixes.
+
+Echo v5.4 changes runtime proxy trust. Loopback, private, link-local, and unix-socket peers remain trusted by default. An App behind a proxy connecting from a public address must explicitly trust that proxy's real CIDRs through the existing `echoweb.Adapter.Echo().SchemeExtractor` field and `echo.ExtractSchemeFromHeaders(echo.TrustIPRange(...))`. Configure the proxy to overwrite incoming scheme headers. Otherwise HTTPS redirects can loop and HSTS can disappear after TLS termination. Client-IP extraction is a separate setting. Do not restore unconditional forwarded-header trust.
+
+This dependency correction changes no GoForj API or configuration format and retains the framework's Go 1.26 minimum. Existing Apps must update their Echo dependency and review proxy configuration; an unpublished web-library main commit alone does not update their module graph.
+
 ## Exception Policy
 
 Security exceptions must be narrow, owned, expiring, and machine-checkable. A vulnerability exception must bind an advisory to the expected dependency and exact package or package prefix. New findings, expanded reachability, scanner errors, and expired entries must fail the workflow.
