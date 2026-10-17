@@ -16,18 +16,18 @@ require (
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/goforj/atlas v0.4.13
 	github.com/goforj/cache v0.4.0
-	github.com/goforj/cache/cachecore v0.4.0
+	github.com/goforj/cache/cachecore v0.4.2
 	github.com/goforj/console v0.2.0
 	github.com/goforj/crypt v1.2.0
 	github.com/goforj/env/v2 v2.6.1
 	github.com/goforj/execx v1.1.4
 	github.com/goforj/httpx/v2 v2.0.1
 	github.com/goforj/queue v0.2.1
-	github.com/goforj/storage v0.5.0
-	github.com/goforj/storage/driver/localstorage v0.5.0
-	github.com/goforj/storage/driver/s3storage v0.5.0
+	github.com/goforj/storage v0.5.1
+	github.com/goforj/storage/driver/localstorage v0.5.1
+	github.com/goforj/storage/driver/s3storage v0.5.1
 	github.com/goforj/str/v2 v2.0.1
-	github.com/goforj/web v0.6.3-0.20261017042014-dead104e4d6c
+	github.com/goforj/web v0.6.3
 	github.com/goforj/wire v1.2.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/imroc/req/v3 v3.61.0
@@ -86,7 +86,6 @@ require (
 	github.com/containerd/platforms v0.2.1 // indirect
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
-	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
@@ -100,7 +99,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goforj/godump v1.9.1 // indirect
-	github.com/goforj/storage/storagecore v0.5.0 // indirect
+	github.com/goforj/storage/storagecore v0.5.1 // indirect
 	github.com/goforj/str v1.3.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
@@ -149,7 +148,7 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
@@ -161,6 +160,7 @@ require (
 	go.opentelemetry.io/otel v1.45.0 // indirect
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
