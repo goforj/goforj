@@ -9,7 +9,7 @@ import (
 // pinnedModuleVersions records validated framework releases and ecosystem security minimums for rendered projects.
 var pinnedModuleVersions = map[string]string{
 	"charm.land/bubbles/v2":                               "v2.2.1",
-	"charm.land/bubbletea/v2":                             "v2.0.9",
+	"charm.land/bubbletea/v2":                             "v2.1.0",
 	"charm.land/lipgloss/v2":                              "v2.0.6",
 	"github.com/a-h/templ":                                "v0.3.1020",
 	"github.com/charmbracelet/x/cellbuf":                  "v0.0.15",
