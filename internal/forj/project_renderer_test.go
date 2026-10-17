@@ -2621,3 +2621,43 @@ func TestWriteAppEnvDefaultsKeepsSupportedDriversInBaseEnv(t *testing.T) {
 		t.Fatalf(".env.host missing app localhost override:\n%s", hostText)
 	}
 }
+
+// TestCoreModulesNeedingSyncPreservesNewerMinimums verifies fixes upgrade old consumers without downgrading newer selections or local replacements.
+func TestCoreModulesNeedingSyncPreservesNewerMinimums(t *testing.T) {
+	cases := []struct {
+		name, module, current, desired, replacement string
+		pending                                     bool
+	}{
+		{name: "older minimum", module: "golang.org/x/net", current: "v0.58.0", desired: "v0.61.0", pending: true},
+		{name: "equal minimum", module: "golang.org/x/net", current: "v0.61.0", desired: "v0.61.0"},
+		{name: "newer minimum", module: "golang.org/x/net", current: "v0.62.0", desired: "v0.61.0"},
+		{name: "newer prerelease", module: "golang.org/x/net", current: "v0.62.0-rc.1", desired: "v0.61.0"},
+		{name: "replacement", module: "golang.org/x/net", current: "v0.58.0", desired: "v0.61.0", replacement: "\nreplace golang.org/x/net => ../net\n"},
+		{name: "exact framework pin", module: "github.com/goforj/web", current: "v0.7.0", desired: "v0.6.2", pending: true},
+		{name: "missing minimum", module: "golang.org/x/net", desired: "v0.61.0", pending: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "go.mod")
+			body := "module example.com/app\n\ngo 1.26.0\n"
+			if tc.current != "" {
+				body += "\nrequire " + tc.module + " " + tc.current + "\n"
+			}
+			if err := os.WriteFile(path, []byte(body+tc.replacement), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			spec := tc.module + "@" + tc.desired
+			pending, skipped, err := coreModulesNeedingSync(path, []string{spec})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.pending {
+				if !reflect.DeepEqual(pending, []string{spec}) || skipped != 0 {
+					t.Fatalf("pending=%v skipped=%d, want %s pending", pending, skipped, spec)
+				}
+			} else if len(pending) != 0 || skipped != 1 {
+				t.Fatalf("pending=%v skipped=%d, want retained selection", pending, skipped)
+			}
+		})
+	}
+}

@@ -195,3 +195,38 @@ func assertModulesGated(t *testing.T, disabledComponents, enabledComponents proj
 		t.Fatalf("enabled modules = %#v, want %#v", enabled, want)
 	}
 }
+
+// TestSyncCoreLibrariesGatesWebMinimums keeps CLI-only projects free of Web indexer requirements.
+func TestSyncCoreLibrariesGatesWebMinimums(t *testing.T) {
+	for _, components := range []project.Components{{WebAPI: true}, {WebUI: true}} {
+		assertModulesGated(t, project.Components{}, components, webRendererSyncModules)
+	}
+}
+
+// TestUsesMinimumVersion keeps ecosystem security floors separate from exact framework release pins.
+func TestUsesMinimumVersion(t *testing.T) {
+	for _, module := range []string{"github.com/rabbitmq/amqp091-go", "golang.org/x/net", "golang.org/x/text", "golang.org/x/tools", "github.com/rclone/rclone", "go.opentelemetry.io/otel/sdk", "go.opentelemetry.io/otel/sdk/metric"} {
+		if !UsesMinimumVersion(module) {
+			t.Fatalf("%s must retain newer consumer versions", module)
+		}
+		if _, ok := VersionFor(module); !ok {
+			t.Fatalf("%s has no minimum version", module)
+		}
+	}
+	for _, module := range []string{"github.com/goforj/web", "example.com/unknown"} {
+		if UsesMinimumVersion(module) {
+			t.Fatalf("%s must not use ecosystem minimum semantics", module)
+		}
+	}
+}
+
+// TestSyncCoreLibrariesDeduplicatesSecurityMinimums prevents shared capabilities from producing competing selections.
+func TestSyncCoreLibrariesDeduplicatesSecurityMinimums(t *testing.T) {
+	seen := map[string]bool{}
+	for _, spec := range SyncCoreLibraries(project.Components{WebAPI: true, Cache: true, Jobs: true, Events: true, Storage: true}) {
+		if seen[spec] {
+			t.Fatalf("duplicate module selection %s", spec)
+		}
+		seen[spec] = true
+	}
+}

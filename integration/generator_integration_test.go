@@ -45,9 +45,10 @@ var (
 
 const cacheGeneratorIntegrationGoMod = `module example.com/cachegeneratorintegration
 
-go 1.24
+go 1.25.0
 
 require (
+	golang.org/x/text v0.41.0
 	github.com/goforj/cache v0.4.0
 	github.com/goforj/cache/cachecore v0.4.0
 	github.com/goforj/cache/cachetest v0.4.0
@@ -66,10 +67,13 @@ require (
 
 const storageGeneratorIntegrationGoMod = `module example.com/storagegeneratorintegration
 
-go 1.24
+go 1.26.0
 
 require (
 	github.com/goforj/env/v2 v2.6.1
+	golang.org/x/net v0.61.0
+	go.opentelemetry.io/otel/sdk v1.45.0
+	go.opentelemetry.io/otel/sdk/metric v1.45.0
 	github.com/goforj/storage v0.5.0
 	github.com/goforj/storage/driver/ftpstorage v0.5.0
 	github.com/goforj/storage/driver/gcsstorage v0.5.0

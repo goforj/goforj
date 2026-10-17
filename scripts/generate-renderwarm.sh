@@ -164,8 +164,8 @@ override_version_for_module() {
     github.com/labstack/echo/v5) echo "v5.2.0" ;;
     github.com/redis/go-redis/v9) echo "v9.17.2" ;;
     github.com/shirou/gopsutil/v4) echo "v4.26.2" ;;
-    golang.org/x/net) echo "v0.48.0" ;;
-    golang.org/x/tools) echo "v0.38.0" ;;
+    golang.org/x/net) echo "v0.61.0" ;;
+    golang.org/x/tools) echo "v0.52.0" ;;
     gorm.io/driver/mysql) echo "v1.6.0" ;;
     gorm.io/driver/postgres) echo "v1.6.0" ;;
     *)

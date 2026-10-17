@@ -1,14 +1,18 @@
 version: 2
 # Minor and patch releases move together within each dependency surface so one
-# weekly refresh produces reviewable batches without hiding major migrations.
+# monthly refresh produces reviewable batches without hiding major migrations.
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 3
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
     groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
       root-go-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -26,10 +30,14 @@ updates:
   - package-ecosystem: gomod
     directory: /integration
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 3
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
     groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
       integration-go-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -39,10 +47,14 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
-      day: tuesday
-    open-pull-requests-limit: 3
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
     groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
       root-npm-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -52,10 +64,14 @@ updates:
   - package-ecosystem: npm
     directory: /templates/demo/frontend
     schedule:
-      interval: weekly
-      day: tuesday
-    open-pull-requests-limit: 3
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
     groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
       demo-frontend-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -65,10 +81,14 @@ updates:
   - package-ecosystem: npm
     directory: /templates/internal/lighthouse/ui
     schedule:
-      interval: weekly
-      day: wednesday
-    open-pull-requests-limit: 3
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
     groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
       lighthouse-ui-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -78,10 +98,14 @@ updates:
   - package-ecosystem: npm
     directory: /templates/starter-kits/react/frontend
     schedule:
-      interval: weekly
-      day: wednesday
-    open-pull-requests-limit: 3
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
     groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
       react-starter-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -91,10 +115,14 @@ updates:
   - package-ecosystem: npm
     directory: /templates/starter-kits/templ-htmx/frontend
     schedule:
-      interval: weekly
-      day: thursday
-    open-pull-requests-limit: 3
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
     groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
       templ-htmx-starter-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -104,10 +132,14 @@ updates:
   - package-ecosystem: npm
     directory: /templates/starter-kits/vue/frontend
     schedule:
-      interval: weekly
-      day: thursday
-    open-pull-requests-limit: 3
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
     groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
       vue-starter-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -117,10 +149,14 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: friday
-    open-pull-requests-limit: 3
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
     groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
       actions-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -130,10 +166,14 @@ updates:
   - package-ecosystem: docker
     directory: /containers/test-build
     schedule:
-      interval: weekly
-      day: friday
-    open-pull-requests-limit: 3
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
     groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
       test-build-compatible:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -143,10 +183,14 @@ updates:
   - package-ecosystem: docker
     directory: /templates/containers/mariadb
     schedule:
-      interval: weekly
-      day: friday
-    open-pull-requests-limit: 3
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
     groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
       mariadb-compatible:
         patterns: ["*"]
         update-types: [minor, patch]

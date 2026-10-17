@@ -34,6 +34,7 @@ import (
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/templates"
+	"golang.org/x/mod/semver"
 	"gopkg.in/yaml.v3"
 )
 
@@ -3037,7 +3038,7 @@ func coreModulesNeedingSync(path string, desired []string) ([]string, int, error
 			skipped++
 			continue
 		}
-		if required && current == version {
+		if required && (current == version || (coredeps.UsesMinimumVersion(module) && semver.Compare(current, version) > 0)) {
 			skipped++
 			continue
 		}
