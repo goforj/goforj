@@ -33,7 +33,7 @@ require (
 	github.com/imroc/req/v3 v3.61.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/joho/godotenv v1.5.1
-	github.com/klauspost/compress v1.20.0
+	github.com/klauspost/compress v1.20.2
 	github.com/moby/moby/api v1.55.0
 	github.com/rs/zerolog v1.35.1
 	github.com/testcontainers/testcontainers-go v0.44.0

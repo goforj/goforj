@@ -159,7 +159,7 @@ override_version_for_module() {
     github.com/goforj/queue) echo "v0.2.1" ;;
     github.com/goforj/scheduler/v2) echo "v2.1.4" ;;
     github.com/goforj/web) echo "v0.6.2" ;;
-    github.com/klauspost/compress) echo "v1.18.4" ;;
+    github.com/klauspost/compress) echo "v1.20.2" ;;
     github.com/labstack/echo/v4) echo "v4.15.1" ;;
     github.com/labstack/echo/v5) echo "v5.2.0" ;;
     github.com/redis/go-redis/v9) echo "v9.17.2" ;;

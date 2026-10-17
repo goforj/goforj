@@ -2635,6 +2635,10 @@ func TestCoreModulesNeedingSyncPreservesNewerMinimums(t *testing.T) {
 		{name: "replacement", module: "golang.org/x/net", current: "v0.58.0", desired: "v0.61.0", replacement: "\nreplace golang.org/x/net => ../net\n"},
 		{name: "exact framework pin", module: "github.com/goforj/web", current: "v0.7.0", desired: "v0.6.2", pending: true},
 		{name: "missing minimum", module: "golang.org/x/net", desired: "v0.61.0", pending: true},
+		{name: "older compression minimum", module: "github.com/klauspost/compress", current: "v1.20.1", desired: "v1.20.2", pending: true},
+		{name: "equal compression minimum", module: "github.com/klauspost/compress", current: "v1.20.2", desired: "v1.20.2"},
+		{name: "newer compression minimum", module: "github.com/klauspost/compress", current: "v1.20.3", desired: "v1.20.2"},
+		{name: "compression replacement", module: "github.com/klauspost/compress", current: "v1.20.1", desired: "v1.20.2", replacement: "\nreplace github.com/klauspost/compress => ../compress\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
