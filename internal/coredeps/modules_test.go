@@ -35,6 +35,7 @@ func TestSyncCoreLibrariesIncludesBaseModules(t *testing.T) {
 		"github.com/klauspost/compress",
 		"github.com/goforj/godump",
 		"github.com/goforj/web",
+		"github.com/labstack/echo/v5",
 		"github.com/goforj/str/v2",
 		"github.com/goforj/scheduler/v2",
 		"github.com/goforj/env/v2",
@@ -124,7 +125,7 @@ func TestQualityReleaseVersionsArePinned(t *testing.T) {
 		{module: "github.com/goforj/execx", version: "v1.1.4"},
 		{module: "github.com/goforj/godump", version: "v1.9.1"},
 		{module: "github.com/goforj/httpx", version: "v1.1.0"},
-		{module: "github.com/goforj/web", version: "v0.6.2"},
+		{module: "github.com/goforj/web", version: "v0.6.3-0.20261017042014-dead104e4d6c"},
 		{module: "github.com/goforj/scheduler/v2", version: "v2.1.4"},
 		{module: "github.com/goforj/null/v6", version: "v6.0.2"},
 		{module: "github.com/goforj/wire", version: "v1.2.0"},
@@ -206,7 +207,7 @@ func TestSyncCoreLibrariesGatesWebMinimums(t *testing.T) {
 
 // TestUsesMinimumVersion keeps ecosystem security floors separate from exact framework release pins.
 func TestUsesMinimumVersion(t *testing.T) {
-	for _, module := range []string{"github.com/klauspost/compress", "github.com/rabbitmq/amqp091-go", "golang.org/x/net", "golang.org/x/text", "golang.org/x/tools", "github.com/rclone/rclone", "go.opentelemetry.io/otel/sdk", "go.opentelemetry.io/otel/sdk/metric"} {
+	for _, module := range []string{"github.com/klauspost/compress", "github.com/labstack/echo/v5", "github.com/rabbitmq/amqp091-go", "golang.org/x/net", "golang.org/x/text", "golang.org/x/tools", "github.com/rclone/rclone", "go.opentelemetry.io/otel/sdk", "go.opentelemetry.io/otel/sdk/metric"} {
 		if !UsesMinimumVersion(module) {
 			t.Fatalf("%s must retain newer consumer versions", module)
 		}

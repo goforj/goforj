@@ -29,7 +29,7 @@ require (
 	github.com/goforj/storage v0.5.0
 	github.com/goforj/str v1.3.0
 	github.com/goforj/str/v2 v2.0.1
-	github.com/goforj/web v0.6.2
+	github.com/goforj/web v0.6.3-0.20261017042014-dead104e4d6c
 	github.com/goforj/wire v1.2.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
@@ -102,7 +102,7 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/jonboulle/clockwork v0.5.0 // indirect
-	github.com/labstack/echo/v5 v5.2.0 // indirect
+	github.com/labstack/echo/v5 v5.4.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
