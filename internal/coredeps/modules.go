@@ -70,6 +70,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/str/v2":                            "v2.0.1",
 	"github.com/goforj/web":                               "v0.6.2",
 	"github.com/goforj/wire":                              "v1.2.0",
+	"github.com/klauspost/compress":                       "v1.20.2",
 	"github.com/nats-io/nats.go":                          "v1.50.0",
 	"github.com/rabbitmq/amqp091-go":                      "v1.15.0",
 	"github.com/rclone/rclone":                            "v1.75.2",
@@ -83,7 +84,7 @@ var pinnedModuleVersions = map[string]string{
 // UsesMinimumVersion identifies ecosystem fixes that must not downgrade a caller-selected newer version.
 func UsesMinimumVersion(module string) bool {
 	switch module {
-	case "github.com/rabbitmq/amqp091-go", "golang.org/x/net", "golang.org/x/text", "golang.org/x/tools", "github.com/rclone/rclone", "go.opentelemetry.io/otel/sdk", "go.opentelemetry.io/otel/sdk/metric":
+	case "github.com/klauspost/compress", "github.com/rabbitmq/amqp091-go", "golang.org/x/net", "golang.org/x/text", "golang.org/x/tools", "github.com/rclone/rclone", "go.opentelemetry.io/otel/sdk", "go.opentelemetry.io/otel/sdk/metric":
 		return true
 	default:
 		return false
@@ -103,6 +104,7 @@ var rendererSyncModules = []string{
 	"github.com/goforj/console",
 	"github.com/goforj/metrics",
 	"github.com/goforj/httpx",
+	"github.com/klauspost/compress",
 	"github.com/goforj/godump",
 	"github.com/goforj/web",
 	"github.com/goforj/str/v2",

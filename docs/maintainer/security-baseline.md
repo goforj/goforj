@@ -40,6 +40,14 @@ As of September 5, 2026, the baseline is merged in all 22 non-docs repositories.
 | Behavioral verification | Unit, integration, race, platform, render, watcher stress, and verifier calibration jobs exercise high-risk behavior | Tests prove only represented cases and environments |
 | Workflow integrity | Third-party actions use immutable commits and jobs declare scoped permissions | A pinned action can later receive an advisory and still needs update monitoring |
 
+## Compression Security Minimum
+
+`github.com/klauspost/compress` must resolve to v1.20.2 or newer in the framework, renderer warm module, generated Apps, and rebuilt Docker plugins and engine binaries. [GHSA-fpmh-frq8-7rj8](https://github.com/klauspost/compress/security/advisories/GHSA-fpmh-frq8-7rj8) describes a crafted zstd frame that panics in both buffered and streaming decoders on earlier versions.
+
+The test image rebuilds Buildx and Compose from their configured releases. It also rebuilds `dockerd`, `containerd`, and `ctr` from the packaged engine source revisions, preserving their original toolchains, build tags, CGO settings, and version metadata. The engine rebuild also enforces the existing patched `golang.org/x/net` minimum used by the plugins, so scanner-visible HTTP/2 security fixes survive the rebuild. Rebuilt engine revisions carry a `-goforj.1` suffix. Native build dependencies stay in a separate build stage, and application tests retain the configured Go compiler.
+
+An upstream advisory can be public before it appears in the global advisory index or Go vulnerability database. The two-block fixture in `internal/backup/zstd_security_test.go` independently verifies decoder rejection, so a clean scanner result alone does not establish this fix.
+
 ## Exception Policy
 
 Security exceptions must be narrow, owned, expiring, and machine-checkable. A vulnerability exception must bind an advisory to the expected dependency and exact package or package prefix. New findings, expanded reachability, scanner errors, and expired entries must fail the workflow.
