@@ -8,12 +8,33 @@ trap 'rm -rf "$inventory_dir"' EXIT
 
 dependabot_entries="$inventory_dir/dependabot.txt"
 awk '
+  function config_value(value) {
+    gsub(/^["\047]|["\047]$/, "", value)
+    return value
+  }
   $1 == "-" && $2 == "package-ecosystem:" {
-    ecosystem = $3
+    ecosystem = config_value($3)
+    directories = 0
     next
   }
   $1 == "directory:" && ecosystem != "" {
-    print ecosystem, $2
+    print ecosystem, config_value($2)
+    ecosystem = ""
+    next
+  }
+  $1 == "directories:" && ecosystem != "" {
+    directories = 1
+    next
+  }
+  directories && $0 ~ /^[[:space:]]*($|#)/ {
+    next
+  }
+  directories && $1 == "-" && NF == 2 {
+    print ecosystem, config_value($2)
+    next
+  }
+  directories {
+    directories = 0
     ecosystem = ""
   }
 ' "$repo_root/.github/dependabot.yml" | sort -u > "$dependabot_entries"

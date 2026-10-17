@@ -3,7 +3,9 @@ version: 2
 # monthly refresh produces reviewable batches without hiding major migrations.
 updates:
   - package-ecosystem: gomod
-    directory: /
+    directories:
+      - /
+      - /integration
     schedule:
       interval: monthly
     cooldown:
@@ -13,7 +15,7 @@ updates:
       security-fixes:
         applies-to: security-updates
         patterns: ["*"]
-      root-go-compatible:
+      monthly-go-updates:
         patterns: ["*"]
         update-types: [minor, patch]
     ignore:
@@ -27,25 +29,14 @@ updates:
       # Kong v1.16.1 changes passthrough parsing used by GoForj commands.
       - dependency-name: github.com/alecthomas/kong
         versions: [1.16.1]
-  - package-ecosystem: gomod
-    directory: /integration
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 2
-    groups:
-      security-fixes:
-        applies-to: security-updates
-        patterns: ["*"]
-      integration-go-compatible:
-        patterns: ["*"]
-        update-types: [minor, patch]
-    ignore:
-      - dependency-name: "*"
-        update-types: [version-update:semver-major]
   - package-ecosystem: npm
-    directory: /
+    directories:
+      - /
+      - /templates/demo/frontend
+      - /templates/internal/lighthouse/ui
+      - /templates/starter-kits/react/frontend
+      - /templates/starter-kits/templ-htmx/frontend
+      - /templates/starter-kits/vue/frontend
     schedule:
       interval: monthly
     cooldown:
@@ -55,92 +46,7 @@ updates:
       security-fixes:
         applies-to: security-updates
         patterns: ["*"]
-      root-npm-compatible:
-        patterns: ["*"]
-        update-types: [minor, patch]
-    ignore:
-      - dependency-name: "*"
-        update-types: [version-update:semver-major]
-  - package-ecosystem: npm
-    directory: /templates/demo/frontend
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 2
-    groups:
-      security-fixes:
-        applies-to: security-updates
-        patterns: ["*"]
-      demo-frontend-compatible:
-        patterns: ["*"]
-        update-types: [minor, patch]
-    ignore:
-      - dependency-name: "*"
-        update-types: [version-update:semver-major]
-  - package-ecosystem: npm
-    directory: /templates/internal/lighthouse/ui
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 2
-    groups:
-      security-fixes:
-        applies-to: security-updates
-        patterns: ["*"]
-      lighthouse-ui-compatible:
-        patterns: ["*"]
-        update-types: [minor, patch]
-    ignore:
-      - dependency-name: "*"
-        update-types: [version-update:semver-major]
-  - package-ecosystem: npm
-    directory: /templates/starter-kits/react/frontend
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 2
-    groups:
-      security-fixes:
-        applies-to: security-updates
-        patterns: ["*"]
-      react-starter-compatible:
-        patterns: ["*"]
-        update-types: [minor, patch]
-    ignore:
-      - dependency-name: "*"
-        update-types: [version-update:semver-major]
-  - package-ecosystem: npm
-    directory: /templates/starter-kits/templ-htmx/frontend
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 2
-    groups:
-      security-fixes:
-        applies-to: security-updates
-        patterns: ["*"]
-      templ-htmx-starter-compatible:
-        patterns: ["*"]
-        update-types: [minor, patch]
-    ignore:
-      - dependency-name: "*"
-        update-types: [version-update:semver-major]
-  - package-ecosystem: npm
-    directory: /templates/starter-kits/vue/frontend
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 2
-    groups:
-      security-fixes:
-        applies-to: security-updates
-        patterns: ["*"]
-      vue-starter-compatible:
+      monthly-frontend-updates:
         patterns: ["*"]
         update-types: [minor, patch]
     ignore:
