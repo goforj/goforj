@@ -393,7 +393,11 @@ func init() {
 
 // writeStandaloneHTTPProfileApp creates comparison stacks outside framework rendering while preserving the same process contract.
 func (cmd *HTTPLiveProfileCmd) writeStandaloneHTTPProfileApp(dir string) error {
-	goMod := "module example.com/standalonehttpprofileapp\n\ngo 1.25.0\n"
+	goVersion := "1.25.0"
+	if cmd.ServerStack == "echonative" {
+		goVersion = "1.26.0"
+	}
+	goMod := fmt.Sprintf("module example.com/standalonehttpprofileapp\n\ngo %s\n", goVersion)
 	if cmd.ServerStack == "echonative" {
 		goMod += fmt.Sprintf("\nrequire (\n\tgithub.com/labstack/echo/v5 %s\n\tgolang.org/x/net %s\n)\n", coredeps.MustVersionFor("github.com/labstack/echo/v5"), coredeps.MustVersionFor("golang.org/x/net"))
 	}
