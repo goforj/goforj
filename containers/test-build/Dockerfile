@@ -1,9 +1,9 @@
-FROM debian:trixie@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1
+FROM debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
 
 # Versions (override at build time if desired)
-ARG GO_VERSION=1.26.6
-ARG GO_AMD64_SHA256=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
-ARG GO_ARM64_SHA256=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e
+ARG GO_VERSION=1.26.9
+ARG GO_AMD64_SHA256=42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d
+ARG GO_ARM64_SHA256=4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052
 
 # Apply security fixes to inherited packages before adding Docker Engine dependencies.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \

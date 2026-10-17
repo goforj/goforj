@@ -476,7 +476,7 @@ func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read templ style source: %v", err)
 	}
-	for _, expected := range []string{`"basecoat-css"`, `"shadcn"`, `import "basecoat-css/all"`, `@import "basecoat-css"`, `@import "shadcn/tailwind.css"`} {
+	for _, expected := range []string{`"basecoat-css"`, `import "basecoat-css/all"`, `@import "basecoat-css"`, `@custom-variant data-open`, `@keyframes accordion-down`} {
 		if !strings.Contains(string(packageJSON)+"\n"+string(frontendSource)+"\n"+string(styleSource), expected) {
 			t.Fatalf("templ starter missing frontend styling marker %q", expected)
 		}

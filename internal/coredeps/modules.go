@@ -6,7 +6,7 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// pinnedModuleVersions keeps rendered projects on the framework versions validated together by GoForj's integration suite.
+// pinnedModuleVersions records validated framework releases and ecosystem security minimums for rendered projects.
 var pinnedModuleVersions = map[string]string{
 	"charm.land/bubbles/v2":                               "v2.2.1",
 	"charm.land/bubbletea/v2":                             "v2.0.9",
@@ -66,11 +66,33 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/storage/driver/sftpstorage":        "v0.5.0",
 	"github.com/goforj/storage/storagecore":               "v0.5.0",
 	"github.com/goforj/storage/storagetest":               "v0.5.0",
-	"github.com/goforj/web":                               "v0.6.2",
 	"github.com/goforj/str":                               "v1.3.0",
 	"github.com/goforj/str/v2":                            "v2.0.1",
+	"github.com/goforj/web":                               "v0.6.2",
 	"github.com/goforj/wire":                              "v1.2.0",
 	"github.com/nats-io/nats.go":                          "v1.50.0",
+	"github.com/rabbitmq/amqp091-go":                      "v1.15.0",
+	"github.com/rclone/rclone":                            "v1.75.2",
+	"go.opentelemetry.io/otel/sdk":                        "v1.45.0",
+	"go.opentelemetry.io/otel/sdk/metric":                 "v1.45.0",
+	"golang.org/x/net":                                    "v0.61.0",
+	"golang.org/x/text":                                   "v0.41.0",
+	"golang.org/x/tools":                                  "v0.52.0",
+}
+
+// UsesMinimumVersion identifies ecosystem fixes that must not downgrade a caller-selected newer version.
+func UsesMinimumVersion(module string) bool {
+	switch module {
+	case "github.com/rabbitmq/amqp091-go", "golang.org/x/net", "golang.org/x/text", "golang.org/x/tools", "github.com/rclone/rclone", "go.opentelemetry.io/otel/sdk", "go.opentelemetry.io/otel/sdk/metric":
+		return true
+	default:
+		return false
+	}
+}
+
+var webRendererSyncModules = []string{
+	"golang.org/x/net",
+	"golang.org/x/tools",
 }
 
 var rendererSyncModules = []string{
@@ -92,6 +114,7 @@ var rendererSyncModules = []string{
 }
 
 var cacheRendererSyncModules = []string{
+	"golang.org/x/text",
 	"github.com/goforj/cache",
 	"github.com/goforj/cache/cachecore",
 	"github.com/goforj/cache/driver/dynamocache",
@@ -110,6 +133,9 @@ var schedulerRendererSyncModules = []string{
 }
 
 var eventsRendererSyncModules = []string{
+	"golang.org/x/net",
+	"go.opentelemetry.io/otel/sdk",
+	"go.opentelemetry.io/otel/sdk/metric",
 	"github.com/goforj/events",
 	"github.com/goforj/events/eventscore",
 	"github.com/goforj/events/driver/gcppubsubevents",
@@ -121,6 +147,10 @@ var eventsRendererSyncModules = []string{
 }
 
 var storageRendererSyncModules = []string{
+	"golang.org/x/net",
+	"go.opentelemetry.io/otel/sdk",
+	"go.opentelemetry.io/otel/sdk/metric",
+	"github.com/rclone/rclone",
 	"github.com/goforj/storage",
 	"github.com/goforj/storage/storagecore",
 	"github.com/goforj/storage/driver/dropboxstorage",
@@ -144,6 +174,8 @@ var databaseRendererSyncModules = []string{
 }
 
 var jobsRendererSyncModules = []string{
+	"github.com/rabbitmq/amqp091-go",
+	"golang.org/x/text",
 	"github.com/goforj/queue",
 	"github.com/goforj/queue/driver/mysqlqueue",
 	"github.com/goforj/queue/driver/natsqueue",
@@ -173,6 +205,9 @@ func MustVersionFor(module string) string {
 // SyncCoreLibraries returns the pinned renderer dependencies required by the selected project capabilities.
 func SyncCoreLibraries(components project.Components) []string {
 	modules := append([]string(nil), rendererSyncModules...)
+	if components.WebAPI || components.WebUI {
+		modules = append(modules, webRendererSyncModules...)
+	}
 	if components.Cache {
 		modules = append(modules, cacheRendererSyncModules...)
 	}
