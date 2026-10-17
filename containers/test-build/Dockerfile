@@ -5,6 +5,11 @@ ARG GO_VERSION=1.26.9
 ARG GO_AMD64_SHA256=42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d
 ARG GO_ARM64_SHA256=4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052
 
+ARG BUILDX_VERSION=0.38.0
+ARG COMPOSE_VERSION=5.6.0
+ARG PLUGIN_X_NET_VERSION=v0.61.0
+ARG PLUGIN_GO_ARCHIVE_VERSION=v0.3.3
+
 # Apply security fixes to inherited packages before adding Docker Engine dependencies.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -34,8 +39,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     docker-ce \
     docker-ce-cli \
     containerd.io \
-    docker-buildx-plugin \
-    docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ln -s /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
@@ -59,6 +62,11 @@ ENV GOPATH="/go"
 ENV PATH="${GOPATH}/bin:/usr/local/go/bin:${PATH}"
 
 RUN mkdir -p /go && chmod -R 777 /go
+
+COPY build-plugins.sh /tmp/build-plugins.sh
+RUN --mount=type=cache,target=/tmp/gocache \
+    --mount=type=cache,target=/go/pkg/mod \
+    GOCACHE=/tmp/gocache sh /tmp/build-plugins.sh && rm /tmp/build-plugins.sh
 
 # -------------------------------------------------------------
 # Docker-in-Docker setup
