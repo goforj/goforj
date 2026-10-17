@@ -44,6 +44,7 @@ func TestRenderwarmUsesCurrentTemplateDependencies(t *testing.T) {
 		"github.com/goforj/console v0.2.0",
 		"github.com/goforj/str v1.3.0",
 		"github.com/goforj/str/v2 v2.0.1",
+		"github.com/klauspost/compress v1.20.2",
 	} {
 		if !strings.Contains(goMod, want) {
 			t.Fatalf("renderwarm should pin %q:\n%s", want, goMod)
