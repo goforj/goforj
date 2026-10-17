@@ -140,16 +140,16 @@ override_version_for_module() {
   case "$1" in
     github.com/charmbracelet/x/cellbuf) echo "v0.0.15" ;;
     github.com/goforj/cache) echo "v0.4.0" ;;
-    github.com/goforj/cache/cachecore) echo "v0.4.0" ;;
-    github.com/goforj/cache/driver/rediscache) echo "v0.4.0" ;;
-    github.com/goforj/events) echo "v0.2.0" ;;
-    github.com/goforj/events/eventscore) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/gcppubsubevents) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/kafkaevents) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/natsevents) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/natsjetstreamevents) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/redisevents) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/snsevents) echo "v0.2.0" ;;
+    github.com/goforj/cache/cachecore) echo "v0.4.2" ;;
+    github.com/goforj/cache/driver/rediscache) echo "v0.4.2" ;;
+    github.com/goforj/events) echo "v0.2.1" ;;
+    github.com/goforj/events/eventscore) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/gcppubsubevents) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/kafkaevents) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/natsevents) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/natsjetstreamevents) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/redisevents) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/snsevents) echo "v0.2.1" ;;
     github.com/goforj/godump) echo "v1.9.1" ;;
     github.com/goforj/httpx) echo "v1.1.0" ;;
     github.com/goforj/mail) echo "v0.3.1" ;;
@@ -158,7 +158,7 @@ override_version_for_module() {
     github.com/goforj/null/v6) echo "v6.0.2" ;;
     github.com/goforj/queue) echo "v0.2.1" ;;
     github.com/goforj/scheduler/v2) echo "v2.1.4" ;;
-    github.com/goforj/web) echo "v0.6.3-0.20261017042014-dead104e4d6c" ;;
+    github.com/goforj/web) echo "v0.6.3" ;;
     github.com/klauspost/compress) echo "v1.20.2" ;;
     github.com/labstack/echo/v4) echo "v4.16.0" ;;
     github.com/labstack/echo/v5) echo "v5.4.0" ;;

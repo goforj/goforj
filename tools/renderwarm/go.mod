@@ -13,23 +13,23 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/glebarez/sqlite v1.11.0
 	github.com/goforj/cache v0.4.0
-	github.com/goforj/cache/cachecore v0.4.0
-	github.com/goforj/cache/driver/rediscache v0.4.0
+	github.com/goforj/cache/cachecore v0.4.2
+	github.com/goforj/cache/driver/rediscache v0.4.2
 	github.com/goforj/console v0.2.0
 	github.com/goforj/crypt v1.2.0
 	github.com/goforj/env/v2 v2.6.1
-	github.com/goforj/events v0.2.0
-	github.com/goforj/events/eventscore v0.2.0
+	github.com/goforj/events v0.2.1
+	github.com/goforj/events/eventscore v0.2.1
 	github.com/goforj/httpx v1.1.0
 	github.com/goforj/mail v0.3.1
 	github.com/goforj/metrics v0.2.0
 	github.com/goforj/null/v6 v6.0.2
 	github.com/goforj/queue v0.2.1
 	github.com/goforj/scheduler/v2 v2.1.4
-	github.com/goforj/storage v0.5.0
+	github.com/goforj/storage v0.5.1
 	github.com/goforj/str v1.3.0
 	github.com/goforj/str/v2 v2.0.1
-	github.com/goforj/web v0.6.3-0.20261017042014-dead104e4d6c
+	github.com/goforj/web v0.6.3
 	github.com/goforj/wire v1.2.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
@@ -38,7 +38,7 @@ require (
 	github.com/klauspost/compress v1.20.2
 	github.com/rs/zerolog v1.35.1
 	github.com/shirou/gopsutil/v4 v4.26.6
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	golang.org/x/crypto v0.58.0
@@ -76,8 +76,6 @@ require (
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v0.2.1 // indirect
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.7.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
@@ -91,7 +89,7 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/goforj/godump v1.9.1 // indirect
-	github.com/goforj/storage/storagecore v0.5.0 // indirect
+	github.com/goforj/storage/storagecore v0.5.1 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/icholy/digest v1.2.0 // indirect
 	github.com/imroc/req/v3 v3.61.0 // indirect
@@ -124,11 +122,10 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.61.0 // indirect
-	github.com/redis/go-redis/v9 v9.17.2 // indirect
+	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
@@ -144,6 +141,8 @@ require (
 	go.opentelemetry.io/otel v1.44.0 // indirect
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
