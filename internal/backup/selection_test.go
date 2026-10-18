@@ -40,10 +40,11 @@ printf '%s\n' '{"version":1,"app":"app","resources":[{"id":"db.default","kind":"
 		t.Setenv(prefix+"_DSN", file)
 	}
 	storage := filepath.Join(root, "uploads")
-	os.MkdirAll(storage, 0700)
-	os.WriteFile(filepath.Join(storage, "note.txt"), []byte("retained upload"), 0600)
+	os.MkdirAll(filepath.Join(storage, "scope"), 0700)
+	os.WriteFile(filepath.Join(storage, "scope", "note.txt"), []byte("retained upload"), 0600)
 	t.Setenv("STORAGE_PRIVATE_DRIVER", "local")
 	t.Setenv("STORAGE_PRIVATE_ROOT", storage)
+	t.Setenv("STORAGE_PRIVATE_PREFIX", "scope")
 	service := NewService()
 	backup, err := service.CreateSelected(context.Background(), filepath.Join(root, "backups"), CreateOptions{Resources: []string{"db.reporting", "storage.private"}, MaxBytes: 1 << 20})
 	if err != nil {
@@ -64,6 +65,7 @@ printf '%s\n' '{"version":1,"app":"app","resources":[{"id":"db.default","kind":"
 	targetStorage := filepath.Join(root, "restored-uploads")
 	t.Setenv("DB_REPORTING_DSN", targetDB)
 	t.Setenv("STORAGE_PRIVATE_ROOT", targetStorage)
+	t.Setenv("STORAGE_PRIVATE_PREFIX", "restored-scope")
 	if err = service.Restore(context.Background(), backup.Directory, "", "restore-production"); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +78,7 @@ printf '%s\n' '{"version":1,"app":"app","resources":[{"id":"db.default","kind":"
 	if err = db.QueryRow("SELECT value FROM evidence").Scan(&value); err != nil || value != "reporting" {
 		t.Fatal("named database restore failed", err, value)
 	}
-	note, err := os.ReadFile(filepath.Join(targetStorage, "note.txt"))
+	note, err := os.ReadFile(filepath.Join(targetStorage, "restored-scope", "note.txt"))
 	if err != nil || string(note) != "retained upload" {
 		t.Fatal("storage restore failed", err)
 	}
