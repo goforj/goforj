@@ -12,7 +12,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/goforj/goforj v0.0.0
 	github.com/goftp/server v0.0.0-20200708154336-f64f7c2d8a42
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/johannesboyne/gofakes3 v1.2.0
 	github.com/pkg/sftp v1.13.11
 	github.com/testcontainers/testcontainers-go v0.44.0
