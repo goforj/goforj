@@ -29,7 +29,7 @@ func TestLocalProvidersRenderedComposition(t *testing.T) {
 		ProjectName: "Local Providers", GoModuleName: "example.com/localproviders", Render: project.RenderConfig{Components: components},
 		Apps: map[string]project.AppConfig{"admin": {Components: components}},
 	}})
-	for key, value := range map[string]string{"CACHE_DRIVER": "redis", "CACHE_SUPPORTED_DRIVERS": "memory,redis", "QUEUE_SUPPORTED_DRIVERS": "workerpool,redis", "QUEUE_DRIVER": "redis", "DB_DRIVER": "mysql", "DB_SUPPORTED_DRIVERS": "mysql,sqlite", "DB_DSN": "synthetic-service-dsn", "DB_REPORTS_DRIVER": "mysql", "ADMIN_DB_DRIVER": "mysql", "ADMIN_CACHE_DRIVER": "redis", "ADMIN_QUEUE_DRIVER": "redis", "COMPOSE_PROFILES": "mysql,redis,grafana"} {
+	for key, value := range map[string]string{"CACHE_DRIVER": "redis", "CACHE_SUPPORTED_DRIVERS": "memory,redis", "QUEUE_SUPPORTED_DRIVERS": "workerpool,redis", "QUEUE_DRIVER": "redis", "DB_DRIVER": "mysql", "DB_SUPPORTED_DRIVERS": "mysql,sqlite", "DB_DSN": "synthetic-service-dsn", "DB_REPORTS_DRIVER": "mysql", "DB_EXISTING_DRIVER": "sqlite", "DB_EXISTING_DSN": "' '", "DB_EXISTING_SQLITE_DATABASE": "existing.db", "ADMIN_DB_DRIVER": "mysql", "ADMIN_CACHE_DRIVER": "redis", "ADMIN_QUEUE_DRIVER": "redis", "COMPOSE_PROFILES": "mysql,redis,grafana"} {
 		setRenderedEnvValue(t, root, key, value)
 	}
 	session, err := localproviders.Open(root)
@@ -124,15 +124,19 @@ func TestLocalProvidersRenderedComposition(t *testing.T) {
 		}
 		probe := fmt.Sprintf(`package database
 
-import "testing"
+import ("testing"; "strings")
 
 // TestDriverSwitchRuntimeDSN checks the actual generated runtime fallback after a provider switch.
 func TestDriverSwitchRuntimeDSN(t *testing.T) {
     t.Setenv("DB_DSN", %q)
     t.Setenv("DB_REPORTS_DSN", %q)
     if got := envOr("reports", "DSN"); got != %q { t.Fatal("generated runtime selected the wrong DSN") }
+    t.Setenv("DB_EXISTING_DSN", %q)
+    t.Setenv("DB_EXISTING_SQLITE_DATABASE", %q)
+    if got := strings.TrimSpace(envOr("existing", "DSN")); got != "" { t.Fatal("whitespace DSN unexpectedly inherited a service connection") }
+    if got, err := buildDSN("existing", "sqlite"); err != nil || got != "existing.db" { t.Fatal("existing SQLite target changed") }
 }
-`, fresh.Current["DB_DSN"], fresh.Current["DB_REPORTS_DSN"], wantDSN)
+`, fresh.Current["DB_DSN"], fresh.Current["DB_REPORTS_DSN"], wantDSN, fresh.Current["DB_EXISTING_DSN"], fresh.Current["DB_EXISTING_SQLITE_DATABASE"])
 		if err := os.WriteFile(filepath.Join(root, "internal/database/driver_switch_test.go"), []byte(probe), 0600); err != nil {
 			t.Fatal(err)
 		}

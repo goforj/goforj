@@ -237,6 +237,9 @@ func (s *Session) retainDriverSupport(values map[string]string, key, old, driver
 // databaseValue follows the runtime App overlay and named-to-root fallback without reading ambient credentials.
 func (s *Session) databaseValue(values map[string]string, key, suffix string) string {
 	_, value := s.databaseSetting(values, key, suffix)
+	if suffix == "DSN" {
+		return strings.TrimSpace(value)
+	}
 	return value
 }
 
@@ -267,7 +270,7 @@ func databaseSettingInScope(values map[string]string, key, suffix, app string) (
 			source = app + prefix + suffix
 			value = overlay
 		}
-		if strings.TrimSpace(value) != "" {
+		if value != "" {
 			return source, value
 		}
 	}
@@ -323,6 +326,7 @@ func databaseTargetInScope(values map[string]string, key, app string) databaseTa
 		target.driver = "sqlite"
 	}
 	_, target.dsn = databaseSettingInScope(values, key, "DSN", app)
+	target.dsn = strings.TrimSpace(target.dsn)
 	if target.dsn != "" {
 		return target
 	}
