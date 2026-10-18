@@ -225,8 +225,11 @@ func applyLocalProviders(ui *console.Console, s *localproviders.Session, values 
 		}
 	}
 	if !changed {
-		ui.Infof("No changes needed")
-		return nil
+		if !restore {
+			ui.Infof("No changes needed")
+			return nil
+		}
+		ui.Infof("Settings are already restored. Only the private recovery record needs cleanup.")
 	}
 	ui.Infof("Check connection settings for newly selected service drivers before starting the App.")
 	ui.Infof("Database contents stay in place. Apply compatible migrations separately before starting the App.")
@@ -247,6 +250,10 @@ func applyLocalProviders(ui *console.Console, s *localproviders.Session, values 
 	}
 	if err != nil {
 		return err
+	}
+	if !changed {
+		ui.Successf("Cleared the private recovery record")
+		return nil
 	}
 	ui.Successf("Updated .env")
 	ui.Infof("Run forj build to regenerate driver support, then restart the App.")

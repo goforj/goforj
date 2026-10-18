@@ -22,18 +22,21 @@ type state struct {
 	Version  int               `json:"version"`
 	Previous map[string]string `json:"previous,omitempty"`
 	Applied  map[string]string `json:"applied,omitempty"`
+	Pending  *pendingChange    `json:"pending,omitempty"`
 }
 
 // Session holds the project configuration reviewed before a local-provider switch.
 type Session struct {
-	Root          string
-	Current       map[string]string
-	Resources     []Resource
-	config        *project.Config
-	env           document
-	files         map[string]file
-	state         state
-	databaseNames []string
+	Root           string
+	Current        map[string]string
+	Resources      []Resource
+	config         *project.Config
+	env            document
+	files          map[string]file
+	state          state
+	databaseNames  []string
+	rename         func(string, string) error
+	pendingCleanup bool
 }
 
 // Open reads project-owned configuration without changing the process environment.
@@ -42,7 +45,7 @@ func Open(root string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{Root: root, config: config, files: map[string]file{}}
+	s := &Session{Root: root, config: config, files: map[string]file{}, rename: os.Rename}
 	for _, name := range []string{".env", ".env.example", stateName, ".gitignore"} {
 		f, err := readFile(root, name)
 		if err != nil {
@@ -79,20 +82,23 @@ func Open(root string) (*Session, error) {
 		if err := json.Unmarshal(s.files[stateName].before, &s.state); err != nil {
 			return nil, fmt.Errorf("invalid local-provider restore point")
 		}
-		if s.state.Version != 1 {
+		if s.state.Version != 1 && s.state.Version != 2 {
 			return nil, fmt.Errorf("unsupported local-provider restore point version")
 		}
-		for _, values := range []map[string]string{s.state.Previous, s.state.Applied} {
-			if err := s.Validate(values); err != nil {
-				return nil, fmt.Errorf("invalid local-provider restore point: %w", err)
-			}
+		if (s.state.Version == 2) != (s.state.Pending != nil) {
+			return nil, fmt.Errorf("local-provider restore point version does not match its pending state")
+		}
+		if err := s.reconcilePending(); err != nil {
+			return nil, err
 		}
 	}
 	return s, nil
 }
 
 // HasPrevious reports whether a local-provider change can be restored.
-func (s *Session) HasPrevious() bool { return len(changedKeys(s.state.Previous, s.state.Applied)) > 0 }
+func (s *Session) HasPrevious() bool {
+	return s.pendingCleanup || len(changedKeys(s.state.Previous, s.state.Applied)) > 0
+}
 
 // Previous restores only keys changed by the switch and rejects subsequent edits to those keys.
 func (s *Session) Previous() (map[string]string, error) {
@@ -100,6 +106,9 @@ func (s *Session) Previous() (map[string]string, error) {
 		return nil, fmt.Errorf("no previous local-provider configuration to restore")
 	}
 	values := clone(s.Current)
+	if s.pendingCleanup {
+		return values, nil
+	}
 	for key := range changedKeys(s.state.Previous, s.state.Applied) {
 		if !sameSetting(s.Current, s.state.Applied, key) {
 			return nil, fmt.Errorf("%s changed since the local-provider switch; restore cannot overwrite it", key)
@@ -156,12 +165,22 @@ func (s *Session) publish(values map[string]string, next state) error {
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(next, "", "  ")
+	final, err := encodeState(next)
 	if err != nil {
 		return err
 	}
-	updates := map[string][]byte{stateName: append(data, '\n'), ".env": env}
-	return s.write(updates)
+	if len(changedKeys(s.Current, values)) == 0 {
+		return s.write(map[string][]byte{stateName: final}, nil)
+	}
+	before, after := changedValues(s.Current, values)
+	prepared := s.state
+	prepared.Version = 2
+	prepared.Pending = &pendingChange{Before: before, After: after, Previous: next.Previous, Applied: next.Applied}
+	data, err := encodeState(prepared)
+	if err != nil {
+		return err
+	}
+	return s.write(map[string][]byte{stateName: data, ".env": env}, final)
 }
 
 // reviewedDocument verifies that interpolation in preserved assignments cannot change the reviewed configuration.
@@ -201,7 +220,7 @@ func (s *Session) read(name string) (file, error) {
 }
 
 // write protects recovery files in Git and publishes the backup before changing the active environment.
-func (s *Session) write(updates map[string][]byte) error {
+func (s *Session) write(updates map[string][]byte, finalize []byte) error {
 	lock, err := os.OpenFile(filepath.Join(s.Root, lockName), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("another local-provider operation may be running (%s): %w", lockName, err)
@@ -231,7 +250,22 @@ func (s *Session) write(updates map[string][]byte) error {
 		f.after = updates[name]
 		files = append(files, f)
 	}
-	return commit(s.Root, files, os.Rename)
+	if err := commit(s.Root, files, s.rename); err != nil {
+		return err
+	}
+	if finalize == nil {
+		return nil
+	}
+	active := s.files[".env"]
+	active.before, active.exists, active.mode = updates[".env"], true, 0600
+	if err := checkFile(s.Root, active); err != nil {
+		return fmt.Errorf("settings were updated, but recovery cleanup stopped: %w; run forj env:local again after reviewing the edit", err)
+	}
+	recovery := file{name: stateName, before: updates[stateName], after: finalize, exists: true, mode: 0600}
+	if err := commit(s.Root, []file{recovery}, s.rename); err != nil {
+		return fmt.Errorf("settings were updated, but recovery cleanup failed: %w; run forj env:local again", err)
+	}
+	return nil
 }
 
 // changedKeys records value changes without treating an absent setting as an explicitly empty one.

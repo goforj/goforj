@@ -234,3 +234,32 @@ func TestResourceDriverPickerInputFailureDoesNotWrite(t *testing.T) {
 		})
 	}
 }
+
+// TestLocalProvidersCommandClearsCompletedRestoreJournal finishes cleanup without rewriting an already restored environment.
+func TestLocalProvidersCommandClearsCompletedRestoreJournal(t *testing.T) {
+	root := localProvidersFixture(t)
+	before, err := os.ReadFile(filepath.Join(root, ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup := `{"version":2,"previous":{"DB_DRIVER":"mysql","DB_DSN":"synthetic-private-dsn"},"applied":{"DB_DRIVER":"sqlite","DB_DSN":""},"pending":{"before":{"DB_DRIVER":"sqlite","DB_DSN":""},"after":{"DB_DRIVER":"mysql","DB_DSN":"synthetic-private-dsn"}}}`
+	if err := os.WriteFile(filepath.Join(root, ".env.local-providers.backup"), []byte(backup), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	command := LocalProvidersCmd{root: root, ui: moduleRenameTestConsole("\ny\n", &output)}
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(filepath.Join(root, ".env"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("cleanup changed the restored environment")
+	}
+	s, err := localproviders.Open(root)
+	if err != nil || s.HasPrevious() {
+		t.Fatalf("cleanup retained recovery state: %v", err)
+	}
+	if !strings.Contains(output.String(), "Cleared the private recovery record") || strings.Contains(output.String(), "Run forj build") {
+		t.Fatal("cleanup output incorrectly requested another build")
+	}
+}
