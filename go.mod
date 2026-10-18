@@ -23,9 +23,10 @@ require (
 	github.com/goforj/execx v1.1.4
 	github.com/goforj/httpx/v2 v2.0.1
 	github.com/goforj/queue v0.2.1
-	github.com/goforj/storage v0.5.1
-	github.com/goforj/storage/driver/localstorage v0.5.1
-	github.com/goforj/storage/driver/s3storage v0.5.1
+	github.com/goforj/storage v0.6.0
+	github.com/goforj/storage/driver/localstorage v0.6.0
+	github.com/goforj/storage/driver/s3storage v0.6.0
+	github.com/goforj/storage/storagecore v0.6.0
 	github.com/goforj/str/v2 v2.0.1
 	github.com/goforj/web v0.6.4
 	github.com/goforj/wire v1.2.0
@@ -99,7 +100,6 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goforj/godump v1.9.1 // indirect
-	github.com/goforj/storage/storagecore v0.5.1 // indirect
 	github.com/goforj/str v1.3.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect

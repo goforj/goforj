@@ -1091,3 +1091,71 @@ Generated Apps expose only the resource contract used to select backup inputs.
   by more than one App?
 - Should deployment archive helpers become a separate generated task such as
   `deploy:archive`, or remain documented project-specific operations?
+
+## Explicit resource sets and object-content archives
+
+The additive `backup:create --resources db.default,db.reporting,storage.public`
+selector produces one manifest-backed set containing exactly the requested
+resources. It rejects duplicates, missing resources, and unsupported selected
+storage before capturing data. Existing `--resource` and unfiltered command
+behavior remain compatible. `--resources` cannot be combined with `--resource`
+or `--portable`. Apps without a resource-contract command retain environment-based
+discovery: local and S3 disks are eligible for selected capture; unsupported
+external drivers remain excluded.
+
+Use `--copy-objects` with `--resources` to retain independent S3 object copies.
+The resulting `object-archive` artifact stores opaque object keys, contents,
+checksums, and common HTTP/user metadata in a compressed tar artifact. It preserves
+keys without interpreting them as filesystem paths, verifies all embedded copies,
+and supports restoration into the configured target bucket and prefix. The
+existing `object-manifest` inventory remains the default for older invocations
+and continues to refuse object-content restoration.
+
+`--max-bytes` bounds the selected set's artifact size and each object-copy source
+budget. Object-content archives have a 100,000-object and 64 MiB metadata limit.
+Object capture and verification also enforce a 64 GiB expanded object-data cap,
+matching the local archive safety bound. Restore observes cancellation during
+inspection, decompression, and temporary-file copying. A failed copy removes its
+incomplete object artifact. Native database artifacts
+retain the source logical database name for isolated recovery planning; manifests
+still exclude credentials and DSNs. Unselected resources are omitted entirely.
+
+S3 restore verifies the retained artifact before writing, copies object contents
+and metadata, and reads each restored object back to verify its checksum. Bucket
+configuration, permissions, and object tags are outside this data archive. With
+`backup:restore --prepare-targets --confirm restore-production`, missing selected
+S3 target buckets can be created before restoration. A forbidden bucket is not
+treated as a missing bucket. Dry-run mode performs no target provisioning.
+
+These interfaces support Ship orchestration while keeping driver-specific backup
+and restore behavior in the framework. They do not make database and storage
+captures an atomic application-wide snapshot.
+
+Object content capture uses the optional streaming object capability in
+`github.com/goforj/storage`. Provider clients, paginated listing, conditional reads,
+metadata-preserving streaming writes, and explicit bucket preparation belong to
+that library. The backup package owns archive layout, checksums, selection, and
+restore orchestration. Existing buffered storage methods remain unchanged.
+
+Scoped local archives and object-content archives use native manifest version 2.
+The new reader continues accepting version 1 backups. Older CLIs reject version 2
+instead of silently restoring a scoped archive at the wrong path or treating S3
+contents as local files. Upgrade restore operators and manifest consumers before
+producing these new archive formats; no existing version 1 archive migration is
+required. Legacy single-resource local and object-inventory captures retain
+version 1. Selected local resource roots may be absolute or relative to the App's
+working directory, and their configured prefixes remain confined to that root.
+
+Local prefix handling follows `storagecore.NormalizePath`, matching App storage
+for slash-delimited, whitespace-padded, and backslash-separated prefixes. Capture
+and restore resolve prefixes through an `os.Root` anchored at the configured disk
+root. Escaping symlinks are rejected, and subsequent file access uses the opened
+directory handle so pathname changes cannot redirect the operation outside it.
+
+Object-content archives currently support individual objects up to 5,000,000,000
+bytes, a conservative bound for the streaming storage API's single-PUT restore
+transport. Capture rejects larger source objects before opening their contents.
+Verification and restore preflight reject oversized archived members before
+spooling or uploading anything. Multipart restoration is not implemented. The
+64 GiB expanded-data budget still applies across all objects in an archive.
+See the [S3 upload limits](https://docs.aws.amazon.com/AmazonS3/latest/userguide/upload-objects.html).

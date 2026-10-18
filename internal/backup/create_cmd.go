@@ -11,9 +11,12 @@ import (
 
 // CreateCmd creates a native database backup set.
 type CreateCmd struct {
-	Path     string `name:"to" help:"Backup directory" default:".goforj/backups"`
-	Resource string `help:"Optional database connection name"`
-	Portable bool   `help:"Create a database-neutral portable archive"`
+	Resources   []string `name:"resources" help:"Exact db.<name> or storage.<name> resources (comma-separated)"`
+	CopyObjects bool     `name:"copy-objects" help:"Copy S3 object contents instead of recording only an inventory"`
+	MaxBytes    int64    `name:"max-bytes" help:"Maximum total artifact bytes for explicitly selected resources"`
+	Path        string   `name:"to" help:"Backup directory" default:".goforj/backups"`
+	Resource    string   `help:"Optional database connection name"`
+	Portable    bool     `help:"Create a database-neutral portable archive"`
 }
 
 // NewCreateCmd creates a native backup creation command.
@@ -26,6 +29,9 @@ func (*CreateCmd) Signature() string {
 
 // Run creates and reports a native backup set.
 func (c *CreateCmd) Run() error {
+	if c.Portable && (len(c.Resources) > 0 || c.CopyObjects || c.MaxBytes != 0) {
+		return fmt.Errorf("portable backups do not accept native selection options")
+	}
 	if c.Portable {
 		connection, err := ConnectionForResource(context.Background(), normalizeResourceName(c.Resource))
 		if err != nil {
@@ -55,7 +61,19 @@ func (c *CreateCmd) Run() error {
 		fmt.Printf("portable backup complete %s (%d tables)\n", dir, len(archive.Tables))
 		return nil
 	}
-	backup, err := NewService().Create(context.Background(), c.Path, c.Resource)
+	if len(c.Resources) > 0 && (c.Resource != "" || c.Portable) {
+		return fmt.Errorf("--resources cannot be combined with --resource or --portable")
+	}
+	var backup CreatedBackup
+	var err error
+	if len(c.Resources) > 0 {
+		backup, err = NewService().CreateSelected(context.Background(), c.Path, CreateOptions{Resources: c.Resources, CopyObjects: c.CopyObjects, MaxBytes: c.MaxBytes})
+	} else {
+		if c.CopyObjects || c.MaxBytes != 0 {
+			return fmt.Errorf("--copy-objects and --max-bytes require --resources")
+		}
+		backup, err = NewService().Create(context.Background(), c.Path, c.Resource)
+	}
 	if err != nil {
 		return err
 	}

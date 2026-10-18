@@ -27,6 +27,11 @@ func NewService() *Service {
 
 // Create writes a native backup set under root and returns its directory and manifest together.
 func (s *Service) Create(ctx context.Context, root string, resourceName string) (CreatedBackup, error) {
+	return s.create(ctx, root, resourceName, nil)
+}
+
+// create preserves legacy selection while allowing operator integrations to require an exact resource set.
+func (s *Service) create(ctx context.Context, root string, resourceName string, options *CreateOptions) (CreatedBackup, error) {
 	if err := s.Hooks.Run(ctx, HookBeforeCreate); err != nil {
 		return CreatedBackup{}, fmt.Errorf("before backup hook: %w", err)
 	}
@@ -36,6 +41,12 @@ func (s *Service) Create(ctx context.Context, root string, resourceName string) 
 	plan, err := BuildPlan()
 	if err != nil {
 		return CreatedBackup{}, err
+	}
+	if options != nil {
+		plan, err = selectBackupPlan(plan, options)
+		if err != nil {
+			return CreatedBackup{}, err
+		}
 	}
 	if err := plan.Validate(); err != nil {
 		return CreatedBackup{}, err
@@ -47,7 +58,10 @@ func (s *Service) Create(ctx context.Context, root string, resourceName string) 
 	if err := os.Mkdir(filepath.Join(dir, "databases"), 0o700); err != nil {
 		return CreatedBackup{}, fmt.Errorf("create backup set: %w", err)
 	}
-	manifest := Manifest{Version: 1, CreatedAt: time.Now().UTC()}
+	manifest := Manifest{Version: 1, CreatedAt: time.Now().UTC(), App: AppMetadata{Name: strings.TrimSpace(os.Getenv("FORJ_APP"))}}
+	if manifest.App.Name == "" {
+		manifest.App.Name = "app"
+	}
 	resourceName = normalizeResourceName(resourceName)
 	storageSelector := strings.HasPrefix(resourceName, "storage.")
 	for _, planned := range plan.Resources {
@@ -71,7 +85,7 @@ func (s *Service) Create(ctx context.Context, root string, resourceName string) 
 			return CreatedBackup{}, err
 		}
 		manifest.Resources = append(manifest.Resources, Resource{
-			ID: "db." + planned.Connection.Name, Kind: "database", Name: planned.Connection.Name,
+			Database: planned.Connection.Database, ID: "db." + planned.Connection.Name, Kind: "database", Name: planned.Connection.Name,
 			Driver: normalizeDriver(planned.Connection.Driver), Strategy: strategy.Name(),
 			Artifact: filepath.ToSlash(filepath.Join("databases", artifactName)), Checksum: fingerprint.Checksum, Size: fingerprint.Size,
 		})
@@ -82,6 +96,20 @@ func (s *Service) Create(ctx context.Context, root string, resourceName string) 
 			continue
 		}
 		if storage.Driver == "s3" {
+			if options != nil && options.CopyObjects {
+				artifactName := storage.Name + ".objects.tar.zst"
+				artifact := filepath.Join(dir, "storage", artifactName)
+				if err := BackupObjectArchive(ctx, storage.Name, artifact, options.MaxBytes); err != nil {
+					return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, err)
+				}
+				fingerprint, err := Checksum(artifact)
+				if err != nil {
+					return CreatedBackup{}, err
+				}
+				manifest.Resources = append(manifest.Resources, Resource{ID: selector, Kind: "storage", Name: storage.Name, Driver: storage.Driver, Strategy: "object-archive", Artifact: filepath.ToSlash(filepath.Join("storage", artifactName)), Checksum: fingerprint.Checksum, Size: fingerprint.Size})
+				continue
+			}
+
 			objectStorage, err := ConfiguredObjectStorage(storage.Name)
 			if err != nil {
 				return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, err)
@@ -120,18 +148,34 @@ func (s *Service) Create(ctx context.Context, root string, resourceName string) 
 		}
 		artifactName := storage.Name + ".local.tar.zst"
 		artifact := filepath.Join(dir, "storage", artifactName)
-		if err := ArchiveDirectory(storage.Root, artifact); err != nil {
-			return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, err)
+		var archiveErr error
+		if options != nil {
+			archiveErr = archiveScopedDirectory(storage.Root, storage.Prefix, artifact)
+		} else {
+			archiveErr = ArchiveDirectory(storage.Root, artifact)
+		}
+		if archiveErr != nil {
+			return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, archiveErr)
 		}
 		fingerprint, err := Checksum(artifact)
 		if err != nil {
 			return CreatedBackup{}, err
 		}
-		manifest.Resources = append(manifest.Resources, Resource{ID: selector, Kind: "storage", Name: storage.Name, Driver: storage.Driver, Strategy: "local-archive", Artifact: filepath.ToSlash(filepath.Join("storage", artifactName)), Checksum: fingerprint.Checksum, Size: fingerprint.Size})
+		manifest.Resources = append(manifest.Resources, Resource{Scoped: options != nil, Prefix: storage.Prefix, ID: selector, Kind: "storage", Name: storage.Name, Driver: storage.Driver, Strategy: "local-archive", Artifact: filepath.ToSlash(filepath.Join("storage", artifactName)), Checksum: fingerprint.Checksum, Size: fingerprint.Size})
 	}
 	if len(manifest.Resources) == 0 {
 		return CreatedBackup{}, fmt.Errorf("backup resource %q was not found", resourceName)
 	}
+	if options != nil && options.MaxBytes > 0 {
+		var total int64
+		for _, resource := range manifest.Resources {
+			if resource.Size > options.MaxBytes-total {
+				return CreatedBackup{}, fmt.Errorf("selected backup set exceeds its size limit")
+			}
+			total += resource.Size
+		}
+	}
+	manifest.Version = backupManifestVersion(manifest)
 	if err := WriteManifest(dir, manifest); err != nil {
 		return CreatedBackup{}, err
 	}
@@ -143,6 +187,11 @@ func (s *Service) Create(ctx context.Context, root string, resourceName string) 
 
 // Verify checks every artifact referenced by a backup manifest.
 func (s *Service) Verify(dir string) (Manifest, error) {
+	return s.verify(context.Background(), dir)
+}
+
+// verify propagates restore cancellation through object archive validation.
+func (s *Service) verify(ctx context.Context, dir string) (Manifest, error) {
 	manifest, err := ReadManifest(dir)
 	if err != nil {
 		return Manifest{}, err
@@ -155,6 +204,12 @@ func (s *Service) Verify(dir string) (Manifest, error) {
 		if err := VerifyChecksum(artifact, resource.Checksum); err != nil {
 			return Manifest{}, fmt.Errorf("verify %s: %w", resource.ID, err)
 		}
+		if resource.Strategy == "object-archive" {
+			if _, err := inspectObjectArchive(ctx, artifact, storageArchiveMaxExpandedBytes); err != nil {
+				return Manifest{}, fmt.Errorf("verify %s: %w", resource.ID, err)
+			}
+		}
+
 	}
 	return manifest, nil
 }
@@ -167,7 +222,7 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 	if err := s.Hooks.Run(ctx, HookBeforeRestore); err != nil {
 		return fmt.Errorf("before restore hook: %w", err)
 	}
-	manifest, err := s.Verify(dir)
+	manifest, err := s.verify(ctx, dir)
 	if err != nil {
 		return err
 	}
@@ -196,8 +251,21 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 			if err != nil {
 				return fmt.Errorf("restore %s: %w", resource.ID, err)
 			}
-			if err := RestoreDirectoryArchive(artifact, storage.Root); err != nil {
-				return fmt.Errorf("restore %s: %w", resource.ID, err)
+			if resource.Strategy == "object-archive" {
+				if err := RestoreObjectArchive(ctx, resource.Name, artifact); err != nil {
+					return fmt.Errorf("restore %s: %w", resource.ID, err)
+				}
+				restored = true
+				continue
+			}
+			var restoreErr error
+			if resource.Scoped {
+				restoreErr = restoreScopedDirectoryArchive(artifact, storage.Root, storage.Prefix, archiveRestoreLimits{entries: storageArchiveMaxEntries, bytes: storageArchiveMaxExpandedBytes})
+			} else {
+				restoreErr = RestoreDirectoryArchive(artifact, storage.Root)
+			}
+			if restoreErr != nil {
+				return fmt.Errorf("restore %s: %w", resource.ID, restoreErr)
 			}
 			restored = true
 			continue

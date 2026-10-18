@@ -17,15 +17,8 @@ func TestGenerateStorageFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 	t.Setenv("STORAGE_AVATARS_DRIVER", "local")
 	t.Setenv("STORAGE_AVATARS_ROOT", "storage/app/avatars")
 
-	repoRoot := repoRoot(t)
-	root, err := os.MkdirTemp(repoRoot, ".tmp-storage-generation-*")
-	if err != nil {
-		t.Fatalf("mkdir temp generation root: %v", err)
-	}
-	defer os.RemoveAll(root)
-	if err := os.MkdirAll(filepath.Join(root, "internal", "storages"), 0o755); err != nil {
-		t.Fatalf("mkdir storage package: %v", err)
-	}
+	root := mustTempGeneratedModuleRoot(t, "forj-storage-generation-*", filepath.Join("internal", "storages"))
+	writeFixtureGoMod(t, root, fixtureModuleSpec("example.com/storagegeneration", []string{"github.com/goforj/storage", "github.com/goforj/storage/driver/localstorage", "github.com/goforj/env/v2"}, nil, nil))
 
 	written, err := GenerateStorageFiles(root)
 	if err != nil {
@@ -263,18 +256,8 @@ func TestGeneratedAccessors(t *testing.T) {
 		t.Fatalf("write generated test: %v", err)
 	}
 
-	relRoot, err := filepath.Rel(repoRoot, root)
-	if err != nil {
-		t.Fatalf("relative temp path: %v", err)
-	}
-	pkgPath := "./" + filepath.ToSlash(filepath.Join(relRoot, "internal", "storages"))
-	cmd := exec.Command("go", "test", pkgPath, "-run", "TestGeneratedAccessors", "-count=1")
-	cmd.Dir = repoRoot
-	cmd.Env = append(os.Environ(), "GOCACHE=/tmp/gocache", "GOMODCACHE=/tmp/gomodcache")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("generated storage package test failed: %v\n%s", err, strings.TrimSpace(string(output)))
-	}
+	runFixtureGoModTidy(t, root, nil)
+	runFixtureGoTest(t, root, "./internal/storages", "TestGeneratedAccessors", nil)
 }
 
 func TestGenerateStorageFilesUsesSupportedDriverImports(t *testing.T) {

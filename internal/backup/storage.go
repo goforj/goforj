@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/goforj/storage/storagecore"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -25,14 +27,17 @@ type archiveRestoreLimits struct {
 }
 
 // ArchiveDirectory creates a zstd-compressed tar archive of a local storage directory.
-func ArchiveDirectory(source string, artifact string) (resultErr error) {
-	info, err := os.Stat(source)
+func ArchiveDirectory(source string, artifact string) error {
+	return archiveScopedDirectory(source, "", artifact)
+}
+
+// archiveScopedDirectory keeps prefix resolution and all file reads inside the configured storage root.
+func archiveScopedDirectory(source string, prefix string, artifact string) (resultErr error) {
+	rootDirectory, err := openStorageArchiveRoot(source, prefix, false)
 	if err != nil {
-		return fmt.Errorf("stat storage directory: %w", err)
+		return err
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("storage source %s is not a directory", source)
-	}
+	defer func() { resultErr = errors.Join(resultErr, rootDirectory.Close()) }()
 	if _, err := artifactPath(artifact); err != nil {
 		return err
 	}
@@ -53,24 +58,18 @@ func ArchiveDirectory(source string, artifact string) (resultErr error) {
 	defer recordClose("close storage compressor", zstdWriter.Close)
 	tarWriter := tar.NewWriter(zstdWriter)
 	defer recordClose("close storage archive", tarWriter.Close)
-	root := filepath.Clean(source)
-	rootDirectory, err := os.OpenRoot(root)
-	if err != nil {
-		return fmt.Errorf("open storage source root: %w", err)
-	}
-	defer recordClose("close storage source root", rootDirectory.Close)
-	err = filepath.Walk(root, func(path string, entry os.FileInfo, walkErr error) error {
+	err = fs.WalkDir(rootDirectory.FS(), ".", func(relative string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
-		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
 		}
 		if relative == "." {
 			return nil
 		}
-		header, err := tar.FileInfoHeader(entry, "")
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
 			return err
 		}
@@ -78,7 +77,7 @@ func ArchiveDirectory(source string, artifact string) (resultErr error) {
 		if err := tarWriter.WriteHeader(header); err != nil {
 			return err
 		}
-		if !entry.Mode().IsRegular() {
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 		input, err := rootDirectory.Open(relative)
@@ -88,7 +87,7 @@ func ArchiveDirectory(source string, artifact string) (resultErr error) {
 		_, copyErr := io.Copy(tarWriter, input)
 		closeErr := input.Close()
 		if closeErr != nil {
-			closeErr = fmt.Errorf("close storage source %s: %w", path, closeErr)
+			closeErr = fmt.Errorf("close storage source %s: %w", relative, closeErr)
 		}
 		return errors.Join(copyErr, closeErr)
 	})
@@ -108,6 +107,11 @@ func RestoreDirectoryArchive(artifact string, target string) error {
 
 // restoreDirectoryArchive extracts a local storage archive within explicit resource limits.
 func restoreDirectoryArchive(artifact string, target string, limits archiveRestoreLimits) error {
+	return restoreScopedDirectoryArchive(artifact, target, "", limits)
+}
+
+// restoreScopedDirectoryArchive resolves a normalized target prefix through the original root handle.
+func restoreScopedDirectoryArchive(artifact string, target string, prefix string, limits archiveRestoreLimits) error {
 	if _, err := safeArtifactPath(filepath.Dir(artifact), filepath.Base(artifact)); err != nil {
 		return err
 	}
@@ -132,10 +136,7 @@ func restoreDirectoryArchive(artifact string, target string, limits archiveResto
 	}
 	defer zstdReader.Close()
 	tarReader := tar.NewReader(zstdReader)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return err
-	}
-	targetDirectory, err := os.OpenRoot(root)
+	targetDirectory, err := openStorageArchiveRoot(root, prefix, true)
 	if err != nil {
 		return fmt.Errorf("open storage restore root: %w", err)
 	}
@@ -228,6 +229,10 @@ func safeExtractPath(root string, name string) (string, error) {
 	if strings.TrimSpace(name) == "" || filepath.IsAbs(name) {
 		return "", fmt.Errorf("invalid storage archive path %q", name)
 	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
 	path, err := filepath.Abs(filepath.Join(root, filepath.FromSlash(name)))
 	if err != nil {
 		return "", err
@@ -236,4 +241,40 @@ func safeExtractPath(root string, name string) (string, error) {
 		return "", fmt.Errorf("storage archive path escapes target: %s", name)
 	}
 	return path, nil
+}
+
+// openStorageArchiveRoot prevents a configured prefix or a concurrent symlink change from escaping storage.
+func openStorageArchiveRoot(root string, prefix string, create bool) (*os.Root, error) {
+	normalized, err := storagecore.NormalizePath(prefix)
+	if err != nil {
+		return nil, fmt.Errorf("invalid storage prefix: %w", err)
+	}
+	if create {
+		if err := os.MkdirAll(root, 0755); err != nil {
+			return nil, err
+		}
+	}
+	directory, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("open storage root: %w", err)
+	}
+	if normalized == "" {
+		return directory, nil
+	}
+	if create {
+		if err := directory.MkdirAll(filepath.FromSlash(normalized), 0755); err != nil {
+			directory.Close()
+			return nil, fmt.Errorf("create storage prefix: %w", err)
+		}
+	}
+	scoped, err := directory.OpenRoot(filepath.FromSlash(normalized))
+	closeErr := directory.Close()
+	if err != nil {
+		return nil, fmt.Errorf("open storage prefix: %w", err)
+	}
+	if closeErr != nil {
+		scoped.Close()
+		return nil, closeErr
+	}
+	return scoped, nil
 }
