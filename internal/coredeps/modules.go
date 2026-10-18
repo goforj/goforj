@@ -68,7 +68,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/storage/storagetest":               "v0.5.1",
 	"github.com/goforj/str":                               "v1.3.0",
 	"github.com/goforj/str/v2":                            "v2.0.1",
-	"github.com/goforj/web":                               "v0.6.3",
+	"github.com/goforj/web":                               "v0.6.4",
 	"github.com/goforj/wire":                              "v1.2.0",
 	"github.com/klauspost/compress":                       "v1.20.2",
 	"github.com/labstack/echo/v5":                         "v5.4.0",
