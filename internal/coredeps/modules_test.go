@@ -25,11 +25,17 @@ func TestSyncCoreLibrariesIncludesStr(t *testing.T) {
 // TestSyncCoreLibrariesIncludesBaseModules verifies generated Apps pin every always-rendered GoForj dependency explicitly.
 func TestSyncCoreLibrariesIncludesBaseModules(t *testing.T) {
 	modules := []string{
+		"charm.land/bubbles/v2",
+		"charm.land/bubbletea/v2",
+		"charm.land/lipgloss/v2",
+		"github.com/charmbracelet/x/cellbuf",
 		"github.com/goforj/console",
 		"github.com/goforj/metrics",
 		"github.com/goforj/httpx",
+		"github.com/klauspost/compress",
 		"github.com/goforj/godump",
 		"github.com/goforj/web",
+		"github.com/labstack/echo/v5",
 		"github.com/goforj/str/v2",
 		"github.com/goforj/scheduler/v2",
 		"github.com/goforj/env/v2",
@@ -103,36 +109,36 @@ func TestQualityReleaseVersionsArePinned(t *testing.T) {
 	}{
 		{module: "github.com/goforj/metrics", version: "v0.2.0"},
 		{module: "github.com/goforj/cache", version: "v0.4.0"},
-		{module: "github.com/goforj/cache/cachecore", version: "v0.4.0"},
-		{module: "github.com/goforj/cache/cachetest", version: "v0.4.0"},
-		{module: "github.com/goforj/cache/driver/dynamocache", version: "v0.4.0"},
-		{module: "github.com/goforj/cache/driver/memcachedcache", version: "v0.4.0"},
-		{module: "github.com/goforj/cache/driver/mysqlcache", version: "v0.4.0"},
-		{module: "github.com/goforj/cache/driver/natscache", version: "v0.4.0"},
-		{module: "github.com/goforj/cache/driver/postgrescache", version: "v0.4.0"},
-		{module: "github.com/goforj/cache/driver/rediscache", version: "v0.4.0"},
-		{module: "github.com/goforj/cache/driver/sqlcore", version: "v0.4.0"},
-		{module: "github.com/goforj/cache/driver/sqlitecache", version: "v0.4.0"},
+		{module: "github.com/goforj/cache/cachecore", version: "v0.4.2"},
+		{module: "github.com/goforj/cache/cachetest", version: "v0.4.2"},
+		{module: "github.com/goforj/cache/driver/dynamocache", version: "v0.4.2"},
+		{module: "github.com/goforj/cache/driver/memcachedcache", version: "v0.4.2"},
+		{module: "github.com/goforj/cache/driver/mysqlcache", version: "v0.4.2"},
+		{module: "github.com/goforj/cache/driver/natscache", version: "v0.4.2"},
+		{module: "github.com/goforj/cache/driver/postgrescache", version: "v0.4.2"},
+		{module: "github.com/goforj/cache/driver/rediscache", version: "v0.4.2"},
+		{module: "github.com/goforj/cache/driver/sqlcore", version: "v0.4.2"},
+		{module: "github.com/goforj/cache/driver/sqlitecache", version: "v0.4.2"},
 		{module: "github.com/goforj/console", version: "v0.2.0"},
 		{module: "github.com/goforj/mail", version: "v0.3.1"},
 		{module: "github.com/goforj/mail/mailses", version: "v0.3.1"},
 		{module: "github.com/goforj/execx", version: "v1.1.4"},
 		{module: "github.com/goforj/godump", version: "v1.9.1"},
 		{module: "github.com/goforj/httpx", version: "v1.1.0"},
-		{module: "github.com/goforj/web", version: "v0.6.2"},
+		{module: "github.com/goforj/web", version: "v0.6.4"},
 		{module: "github.com/goforj/scheduler/v2", version: "v2.1.4"},
 		{module: "github.com/goforj/null/v6", version: "v6.0.2"},
 		{module: "github.com/goforj/wire", version: "v1.2.0"},
-		{module: "github.com/goforj/events", version: "v0.2.0"},
-		{module: "github.com/goforj/events/eventscore", version: "v0.2.0"},
-		{module: "github.com/goforj/events/driver/gcppubsubevents", version: "v0.2.0"},
-		{module: "github.com/goforj/events/driver/kafkaevents", version: "v0.2.0"},
-		{module: "github.com/goforj/events/driver/natsevents", version: "v0.2.0"},
-		{module: "github.com/goforj/events/driver/natsjetstreamevents", version: "v0.2.0"},
-		{module: "github.com/goforj/events/driver/redisevents", version: "v0.2.0"},
-		{module: "github.com/goforj/events/driver/snsevents", version: "v0.2.0"},
-		{module: "github.com/goforj/events/eventsfake", version: "v0.2.0"},
-		{module: "github.com/goforj/events/eventstest", version: "v0.2.0"},
+		{module: "github.com/goforj/events", version: "v0.2.1"},
+		{module: "github.com/goforj/events/eventscore", version: "v0.2.1"},
+		{module: "github.com/goforj/events/driver/gcppubsubevents", version: "v0.2.1"},
+		{module: "github.com/goforj/events/driver/kafkaevents", version: "v0.2.1"},
+		{module: "github.com/goforj/events/driver/natsevents", version: "v0.2.1"},
+		{module: "github.com/goforj/events/driver/natsjetstreamevents", version: "v0.2.1"},
+		{module: "github.com/goforj/events/driver/redisevents", version: "v0.2.1"},
+		{module: "github.com/goforj/events/driver/snsevents", version: "v0.2.1"},
+		{module: "github.com/goforj/events/eventsfake", version: "v0.2.1"},
+		{module: "github.com/goforj/events/eventstest", version: "v0.2.1"},
 		{module: "github.com/goforj/env/v2", version: "v2.6.1"},
 		{module: "github.com/goforj/str", version: "v1.3.0"},
 		{module: "github.com/goforj/str/v2", version: "v2.0.1"},
@@ -145,18 +151,18 @@ func TestQualityReleaseVersionsArePinned(t *testing.T) {
 		{module: "github.com/goforj/queue/driver/sqlitequeue", version: "v0.2.1"},
 		{module: "github.com/goforj/queue/driver/sqlqueuecore", version: "v0.2.1"},
 		{module: "github.com/goforj/queue/driver/sqsqueue", version: "v0.2.1"},
-		{module: "github.com/goforj/storage", version: "v0.5.1-0.20261018063152-b403d13f1e70"},
-		{module: "github.com/goforj/storage/storagecore", version: "v0.5.1-0.20261018062947-24ec77d658d3"},
-		{module: "github.com/goforj/storage/storagetest", version: "v0.5.0"},
-		{module: "github.com/goforj/storage/driver/dropboxstorage", version: "v0.5.0"},
-		{module: "github.com/goforj/storage/driver/ftpstorage", version: "v0.5.0"},
-		{module: "github.com/goforj/storage/driver/gcsstorage", version: "v0.5.0"},
-		{module: "github.com/goforj/storage/driver/localstorage", version: "v0.5.0"},
-		{module: "github.com/goforj/storage/driver/memorystorage", version: "v0.5.0"},
-		{module: "github.com/goforj/storage/driver/rclonestorage", version: "v0.5.0"},
-		{module: "github.com/goforj/storage/driver/redisstorage", version: "v0.5.0"},
-		{module: "github.com/goforj/storage/driver/s3storage", version: "v0.5.1-0.20261018063152-b403d13f1e70"},
-		{module: "github.com/goforj/storage/driver/sftpstorage", version: "v0.5.0"},
+		{module: "github.com/goforj/storage", version: "v0.5.2-0.20261018070033-d7c4338e0d01"},
+		{module: "github.com/goforj/storage/storagecore", version: "v0.5.2-0.20261018064156-39419460440b"},
+		{module: "github.com/goforj/storage/storagetest", version: "v0.5.1"},
+		{module: "github.com/goforj/storage/driver/dropboxstorage", version: "v0.5.1"},
+		{module: "github.com/goforj/storage/driver/ftpstorage", version: "v0.5.1"},
+		{module: "github.com/goforj/storage/driver/gcsstorage", version: "v0.5.1"},
+		{module: "github.com/goforj/storage/driver/localstorage", version: "v0.5.1"},
+		{module: "github.com/goforj/storage/driver/memorystorage", version: "v0.5.1"},
+		{module: "github.com/goforj/storage/driver/rclonestorage", version: "v0.5.1"},
+		{module: "github.com/goforj/storage/driver/redisstorage", version: "v0.5.1"},
+		{module: "github.com/goforj/storage/driver/s3storage", version: "v0.5.2-0.20261018070033-d7c4338e0d01"},
+		{module: "github.com/goforj/storage/driver/sftpstorage", version: "v0.5.1"},
 		{module: "github.com/goforj/crypt", version: "v1.2.0"},
 	}
 
@@ -189,5 +195,40 @@ func assertModulesGated(t *testing.T, disabledComponents, enabledComponents proj
 	}
 	if !slices.Equal(enabled, want) {
 		t.Fatalf("enabled modules = %#v, want %#v", enabled, want)
+	}
+}
+
+// TestSyncCoreLibrariesGatesWebMinimums keeps CLI-only projects free of Web indexer requirements.
+func TestSyncCoreLibrariesGatesWebMinimums(t *testing.T) {
+	for _, components := range []project.Components{{WebAPI: true}, {WebUI: true}} {
+		assertModulesGated(t, project.Components{}, components, webRendererSyncModules)
+	}
+}
+
+// TestUsesMinimumVersion keeps ecosystem security floors separate from exact framework release pins.
+func TestUsesMinimumVersion(t *testing.T) {
+	for _, module := range []string{"github.com/klauspost/compress", "github.com/labstack/echo/v5", "github.com/rabbitmq/amqp091-go", "golang.org/x/net", "golang.org/x/text", "golang.org/x/tools", "github.com/rclone/rclone", "go.opentelemetry.io/otel/sdk", "go.opentelemetry.io/otel/sdk/metric"} {
+		if !UsesMinimumVersion(module) {
+			t.Fatalf("%s must retain newer consumer versions", module)
+		}
+		if _, ok := VersionFor(module); !ok {
+			t.Fatalf("%s has no minimum version", module)
+		}
+	}
+	for _, module := range []string{"github.com/goforj/web", "example.com/unknown"} {
+		if UsesMinimumVersion(module) {
+			t.Fatalf("%s must not use ecosystem minimum semantics", module)
+		}
+	}
+}
+
+// TestSyncCoreLibrariesDeduplicatesSecurityMinimums prevents shared capabilities from producing competing selections.
+func TestSyncCoreLibrariesDeduplicatesSecurityMinimums(t *testing.T) {
+	seen := map[string]bool{}
+	for _, spec := range SyncCoreLibraries(project.Components{WebAPI: true, Cache: true, Jobs: true, Events: true, Storage: true}) {
+		if seen[spec] {
+			t.Fatalf("duplicate module selection %s", spec)
+		}
+		seen[spec] = true
 	}
 }

@@ -11,10 +11,18 @@ imports_file="$tmp_dir/imports.txt"
 modules_file="$tmp_dir/modules.txt"
 go_files_file="$tmp_dir/go-template-files.txt"
 raw_imports_file="$tmp_dir/raw-imports.txt"
+pinned_versions_file="$tmp_dir/pinned-versions.mod"
+generated_go_mod="$tmp_dir/go.mod"
+
+if [[ -f "$out_dir/go.mod" ]]; then
+  cp "$out_dir/go.mod" "$pinned_versions_file"
+else
+  : > "$pinned_versions_file"
+fi
 
 module_for_import() {
   case "$1" in
-    github.com/charmbracelet/lipgloss/*) echo "github.com/charmbracelet/lipgloss" ;;
+    charm.land/lipgloss/v2/*) echo "charm.land/lipgloss/v2" ;;
     github.com/goforj/events/eventscore) echo "github.com/goforj/events/eventscore" ;;
     github.com/goforj/events/eventscore/*) echo "github.com/goforj/events/eventscore" ;;
     github.com/goforj/events/driver/gcppubsubevents) echo "github.com/goforj/events/driver/gcppubsubevents" ;;
@@ -76,8 +84,14 @@ inferred_module_for_import() {
     gopkg.in/*)
       echo "$import_path" | awk -F/ '{ print $1 "/" $2 }'
       ;;
+    charm.land/*/v[0-9]*)
+      echo "$import_path" | awk -F/ '{ print $1 "/" $2 "/" $3 }'
+      ;;
     github.com/*/*/v[0-9]*|golang.org/x/*/v[0-9]*)
       echo "$import_path" | awk -F/ '{ print $1 "/" $2 "/" $3 "/" $4 }'
+      ;;
+    charm.land/*/v[0-9]*/*)
+      echo "$import_path" | awk -F/ '{ print $1 "/" $2 "/" $3 }'
       ;;
     github.com/*/*/v[0-9]*/*|golang.org/x/*/v[0-9]*/*)
       echo "$import_path" | awk -F/ '{ print $1 "/" $2 "/" $3 "/" $4 }'
@@ -100,19 +114,42 @@ root_version_for_module() {
   ' "$repo_root/go.mod"
 }
 
+generated_version_for_module() {
+  local module="$1"
+  local version
+  version="$(awk -v module="$module" '
+    $1 == module && $2 ~ /^v/ {
+      print $2
+      exit
+    }
+  ' "$pinned_versions_file")"
+  if [[ -n "$version" ]]; then
+    echo "$version"
+    return 0
+  fi
+  git show HEAD:tools/renderwarm/go.mod 2>/dev/null \
+    | awk -v module="$module" '
+        $1 == module && $2 ~ /^v/ {
+          print $2
+          exit
+        }
+      '
+}
+
 override_version_for_module() {
   case "$1" in
+    github.com/charmbracelet/x/cellbuf) echo "v0.0.15" ;;
     github.com/goforj/cache) echo "v0.4.0" ;;
-    github.com/goforj/cache/cachecore) echo "v0.4.0" ;;
-    github.com/goforj/cache/driver/rediscache) echo "v0.4.0" ;;
-    github.com/goforj/events) echo "v0.2.0" ;;
-    github.com/goforj/events/eventscore) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/gcppubsubevents) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/kafkaevents) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/natsevents) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/natsjetstreamevents) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/redisevents) echo "v0.2.0" ;;
-    github.com/goforj/events/driver/snsevents) echo "v0.2.0" ;;
+    github.com/goforj/cache/cachecore) echo "v0.4.2" ;;
+    github.com/goforj/cache/driver/rediscache) echo "v0.4.2" ;;
+    github.com/goforj/events) echo "v0.2.1" ;;
+    github.com/goforj/events/eventscore) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/gcppubsubevents) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/kafkaevents) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/natsevents) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/natsjetstreamevents) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/redisevents) echo "v0.2.1" ;;
+    github.com/goforj/events/driver/snsevents) echo "v0.2.1" ;;
     github.com/goforj/godump) echo "v1.9.1" ;;
     github.com/goforj/httpx) echo "v1.1.0" ;;
     github.com/goforj/mail) echo "v0.3.1" ;;
@@ -121,13 +158,14 @@ override_version_for_module() {
     github.com/goforj/null/v6) echo "v6.0.2" ;;
     github.com/goforj/queue) echo "v0.2.1" ;;
     github.com/goforj/scheduler/v2) echo "v2.1.4" ;;
-    github.com/goforj/web) echo "v0.6.2" ;;
-    github.com/klauspost/compress) echo "v1.18.4" ;;
-    github.com/labstack/echo/v4) echo "v4.15.1" ;;
+    github.com/goforj/web) echo "v0.6.4" ;;
+    github.com/klauspost/compress) echo "v1.20.2" ;;
+    github.com/labstack/echo/v4) echo "v4.16.0" ;;
+    github.com/labstack/echo/v5) echo "v5.4.0" ;;
     github.com/redis/go-redis/v9) echo "v9.17.2" ;;
     github.com/shirou/gopsutil/v4) echo "v4.26.2" ;;
-    golang.org/x/net) echo "v0.48.0" ;;
-    golang.org/x/tools) echo "v0.38.0" ;;
+    golang.org/x/net) echo "v0.61.0" ;;
+    golang.org/x/tools) echo "v0.52.0" ;;
     gorm.io/driver/mysql) echo "v1.6.0" ;;
     gorm.io/driver/postgres) echo "v1.6.0" ;;
     *)
@@ -149,12 +187,12 @@ version_for_module() {
     echo "$version"
     return 0
   fi
-  latest_version_for_module "$module"
-}
-
-latest_version_for_module() {
-  local module="$1"
-  GOWORK=off go list -m -f '{{.Version}}' "${module}@latest" 2>/dev/null
+  version="$(generated_version_for_module "$module")"
+  if [[ -n "$version" ]]; then
+    echo "$version"
+    return 0
+  fi
+  return 1
 }
 
 cd "$repo_root"
@@ -185,17 +223,17 @@ while IFS= read -r path; do
       /^[[:space:]]*import[[:space:]]+/ {
         print
       }
-    ' "$path" | grep -hEo '"(github\.com/[^"]+|golang\.org/x/[^"]+|gorm\.io/[^"]+|gopkg\.in/[^"]+)"' >> "$raw_imports_file" || true
+    ' "$path" | grep -hEo '"(charm\.land/[^"]+|github\.com/[^"]+|golang\.org/x/[^"]+|gorm\.io/[^"]+|gopkg\.in/[^"]+)"' >> "$raw_imports_file" || true
     continue
   fi
-  grep -hEo '"(github\.com/[^"]+|golang\.org/x/[^"]+|gorm\.io/[^"]+|gopkg\.in/[^"]+)"' "$path" >> "$raw_imports_file" || true
+  grep -hEo '"(charm\.land/[^"]+|github\.com/[^"]+|golang\.org/x/[^"]+|gorm\.io/[^"]+|gopkg\.in/[^"]+)"' "$path" >> "$raw_imports_file" || true
 done < "$go_files_file"
 
 {
   sed 's/^"//' "$raw_imports_file" \
     | sed 's/"$//' \
     | grep -Ev '^$' \
-    | grep -E '^(github\.com|golang\.org/x|gorm\.io|gopkg\.in)/[A-Za-z0-9._/~+-]+(/[A-Za-z0-9._/~+-]+)*$' \
+    | grep -E '^(charm\.land|github\.com|golang\.org/x|gorm\.io|gopkg\.in)/[A-Za-z0-9._/~+-]+(/[A-Za-z0-9._/~+-]+)*$' \
     | grep -Ev '^github\.com/goforj/goforj(/|$)'
   # Scheduler's module graph otherwise seeds the older driver used only by its examples.
   echo "github.com/goforj/cache/driver/rediscache"
@@ -214,6 +252,17 @@ fi
   done < "$imports_file"
   # httpx v1 selects an older godump, so warm builds pin the release validated by the host module.
   echo "github.com/goforj/godump"
+  # Lip Gloss v1 remains in generated framework graphs and needs the cell buffer compatible with ANSI v0.11.
+  echo "github.com/charmbracelet/x/cellbuf"
+  # Template dependencies can otherwise select transitive releases with known archive and TLS defects.
+  echo "filippo.io/edwards25519"
+  echo "github.com/jackc/pgx/v5"
+  echo "github.com/labstack/echo/v5"
+  echo "github.com/imroc/req/v3"
+  echo "github.com/moby/go-archive"
+  echo "github.com/quic-go/quic-go"
+  echo "github.com/refraction-networking/utls"
+  echo "golang.org/x/mod"
 } | sort -u > "$modules_file"
 
 mkdir -p "$out_dir"
@@ -235,7 +284,8 @@ mkdir -p "$out_dir"
     printf "\t%s %s\n" "$module" "$version"
   done < "$modules_file"
   echo ")"
-} > "$out_dir/go.mod"
+} > "$generated_go_mod"
+mv "$generated_go_mod" "$out_dir/go.mod"
 
 {
   echo "// Code generated by scripts/generate-renderwarm.sh; DO NOT EDIT."
@@ -250,5 +300,12 @@ mkdir -p "$out_dir"
   echo
   echo "func main() {}"
 } > "$out_dir/main.go"
+
+# The checked-in module must be directly consumable by read-only security and
+# inventory tools, not only by the render cache job that previously tidied it.
+(
+  cd "$out_dir"
+  GOWORK=off go mod tidy
+)
 
 echo "generated tools/renderwarm for $(wc -l < "$imports_file" | tr -d ' ') imports"

@@ -1,0 +1,103 @@
+version: 2
+# Minor and patch releases move together within each dependency surface so one
+# monthly refresh produces reviewable batches without hiding major migrations.
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - /
+      - /integration
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
+      monthly-go-updates:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+      # Newer Cache roots require Go 1.27; core and drivers remain independently updatable.
+      - dependency-name: github.com/goforj/cache
+        versions: [">=0.4.1"]
+      # Kong v1.16.1 changes passthrough parsing used by GoForj commands.
+      - dependency-name: github.com/alecthomas/kong
+        versions: [1.16.1]
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /templates/demo/frontend
+      - /templates/internal/lighthouse/ui
+      - /templates/starter-kits/react/frontend
+      - /templates/starter-kits/templ-htmx/frontend
+      - /templates/starter-kits/vue/frontend
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
+      monthly-frontend-updates:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
+      actions-compatible:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+  - package-ecosystem: docker
+    directory: /containers/test-build
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
+      test-build-compatible:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+  - package-ecosystem: docker
+    directory: /templates/containers/mariadb
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    groups:
+      security-fixes:
+        applies-to: security-updates
+        patterns: ["*"]
+      mariadb-compatible:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]

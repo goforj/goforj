@@ -4,9 +4,42 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
+
+// TestWriteManifestTightensExistingPermissions verifies overwrites do not retain permissive legacy modes.
+func TestWriteManifestTightensExistingPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix permission bits")
+	}
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte("legacy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteManifest(dir, Manifest{Resources: []Resource{{ID: "db.default", Artifact: "artifact"}}}); err != nil {
+		t.Fatal(err)
+	}
+	directoryInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := directoryInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("backup directory mode = %o, want 700", got)
+	}
+	fileInfo, err := os.Stat(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("manifest mode = %o, want 600", got)
+	}
+}
 
 func TestManifestRoundTripAndChecksum(t *testing.T) {
 	dir := t.TempDir()

@@ -1,12 +1,19 @@
 name: watcher soak
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "23 6 * * *"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.26"
 
 jobs:
   watcher-soak:
@@ -15,10 +22,10 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -39,7 +46,7 @@ jobs:
         run: go test ./internal/forj -run '^$' -bench '^BenchmarkDevWatcherBuildGate' -benchmem -count=10 | tee watcher-benchmarks.txt
 
       - name: retain benchmark history
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: watcher-benchmarks-${{ github.run_id }}
           path: watcher-benchmarks.txt

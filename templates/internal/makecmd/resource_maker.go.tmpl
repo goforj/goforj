@@ -5,9 +5,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"golang.org/x/term"
 )
 
@@ -221,7 +221,7 @@ func (m resourceWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Width > 0 {
 			m.termWidth = msg.Width
 		}
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			m.cancelled = true
@@ -265,16 +265,16 @@ func (m resourceWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View renders the wizard.
-func (m resourceWizardModel) View() string {
+func (m resourceWizardModel) View() tea.View {
 	if m.done || m.cancelled {
-		return ""
+		return tea.NewView("")
 	}
 	view := strings.Join(m.panels(), "\n")
 	if strings.TrimSpace(m.errorMessage) != "" {
 		view += "\n" + resourceErrorStyle.Render("x "+m.errorMessage)
 	}
 	view += "\n" + resourceMutedStyle.Render("Enter to continue · Esc to cancel")
-	return view + "\n"
+	return tea.NewView(view + "\n")
 }
 
 // configureInput prepares the text input for the current field.

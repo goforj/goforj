@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://goforj.dev">
-    <img src="https://raw.githubusercontent.com/goforj/docs/e30f1e86e3aafb17c180bd1db33d688e10ca3e44/docs/public/twitter-banner.png" width="100%" alt="GoForj - The composable stack for building with Go">
+    <img src="https://raw.githubusercontent.com/goforj/docs/e63d7a15a5c6e4d7b4a2b930d10913433d90da33/docs/public/twitter-banner.png" width="100%" alt="GoForj: The composable stack for building with Go, illustrated by the Foundry workbench">
   </a>
 </p>
 

@@ -76,7 +76,7 @@ func (*devLifecycleRecordingWriter) FailLifecycleTransaction(string, time.Durati
 func TestDevRestartTransactionStreamsSuccessfulInfrastructureOutput(t *testing.T) {
 	transaction := newDevRestartTransaction([]string{"Build App", "Build app SPA frontend", "Run App"}, false)
 	buffer := &devBubbleLifecycleTransaction{transaction: transaction}
-	output := []string{"Watchers stopping", "HTTP server shut down", "Starting Run App"}
+	output := []string{"Watchers stopping", "HTTP server shut down", "Starting App"}
 	if buffer.retain(output) {
 		t.Fatal("restart transaction unexpectedly retained lifecycle output")
 	}
@@ -94,7 +94,7 @@ func TestDevRestartTransactionStreamsSuccessfulInfrastructureOutput(t *testing.T
 		t.Fatalf("restart success lines = %#v, want grouped lifecycle output", lines)
 	}
 	joined := stripANSI(strings.Join(lines, "\n"))
-	for _, want := range []string{"┏ App restart", "Build App", "SPA", "Run App", "Watchers stopping", "HTTP server shut down", "Starting Run App", "┗", "Restarted", "1.03s"} {
+	for _, want := range []string{"┏ App restart", "Build App", "SPA", "Run App", "Watchers stopping", "HTTP server shut down", "Starting App", "┗", "Restarted", "1.03s"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("restart output missing %q:\n%s", want, joined)
 		}
@@ -184,7 +184,6 @@ func TestCompactLifecycleTransactionOmitsTriggerNarration(t *testing.T) {
 		nil,
 		"stdout",
 		"Run App",
-		"./bin/app",
 		project.DefaultAppName,
 		0,
 		false,
@@ -239,7 +238,7 @@ func TestCompactLifecycleTransactionOmitsRetainedTriggerNarration(t *testing.T) 
 		t.Fatalf("write detailed retained trigger marker: %v", err)
 	}
 	for label, output := range map[string]string{"output": writer.String(), "tail": tail.String()} {
-		if !strings.Contains(output, "Starting Run App") {
+		if !strings.Contains(output, "App          Starting") {
 			t.Fatalf("detailed lifecycle omitted trigger narration from %s: %q", label, output)
 		}
 	}
@@ -326,7 +325,7 @@ func TestDevLifecycleDetailedOutputDoesNotRetainOutput(t *testing.T) {
 	}
 	transaction := newDevRestartTransaction([]string{"Run App"}, true)
 	buffer := &devBubbleLifecycleTransaction{transaction: transaction}
-	if buffer.retain([]string{"Starting Run App"}) {
+	if buffer.retain([]string{"Starting App"}) {
 		t.Fatal("detailed transaction unexpectedly retained live output")
 	}
 
@@ -369,7 +368,7 @@ func TestDevwatchWriterOmitsDecorativeSeparatorsForTransactionOutput(t *testing.
 	var out bytes.Buffer
 	lifecycle := newDevwatchLifecycleState(1, []string{"Run App"})
 	lifecycle.separators = false
-	writer := newDevwatchWriter(&out, nil, "stdout", "Run App", "./bin/app", lifecycle)
+	writer := newDevwatchWriter(&out, nil, "stdout", "Run App", lifecycle)
 	if _, err := writer.Write([]byte(watcherTriggerMarker + "\n")); err != nil {
 		t.Fatalf("write trigger: %v", err)
 	}
@@ -390,7 +389,6 @@ func TestDevwatchWriterReportsTriggerAfterPersistingItsOutputBatch(t *testing.T)
 		nil,
 		"stdout",
 		"Run App",
-		"./bin/app",
 		"app",
 		0,
 		false,
@@ -400,7 +398,7 @@ func TestDevwatchWriterReportsTriggerAfterPersistingItsOutputBatch(t *testing.T)
 	if _, err := writer.Write([]byte(watcherTriggerMarker + "\nHTTP server started\n")); err != nil {
 		t.Fatalf("write startup batch: %v", err)
 	}
-	if !strings.Contains(seen, "Starting Run App") || !strings.Contains(seen, "HTTP server started") {
+	if !strings.Contains(seen, "App          Starting") || !strings.Contains(seen, "HTTP server started") {
 		t.Fatalf("trigger callback overtook persisted output: %q", seen)
 	}
 }

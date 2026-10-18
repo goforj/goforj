@@ -1,5 +1,8 @@
 name: go test
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -11,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.26"
   GENERATOR_DOCKER_CACHE_VERSION: "v1"
   GOPRIVATE: "github.com/goforj/*"
   GONOPROXY: "none"
@@ -25,10 +28,10 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -46,18 +49,18 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
         id: setup-go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
       # The full suite owns this key so faster jobs cannot publish a partial immutable cache first.
       - name: cache go test dependencies and builds
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/go/pkg/mod
@@ -83,6 +86,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - name: macos
@@ -92,10 +96,10 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -121,10 +125,10 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -175,6 +179,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 6
       matrix:
         shard: [0, 1, 2, 3, 4, 5]
     env:
@@ -187,22 +192,24 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
-        uses: actions/setup-go@v5
+        id: setup-go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
       - name: restore go cache (renders)
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'internal/coredeps/modules.go', 'scripts/generate-renderwarm.sh', 'templates/**/*.go.tmpl', 'templates/embed.go', 'tools/renderwarm/go.mod', 'tools/renderwarm/main.go') }}
+          key: go-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-${{ env.WIRE_INSTALL_TARGET }}-${{ hashFiles('go.mod', 'go.sum', 'internal/coredeps/modules.go', 'scripts/generate-renderwarm.sh', 'templates/**/*.go.tmpl', 'templates/embed.go', 'tools/renderwarm/go.mod', 'tools/renderwarm/go.sum', 'tools/renderwarm/main.go') }}
           restore-keys: |
+            go-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-${{ env.WIRE_INSTALL_TARGET }}-
             go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
       - name: install wire
@@ -218,27 +225,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
-        uses: actions/setup-go@v5
+        id: setup-go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
       - name: cache go modules/build (renders seed)
-        uses: actions/cache@v4
+        id: render-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
-          key: go-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum', 'internal/coredeps/modules.go', 'scripts/generate-renderwarm.sh', 'templates/**/*.go.tmpl', 'templates/embed.go', 'tools/renderwarm/go.mod', 'tools/renderwarm/main.go') }}
+          key: go-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-${{ env.WIRE_INSTALL_TARGET }}-${{ hashFiles('go.mod', 'go.sum', 'internal/coredeps/modules.go', 'scripts/generate-renderwarm.sh', 'templates/**/*.go.tmpl', 'templates/embed.go', 'tools/renderwarm/go.mod', 'tools/renderwarm/go.sum', 'tools/renderwarm/main.go') }}
           restore-keys: |
+            go-${{ runner.os }}-${{ steps.setup-go.outputs.go-version }}-${{ env.WIRE_INSTALL_TARGET }}-
             go-${{ runner.os }}-${{ env.GO_VERSION }}-
 
-      - name: seed go caches
+      - name: verify renderwarm generation
         run: |
           bash scripts/generate-renderwarm.sh
+          git diff --exit-code -- tools/renderwarm/go.mod tools/renderwarm/go.sum tools/renderwarm/main.go
+
+      # Exact cache hits are immutable, so rebuilding them cannot help the shards.
+      - name: seed go caches
+        if: steps.render-cache.outputs.cache-hit != 'true'
+        run: |
           go mod download
           go install "$WIRE_INSTALL_TARGET"
           go install ./cmd/forj
@@ -252,56 +268,21 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
+      max-parallel: 5
       matrix:
         include:
-          - name: framework 1/24
-            args: framework --shard=1/24
-          - name: framework 2/24
-            args: framework --shard=2/24
-          - name: framework 3/24
-            args: framework --shard=3/24
-          - name: framework 4/24
-            args: framework --shard=4/24
-          - name: framework 5/24
-            args: framework --shard=5/24
-          - name: framework 6/24
-            args: framework --shard=6/24
-          - name: framework 7/24
-            args: framework --shard=7/24
-          - name: framework 8/24
-            args: framework --shard=8/24
-          - name: framework 9/24
-            args: framework --shard=9/24
-          - name: framework 10/24
-            args: framework --shard=10/24
-          - name: framework 11/24
-            args: framework --shard=11/24
-          - name: framework 12/24
-            args: framework --shard=12/24
-          - name: framework 13/24
-            args: framework --shard=13/24
-          - name: framework 14/24
-            args: framework --shard=14/24
-          - name: framework 15/24
-            args: framework --shard=15/24
-          - name: framework 16/24
-            args: framework --shard=16/24
-          - name: framework 17/24
-            args: framework --shard=17/24
-          - name: framework 18/24
-            args: framework --shard=18/24
-          - name: framework 19/24
-            args: framework --shard=19/24
-          - name: framework 20/24
-            args: framework --shard=20/24
-          - name: framework 21/24
-            args: framework --shard=21/24
-          - name: framework 22/24
-            args: framework --shard=22/24
-          - name: framework 23/24
-            args: framework --shard=23/24
-          - name: framework 24/24
-            args: framework --shard=24/24
+          - name: framework 1/6
+            args: framework --shard=1/6
+          - name: framework 2/6
+            args: framework --shard=2/6
+          - name: framework 3/6
+            args: framework --shard=3/6
+          - name: framework 4/6
+            args: framework --shard=4/6
+          - name: framework 5/6
+            args: framework --shard=5/6
+          - name: framework 6/6
+            args: framework --shard=6/6
           - name: multi-app
             args: framework --framework-profile=multiapp
           - name: rendered sqlite
@@ -315,10 +296,10 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -364,10 +345,10 @@ jobs:
       CLICOLOR_FORCE: "1"
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -401,10 +382,10 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -461,10 +442,10 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -473,7 +454,7 @@ jobs:
             internal/coredeps/modules.go
 
       - name: set up node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -543,16 +524,16 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: set up go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
       - name: restore generator integration go caches
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ env.GOCACHE }}
@@ -566,7 +547,7 @@ jobs:
 
       - name: restore docker image cache
         id: generator-docker-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/generator-docker-images
           key: generator-docker-${{ runner.os }}-${{ env.GENERATOR_DOCKER_CACHE_VERSION }}-${{ hashFiles('.github/generator-integration-images.txt') }}

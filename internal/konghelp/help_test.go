@@ -131,6 +131,7 @@ func TestMaintainerHelpEnabledFromArgs(t *testing.T) {
 		{name: "dev flag explicit true", args: []string{"forj", "--dev=true"}, want: true},
 		{name: "x alias", args: []string{"forj", "--x"}, want: true},
 		{name: "x alias explicit true", args: []string{"forj", "--x=true"}, want: true},
+		{name: "x short alias", args: []string{"forj", "-x"}, want: true},
 	}
 
 	for _, tc := range cases {

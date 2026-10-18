@@ -421,6 +421,9 @@ func runEvaluationComparisonsWithProfilesWorkers(ctx context.Context, invocation
 	}
 	workers = effectiveEvaluationWorkers(workers, len(jobs))
 	invocation.PairWorkers = workers
+	if err := validateEvaluationFileCreationMode(); err != nil {
+		return err
+	}
 	if err := ensureEvaluationDiskCapacity(workers); err != nil {
 		return err
 	}
@@ -458,6 +461,39 @@ func runEvaluationComparisonsWithProfilesWorkers(ctx context.Context, invocation
 // effectiveEvaluationWorkers prevents resource planning from charging for workers that have no job to execute.
 func effectiveEvaluationWorkers(requested, jobs int) int {
 	return min(requested, jobs)
+}
+
+// validateEvaluationFileCreationMode prevents the invoking shell from changing candidate permissions and therefore the measured diff.
+func validateEvaluationFileCreationMode() error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	directory, err := os.MkdirTemp("", "goforj-evaluation-mode-*")
+	if err != nil {
+		return fmt.Errorf("create evaluation file-mode probe directory: %w", err)
+	}
+	defer os.RemoveAll(directory)
+	path := filepath.Join(directory, "probe")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
+	if err != nil {
+		return fmt.Errorf("create evaluation file-mode probe: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close evaluation file-mode probe: %w", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("inspect evaluation file-mode probe: %w", err)
+	}
+	return validateObservedEvaluationFileMode(info.Mode().Perm())
+}
+
+// validateObservedEvaluationFileMode requires the conventional umask used by generated Project fixtures and framework commands.
+func validateObservedEvaluationFileMode(mode os.FileMode) error {
+	if mode == 0o644 {
+		return nil
+	}
+	return fmt.Errorf("evaluation requires an effective umask of 022 so generated file permissions remain reproducible; observed mode %04o (run `umask 022` before retrying)", mode)
 }
 
 // validateEvaluationIDs resolves every promoted contract before capacity checks or command-owned filesystem mutation.

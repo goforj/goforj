@@ -92,6 +92,41 @@ func TestPrimitiveTemplateProjection(t *testing.T) {
 	t.Run("dashboard conditionals", testPrimitiveDashboardProjection)
 }
 
+// TestMariaDBTwelveContainerContract keeps generated databases on the reviewed image and safe persisted-volume upgrade path.
+func TestMariaDBTwelveContainerContract(t *testing.T) {
+	dockerfile, err := templatesFS.ReadFile("containers/mariadb/Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "FROM mariadb:12.3.3@sha256:dd9b303aed4f4890ed09f766d8ca9ddfd176c0c6f6267feff53b3192ec65a979"; !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("MariaDB Dockerfile missing %q\n%s", want, dockerfile)
+	}
+
+	compose, err := templatesFS.ReadFile("docker-compose.yml.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"MARIADB_AUTO_UPGRADE=1",
+		`test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]`,
+	} {
+		if !strings.Contains(string(compose), want) {
+			t.Fatalf("MariaDB Compose template missing %q", want)
+		}
+	}
+
+	config, err := templatesFS.ReadFile("containers/mariadb/my.cnf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(config), "\nkey_buffer           =") {
+		t.Fatalf("MariaDB config retains ambiguous key_buffer prefix\n%s", config)
+	}
+	if !strings.Contains(string(config), "key_buffer_size") {
+		t.Fatalf("MariaDB config missing key_buffer_size\n%s", config)
+	}
+}
+
 // TestSharedMetricsFollowProjectAndAppProjection verifies named-App-only capabilities still compile while runtime flags remain App-local.
 func TestSharedMetricsFollowProjectAndAppProjection(t *testing.T) {
 	workspace := currentProjectRenderWorkspace(t)
@@ -181,6 +216,312 @@ func TestStorageTemplatesExposeBackendDeleteCapabilities(t *testing.T) {
 		}
 		assertTemplateMarker(t, check.path, string(content), check.token, true)
 	}
+}
+
+// TestReactStarterUsesTypeScriptSevenToolchain keeps the starter compiler and configuration on the reviewed native generation.
+func TestReactStarterUsesTypeScriptSevenToolchain(t *testing.T) {
+	const packagePath = "starter-kits/react/frontend/package.json"
+	packageJSON, err := templatesFS.ReadFile(packagePath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", packagePath, err)
+	}
+	var manifest struct {
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(packageJSON, &manifest); err != nil {
+		t.Fatalf("decode template %s: %v", packagePath, err)
+	}
+	if got, want := manifest.DevDependencies["typescript"], "~7.0.2"; got != want {
+		t.Fatalf("TypeScript dependency = %q, want %q", got, want)
+	}
+
+	const lockPath = "starter-kits/react/frontend/package-lock.json"
+	packageLock, err := templatesFS.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", lockPath, err)
+	}
+	var lock struct {
+		Packages map[string]struct {
+			Version   string `json:"version"`
+			Integrity string `json:"integrity"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(packageLock, &lock); err != nil {
+		t.Fatalf("decode template %s: %v", lockPath, err)
+	}
+	typescript := lock.Packages["node_modules/typescript"]
+	if got, want := typescript.Version, "7.0.2"; got != want {
+		t.Fatalf("locked TypeScript version = %q, want %q", got, want)
+	}
+	if got, want := typescript.Integrity, "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA=="; got != want {
+		t.Fatalf("locked TypeScript integrity = %q, want %q", got, want)
+	}
+
+	const configPath = "starter-kits/react/frontend/tsconfig.json"
+	config, err := templatesFS.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", configPath, err)
+	}
+	for _, marker := range []string{`"strict": true`, `"@/*": ["./src/*"]`} {
+		assertTemplateMarker(t, configPath, string(config), marker, true)
+	}
+	assertTemplateMarker(t, configPath, string(config), `"baseUrl"`, false)
+}
+
+// TestTemplHTMXStarterUsesTypeScriptSevenToolchain keeps the starter compiler and configuration on the reviewed native generation.
+func TestTemplHTMXStarterUsesTypeScriptSevenToolchain(t *testing.T) {
+	const packagePath = "starter-kits/templ-htmx/frontend/package.json"
+	packageJSON, err := templatesFS.ReadFile(packagePath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", packagePath, err)
+	}
+	var manifest struct {
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(packageJSON, &manifest); err != nil {
+		t.Fatalf("decode template %s: %v", packagePath, err)
+	}
+	if got, want := manifest.DevDependencies["typescript"], "~7.0.2"; got != want {
+		t.Fatalf("TypeScript dependency = %q, want %q", got, want)
+	}
+
+	const lockPath = "starter-kits/templ-htmx/frontend/package-lock.json"
+	packageLock, err := templatesFS.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", lockPath, err)
+	}
+	var lock struct {
+		Packages map[string]struct {
+			Version   string `json:"version"`
+			Integrity string `json:"integrity"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(packageLock, &lock); err != nil {
+		t.Fatalf("decode template %s: %v", lockPath, err)
+	}
+	typescript := lock.Packages["node_modules/typescript"]
+	if got, want := typescript.Version, "7.0.2"; got != want {
+		t.Fatalf("locked TypeScript version = %q, want %q", got, want)
+	}
+	if got, want := typescript.Integrity, "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA=="; got != want {
+		t.Fatalf("locked TypeScript integrity = %q, want %q", got, want)
+	}
+
+	const configPath = "starter-kits/templ-htmx/frontend/tsconfig.json"
+	config, err := templatesFS.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", configPath, err)
+	}
+	for _, marker := range []string{`"types": ["vite/client"]`, `"strict": true`, `"module": "ESNext"`, `"moduleResolution": "Bundler"`} {
+		assertTemplateMarker(t, configPath, string(config), marker, true)
+	}
+	assertTemplateMarker(t, configPath, string(config), `"baseUrl"`, false)
+}
+
+// TestDemoFrontendUsesTypeScriptSevenCompatibilityToolchain keeps native checking and Vue compiler API consumers on their supported runtimes.
+func TestDemoFrontendUsesTypeScriptSevenCompatibilityToolchain(t *testing.T) {
+	const packagePath = "demo/frontend/package.json"
+	packageJSON, err := templatesFS.ReadFile(packagePath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", packagePath, err)
+	}
+	var manifest struct {
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(packageJSON, &manifest); err != nil {
+		t.Fatalf("decode template %s: %v", packagePath, err)
+	}
+	for dependency, want := range map[string]string{
+		"@typescript/native": "npm:typescript@~7.0.2",
+		"typescript":         "npm:@typescript/typescript6@^6.0.2",
+	} {
+		if got := manifest.DevDependencies[dependency]; got != want {
+			t.Errorf("%s dependency = %q, want %q", dependency, got, want)
+		}
+	}
+
+	const lockPath = "demo/frontend/package-lock.json"
+	packageLock, err := templatesFS.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", lockPath, err)
+	}
+	var lock struct {
+		Packages map[string]struct {
+			Name      string `json:"name"`
+			Version   string `json:"version"`
+			Integrity string `json:"integrity"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(packageLock, &lock); err != nil {
+		t.Fatalf("decode template %s: %v", lockPath, err)
+	}
+	for path, want := range map[string]struct {
+		name      string
+		version   string
+		integrity string
+	}{
+		"node_modules/@typescript/native": {name: "typescript", version: "7.0.2", integrity: "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA=="},
+		"node_modules/typescript":         {name: "@typescript/typescript6", version: "6.0.2", integrity: "sha512-mbCddXd+jm7hfx7w2YU64/Av4/NqqeG3GoRZgxPcgoTxYjhrcfJRw9ULch71SS4G+Q3bOXFhRvPqjguN0Hyp5w=="},
+	} {
+		dependency := lock.Packages[path]
+		if dependency.Name != want.name || dependency.Version != want.version || dependency.Integrity != want.integrity {
+			t.Errorf("locked %s = %s@%s with integrity %q, want %s@%s with integrity %q", path, dependency.Name, dependency.Version, dependency.Integrity, want.name, want.version, want.integrity)
+		}
+	}
+
+	for _, config := range []struct {
+		path    string
+		markers []string
+	}{
+		{path: "demo/frontend/tsconfig.json", markers: []string{`"@/*": [`, `"./src/*"`}},
+		{path: "demo/frontend/tsconfig.app.json", markers: []string{`"strict": false`, `"@/*": ["./src/*"]`}},
+	} {
+		content, err := templatesFS.ReadFile(config.path)
+		if err != nil {
+			t.Fatalf("read template %s: %v", config.path, err)
+		}
+		for _, marker := range config.markers {
+			assertTemplateMarker(t, config.path, string(content), marker, true)
+		}
+		assertTemplateMarker(t, config.path, string(content), `"baseUrl"`, false)
+	}
+}
+
+// TestLighthouseUIUsesViteEightToolchain keeps the embedded frontend on the reviewed Vite generation and config API.
+func TestLighthouseUIUsesViteEightToolchain(t *testing.T) {
+	const packagePath = "internal/lighthouse/ui/package.json"
+	packageJSON, err := templatesFS.ReadFile(packagePath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", packagePath, err)
+	}
+	var manifest struct {
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(packageJSON, &manifest); err != nil {
+		t.Fatalf("decode template %s: %v", packagePath, err)
+	}
+	if got, want := manifest.DevDependencies["vite"], "^8.3.4"; got != want {
+		t.Fatalf("Vite dependency = %q, want %q", got, want)
+	}
+
+	const lockPath = "internal/lighthouse/ui/package-lock.json"
+	packageLock, err := templatesFS.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", lockPath, err)
+	}
+	var lock struct {
+		Packages map[string]struct {
+			Version string            `json:"version"`
+			Engines map[string]string `json:"engines"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(packageLock, &lock); err != nil {
+		t.Fatalf("decode template %s: %v", lockPath, err)
+	}
+	vite := lock.Packages["node_modules/vite"]
+	if got, want := vite.Version, "8.3.4"; got != want {
+		t.Fatalf("locked Vite version = %q, want %q", got, want)
+	}
+	if got, want := vite.Engines["node"], "^20.19.0 || >=22.12.0"; got != want {
+		t.Fatalf("locked Vite Node requirement = %q, want %q", got, want)
+	}
+
+	const configPath = "internal/lighthouse/ui/vite.config.ts"
+	config, err := templatesFS.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", configPath, err)
+	}
+	assertTemplateMarker(t, configPath, string(config), `resolve(import.meta.dirname, "src")`, true)
+	for _, obsolete := range []string{"__dirname", "rollupOptions", "esbuild"} {
+		assertTemplateMarker(t, configPath, string(config), obsolete, false)
+	}
+
+	const indexPath = "internal/lighthouse/ui/dist/index.html"
+	indexHTML, err := templatesFS.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", indexPath, err)
+	}
+	const assetsPath = "internal/lighthouse/ui/dist/assets"
+	assets, err := templatesFS.ReadDir(assetsPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", assetsPath, err)
+	}
+	bundleCounts := map[string]int{".css": 0, ".js": 0}
+	for _, asset := range assets {
+		extension := filepath.Ext(asset.Name())
+		if _, tracked := bundleCounts[extension]; !tracked {
+			continue
+		}
+		bundleCounts[extension]++
+		if !strings.Contains(string(indexHTML), "/lighthouse/assets/"+asset.Name()) {
+			t.Errorf("%s does not reference built asset %s", indexPath, asset.Name())
+		}
+	}
+	for extension, count := range bundleCounts {
+		if count != 1 {
+			t.Errorf("built Lighthouse %s bundle count = %d, want 1", extension, count)
+		}
+	}
+}
+
+// TestLighthouseUIUsesTypeScriptSevenCompatibilityToolchain keeps native checking and Vue compiler API consumers on their supported runtimes.
+func TestLighthouseUIUsesTypeScriptSevenCompatibilityToolchain(t *testing.T) {
+	const packagePath = "internal/lighthouse/ui/package.json"
+	packageJSON, err := templatesFS.ReadFile(packagePath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", packagePath, err)
+	}
+	var manifest struct {
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(packageJSON, &manifest); err != nil {
+		t.Fatalf("decode template %s: %v", packagePath, err)
+	}
+	for dependency, want := range map[string]string{
+		"@typescript/native": "npm:typescript@~7.0.2",
+		"typescript":         "npm:@typescript/typescript6@^6.0.2",
+	} {
+		if got := manifest.DevDependencies[dependency]; got != want {
+			t.Errorf("%s dependency = %q, want %q", dependency, got, want)
+		}
+	}
+
+	const lockPath = "internal/lighthouse/ui/package-lock.json"
+	packageLock, err := templatesFS.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", lockPath, err)
+	}
+	var lock struct {
+		Packages map[string]struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(packageLock, &lock); err != nil {
+		t.Fatalf("decode template %s: %v", lockPath, err)
+	}
+	for path, want := range map[string]struct {
+		name    string
+		version string
+	}{
+		"node_modules/@typescript/native": {name: "typescript", version: "7.0.2"},
+		"node_modules/typescript":         {name: "@typescript/typescript6", version: "6.0.2"},
+	} {
+		dependency := lock.Packages[path]
+		if dependency.Name != want.name || dependency.Version != want.version {
+			t.Errorf("locked %s = %s@%s, want %s@%s", path, dependency.Name, dependency.Version, want.name, want.version)
+		}
+	}
+
+	const configPath = "internal/lighthouse/ui/tsconfig.json"
+	config, err := templatesFS.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read template %s: %v", configPath, err)
+	}
+	for _, marker := range []string{`"strict": false`, `"@/*": ["./src/*"]`} {
+		assertTemplateMarker(t, configPath, string(config), marker, true)
+	}
+	assertTemplateMarker(t, configPath, string(config), `"baseUrl"`, false)
 }
 
 // TestMailAboutBehaviorCoversEveryAppProjection verifies generated behavior coverage includes Mail-enabled and Mail-disabled Apps.

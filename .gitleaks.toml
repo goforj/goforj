@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic values used to test generated code and database fingerprinting"
+regexTarget = "match"
+regexes = [
+  '''openapiclient,withGoMod=true''',
+  '''abcdef0123456789abcdef0123456789abcdef0123456789''',
+  '''thisisaverylongresidualtokenthatshouldnotbecomeametricshape''',
+]

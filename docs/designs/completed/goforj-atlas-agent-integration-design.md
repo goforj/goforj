@@ -542,15 +542,17 @@ Example shape:
 
 Searches GoForj documentation for the current project version.
 
-Atlas should load GoForj Markdown documentation into memory when the MCP server
-starts. This keeps search fast while avoiding a copied docs tree in the GoForj
-or Atlas source repos.
+Atlas loads GoForj Markdown documentation into memory when the MCP server
+starts. This avoids a copied docs tree in the GoForj or Atlas source repos and
+keeps repeated reads off the filesystem.
 
-MVP sources, in priority order:
+Implemented sources, in priority order:
 
 - `GOFORJ_DOCS_PATH` local override when available
 - cached clone of `github.com/goforj/docs`
-- generated project docs and API index
+
+Generated project docs and API indexes are separate project-inspection
+surfaces. They are not merged into the versioned framework-docs corpus.
 
 Development override:
 
@@ -559,9 +561,10 @@ GOFORJ_DOCS_PATH=../goforj-docs forj atlas:mcp
 ```
 
 That lets framework and docs development use the live docs repo while normal
-projects use a cache that Atlas refreshes at runtime. Atlas should use the
-`git` executable when present and silently fall back to native Go git support
-when it is not.
+projects use a cache that Atlas refreshes when the MCP process starts. Atlas
+uses the `git` executable when present and silently falls back to native Go git
+support when it is not. The selected corpus remains fixed until process restart
+so one MCP session never mixes documentation revisions.
 
 Optional later source:
 
@@ -577,7 +580,7 @@ newer or older GoForj API unless no exact match exists.
 
 ### read-doc-section
 
-Returns one bounded section from an embedded Markdown document.
+Returns one bounded section from an in-memory Markdown document.
 
 Inputs:
 
@@ -628,26 +631,32 @@ This should return a small set of doc paths and headings, not long prose.
 
 ### Docs retrieval model
 
-Atlas should embed all Markdown docs and make the MCP tools responsible for
-token discipline.
+Atlas keeps the selected Markdown corpus in memory and makes the MCP tools
+responsible for token discipline.
 
-Recommended implementation:
+The implemented model:
 
-- embed Markdown files with `go:embed`
-- embed a docs manifest with GoForj version, docs revision, and file checksums
-- parse frontmatter, titles, headings, and body sections
-- chunk by Markdown section rather than arbitrary character count
-- index path, title, headings, tags, components, and app/runtime relevance
-- rank title and heading matches above body matches
-- cap result counts and token output aggressively
-- include related sections instead of dumping larger documents
-- lazy-load section bodies if startup time or memory ever becomes noticeable
+- recursively loads lowercase `.md` files from the selected docs root
+- skips hidden directories, `node_modules`, and `dist`
+- stores each document's relative path, first level-one heading, and full body
+- warms the corpus before the stdio MCP server accepts requests
+- reports the selected ref and revision through `application-info`
+- parses documents into ATX-heading sections at query time
+- ranks case-insensitive substring matches in titles and headings above paths
+  and body text
+- caps result counts and returned section bodies without dumping whole files
 
-Embedding all Markdown keeps the implementation simple and deterministic. The
-splicing tools keep the agent experience efficient.
+Keeping the full corpus in memory remains the right boundary. The framework
+docs are small enough that a database, hosted search dependency, embedding
+model, or vector store would add operational complexity without improving the
+local deterministic workflow.
 
-The MCP server should report the docs revision in `application-info` so agents
-can tell which docs set they are using.
+The current implementation caches raw documents but reparses and renormalizes
+them for every search. It also performs repeated filesystem walks while
+selecting a provider and calculating the initial manifest. The follow-up
+architecture should retain the same provider contract and user-facing tools
+while building one immutable parsed corpus at startup. The focused design is
+[`../atlas-docs-query-index-design.md`](../atlas-docs-query-index-design.md).
 
 ### project-layout
 
@@ -985,7 +994,7 @@ Measure:
 - `list-doc-headings` returns stable heading trees
 - `explain-api` maps common commands and paths to useful docs sections
 
-Docs retrieval tests should use the embedded docs manifest and should also run
+Docs retrieval tests should use a fixed cached-docs manifest and should also run
 against `GOFORJ_DOCS_PATH` fixtures.
 
 ### Skill effectiveness tests
@@ -1157,7 +1166,7 @@ Before Atlas ships, CI should enforce:
 
 - golden file tests for agent output
 - unit tests for docs parsing and section chunking
-- retrieval evaluation for embedded docs
+- retrieval evaluation for the in-memory versioned docs corpus
 - MCP protocol tests for read-only tools
 - rendered project smoke tests in `/tmp`
 - no network dependency for default MCP tests
@@ -1246,9 +1255,9 @@ Build:
 
 Build an optional hosted docs search endpoint for GoForj.
 
-The embedded docs search should remain the default. A hosted endpoint can add
-cross-version and newly published docs lookup when the user or agent explicitly
-needs it.
+The local in-memory docs search should remain the default. A hosted endpoint can
+add cross-version and newly published docs lookup when the user or agent
+explicitly needs it.
 
 The hosted endpoint should understand:
 

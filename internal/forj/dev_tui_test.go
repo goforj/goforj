@@ -4,18 +4,32 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	charmansi "github.com/charmbracelet/x/ansi"
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/project"
 )
 
 var ansiCode = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+// TestDetectDarkBackgroundSkipsRedirectedStreams verifies non-interactive commands do not wait for a terminal response.
+func TestDetectDarkBackgroundSkipsRedirectedStreams(t *testing.T) {
+	stream, err := os.CreateTemp(t.TempDir(), "redirected-stream")
+	if err != nil {
+		t.Fatalf("create redirected stream: %v", err)
+	}
+	defer stream.Close()
+
+	if !detectDarkBackground(stream, stream) {
+		t.Fatal("detectDarkBackground() = false, want dark fallback for redirected streams")
+	}
+}
 
 type devOutputControllerRecorder struct {
 	bytes.Buffer
@@ -286,8 +300,8 @@ func TestDevBubbleModelAnimatesOnlyWhileTransitioning(t *testing.T) {
 	model := devBubbleModel{width: 80, height: 10}
 	next, tick := model.Update(devSetStatusMsg{line: "Starting app"})
 	active := next.(devBubbleModel)
-	if tick == nil || !strings.Contains(stripANSI(active.View()), devBubbleSpinnerFrames[0]+" Starting app") {
-		t.Fatalf("active transition did not render and schedule a spinner: %q", stripANSI(active.View()))
+	if tick == nil || !strings.Contains(stripANSI(active.View().Content), devBubbleSpinnerFrames[0]+" Starting app") {
+		t.Fatalf("active transition did not render and schedule a spinner: %q", stripANSI(active.View().Content))
 	}
 
 	next, tick = active.Update(devSpinnerTickMsg{generation: active.spinnerGeneration})
@@ -319,7 +333,7 @@ func TestDevBubbleModelShowsLifecycleOutputOnlyWhileActive(t *testing.T) {
 		"01:04:37.856 HTTP Routes registered",
 	}})
 	active := next.(devBubbleModel)
-	view := stripANSI(active.View())
+	view := stripANSI(active.View().Content)
 	for _, want := range []string{"GET /foo", "┃", "Shutting down queue worker", "Routes registered", "Restarting"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("active lifecycle view missing %q:\n%s", want, view)
@@ -340,7 +354,7 @@ func TestDevBubbleModelShowsLifecycleOutputOnlyWhileActive(t *testing.T) {
 	next, _ = active.Update(devSetLifecycleLinesMsg{})
 	next, _ = next.(devBubbleModel).Update(devClearStatusMsg{})
 	completed := next.(devBubbleModel)
-	view = stripANSI(completed.View())
+	view = stripANSI(completed.View().Content)
 	if strings.Contains(view, "Shutting down queue worker") || strings.Contains(view, "Routes registered") || strings.Contains(view, "Restarting") {
 		t.Fatalf("completed lifecycle retained transient output:\n%s", view)
 	}
@@ -352,13 +366,13 @@ func TestDevBubbleModelShowsLifecycleOutputOnlyWhileActive(t *testing.T) {
 // TestDevBubbleModelMirrorsTransitionsIntoTerminalProgress verifies supporting terminals retain lifecycle activity outside the TUI frame.
 func TestDevBubbleModelMirrorsTransitionsIntoTerminalProgress(t *testing.T) {
 	active := devBubbleModel{width: 80, height: 10, statusLine: "Building app"}
-	if view := active.View(); !strings.HasPrefix(view, devTerminalProgressBusy) {
-		t.Fatalf("active view omitted terminal progress: %q", view)
+	if view := active.View(); view.ProgressBar == nil || view.ProgressBar.State != tea.ProgressBarIndeterminate {
+		t.Fatalf("active view omitted terminal progress: %#v", view.ProgressBar)
 	}
 
 	idle := devBubbleModel{width: 80, height: 10}
-	if view := idle.View(); !strings.HasPrefix(view, devTerminalProgressClear) {
-		t.Fatalf("idle view omitted terminal progress cleanup: %q", view)
+	if view := idle.View(); view.ProgressBar == nil || view.ProgressBar.State != tea.ProgressBarNone {
+		t.Fatalf("idle view omitted terminal progress cleanup: %#v", view.ProgressBar)
 	}
 	if !strings.HasPrefix(devTerminalModeResetSequence, devTerminalProgressClear) {
 		t.Fatalf("terminal reset omitted progress cleanup: %q", devTerminalModeResetSequence)
@@ -897,7 +911,7 @@ func TestDevBubbleModelEscClearsActiveFindState(t *testing.T) {
 		searchMatches: []int{1, 4},
 		searchIndex:   0,
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	got := next.(devBubbleModel)
 	if got.searchMode {
 		t.Fatal("expected esc to leave find mode inactive")
@@ -913,7 +927,7 @@ func TestDevBubbleModelHelpHotkeyExecutesAndDismisses(t *testing.T) {
 		helpVisible:    true,
 		requestRestart: func() { restarts++ },
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	got := next.(devBubbleModel)
 	if got.helpVisible {
 		t.Fatal("expected help overlay to dismiss after restart hotkey")
@@ -931,7 +945,7 @@ func TestDevBubbleModelHelpFindHotkeyOpensFindAndDismisses(t *testing.T) {
 		helpVisible: true,
 		searchQuery: "old",
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	next, _ := m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
 	got := next.(devBubbleModel)
 	if got.helpVisible {
 		t.Fatal("expected help overlay to dismiss after find hotkey")
@@ -951,7 +965,7 @@ func TestDevBubbleModelCommandHotkeyOpensPalette(t *testing.T) {
 			{Name: "route:list", Help: "List HTTP routes"},
 		},
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	got := next.(devBubbleModel)
 	if got.helpVisible {
 		t.Fatal("expected help overlay to dismiss after command hotkey")
@@ -973,7 +987,7 @@ func TestDevBubbleModelCommandEnterExecutesSelection(t *testing.T) {
 			requests = append(requests, req)
 		},
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	got := next.(devBubbleModel)
 	if got.commandVisible {
 		t.Fatal("expected command palette to close after executing")
@@ -999,7 +1013,7 @@ func TestDevBubbleModelCommandEnterUsesActiveApp(t *testing.T) {
 		},
 	}
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if next.(devBubbleModel).commandVisible {
 		t.Fatal("expected command palette to close after executing")
 	}
@@ -1020,7 +1034,7 @@ func TestDevBubbleModelCommandTypingJumpsSelectionByPrefix(t *testing.T) {
 			{Name: "test:openapi", Help: "Run OpenAPI checks"},
 		},
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	got := next.(devBubbleModel)
 	if got.commandIndex != 1 {
 		t.Fatalf("expected typing to jump to route:list, got index %d", got.commandIndex)
@@ -1037,7 +1051,7 @@ func TestDevBubbleModelCommandTabFocusesArgsInput(t *testing.T) {
 			{Name: "route:list", Help: "List HTTP routes", AcceptsArgs: true},
 		},
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	got := next.(devBubbleModel)
 	if !got.commandArgsFocus {
 		t.Fatal("expected tab to move focus to args input")
@@ -1052,7 +1066,7 @@ func TestDevBubbleModelCommandTypingInArgsFocusWritesArgs(t *testing.T) {
 			{Name: "route:list", Help: "List HTTP routes", AcceptsArgs: true},
 		},
 	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("-")})
+	next, _ := m.Update(tea.KeyPressMsg{Code: '-', Text: "-"})
 	got := next.(devBubbleModel)
 	if got.commandArgs != "-" {
 		t.Fatalf("expected args-focused typing to write args, got %q", got.commandArgs)

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/projectlayout"
@@ -96,7 +96,7 @@ func selectAtlasModeRow(t *testing.T, m *model, mode atlasMode) {
 func TestModelHandlesCtrlC(t *testing.T) {
 	m := initialModel()
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatalf("expected quit command, got nil")
 	}
@@ -123,7 +123,7 @@ func TestModelBackNavigation(t *testing.T) {
 	m := initialModel()
 	m.projectInput.SetValue("MyApp")
 
-	projectToModule, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	projectToModule, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	moduleStage, ok := projectToModule.(model)
 	if !ok {
 		t.Fatalf("expected model type after project stage advance")
@@ -134,13 +134,100 @@ func TestModelBackNavigation(t *testing.T) {
 
 	moduleStage.moduleInput.SetValue("github.com/example/myapp")
 
-	backToProject, _ := moduleStage.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	backToProject, _ := moduleStage.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	projectStage := backToProject.(model)
 	if projectStage.stage != StageProjectName {
 		t.Fatalf("expected project stage after back navigation, got %v", projectStage.stage)
 	}
 	if projectStage.projectInput.Value() != "MyApp" {
 		t.Fatalf("project name should be preserved on back navigation")
+	}
+}
+
+// TestValidateNewProjectModulePathMatchesLocalGoInitRules rejects malformed input without requiring publication.
+func TestValidateNewProjectModulePathMatchesLocalGoInitRules(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{name: "unpublished remote-shaped path", path: "project.invalid/owner/not-published"},
+		{name: "local-only module", path: "forj"},
+		{name: "empty", path: "  ", wantErr: "required"},
+		{name: "URL", path: "https://github.com/example/new-project", wantErr: `Use "github.com/example/new-project" instead`},
+		{name: "invalid import path", path: "github.com/example/project name", wantErr: "invalid"},
+		{name: "invalid major suffix", path: "github.com/example/project/v1", wantErr: "major-version suffix"},
+		{name: "reserved", path: "go", wantErr: "reserved"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateNewProjectModulePath(test.path)
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateNewProjectModulePath(%q) = %v", test.path, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("validateNewProjectModulePath(%q) = %v, want %q", test.path, err, test.wantErr)
+			}
+		})
+	}
+}
+
+// TestModuleStageRejectsURLBeforeProjectConfiguration keeps malformed paths inside the field that owns them.
+func TestModuleStageRejectsURLBeforeProjectConfiguration(t *testing.T) {
+	m := initialModel()
+	m.stage = StageModuleName
+	m.moduleInput.SetValue("https://github.com/example/new-project")
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(model)
+	if m.stage != StageModuleName {
+		t.Fatalf("URL module advanced to stage %v", m.stage)
+	}
+	if !strings.Contains(m.errorMsg, "without a URL scheme") {
+		t.Fatalf("URL module error = %q", m.errorMsg)
+	}
+	if m.config.GoModuleName != "" {
+		t.Fatalf("invalid module was persisted as %q", m.config.GoModuleName)
+	}
+}
+
+// TestCreateProjectRejectsInvalidModuleBeforeFilesystemChanges preserves an untouched target on defensive validation failure.
+func TestCreateProjectRejectsInvalidModuleBeforeFilesystemChanges(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "not-created")
+	m := initialModel()
+	m.stage = StageDone
+	m.targetPath = target
+	m.config.GoModuleName = "https://github.com/example/new-project"
+	cmd := NewNewProjectCmd(logger.NewSilentLogger(), NewProjectRenderer(logger.NewSilentLogger()))
+
+	err := cmd.createProject(m)
+	if err == nil || !strings.Contains(err.Error(), "without a URL scheme") {
+		t.Fatalf("createProject() error = %v, want module guidance", err)
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid module created target: %v", statErr)
+	}
+}
+
+// TestConfirmationUsesSelectedDirectoryAndDefersSuccess keeps the final wizard screen truthful before rendering starts.
+func TestConfirmationUsesSelectedDirectoryAndDefersSuccess(t *testing.T) {
+	m := initialModel()
+	m.projectInput.SetValue("New Project")
+	m.moduleInput.SetValue("example.com/new-project")
+	m.pathInput.SetValue(filepath.Join(t.TempDir(), "chosen-directory"))
+	m.stage = StageConfirm
+	confirmation := ansi.Strip(m.View().Content)
+	if !strings.Contains(confirmation, "Directory » chosen-directory") {
+		t.Fatalf("confirmation omitted selected directory:\n%s", confirmation)
+	}
+
+	m.stage = StageDone
+	done := ansi.Strip(m.View().Content)
+	if !strings.Contains(done, "Configuration complete") || strings.Contains(done, "Project initialized") {
+		t.Fatalf("completion view claimed publication before rendering:\n%s", done)
 	}
 }
 
@@ -152,47 +239,47 @@ func TestConfirmationFlow(t *testing.T) {
 
 	m := initialModel()
 	m.projectInput.SetValue("MyApp")
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	m.moduleInput.SetValue("github.com/example/myapp")
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageSelectComponents {
 		t.Fatalf("expected to be on component selection stage")
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageHelpFormat {
 		t.Fatalf("expected to be on help format stage")
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageStarterKit {
 		t.Fatalf("expected to be on starter kit stage after help format")
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageExtras {
 		t.Fatalf("expected to be on extras stage after starter kit")
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageAtlasSupport {
 		t.Fatalf("expected to be on atlas support stage after extras, got %v", m.stage)
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageProjectPath {
 		t.Fatalf("expected to be on project path stage after atlas support, got %v", m.stage)
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageConfirm {
 		t.Fatalf("expected confirmation stage after project path")
@@ -202,7 +289,7 @@ func TestConfirmationFlow(t *testing.T) {
 		t.Fatalf("expected CLI component to remain selected in config")
 	}
 
-	confirmedModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	confirmedModel, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	finalModel := confirmedModel.(model)
 	if finalModel.stage != StageDone {
 		t.Fatalf("expected final stage after confirmation")
@@ -262,7 +349,7 @@ func TestProjectPathShowsResourceReconciliationErrors(t *testing.T) {
 	m.moduleInput.SetValue("example.com/existing")
 	m.pathInput.SetValue(target)
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(model)
 	if m.stage != StageProjectPath {
 		t.Fatalf("invalid owner contract advanced to stage %v", m.stage)
@@ -270,7 +357,7 @@ func TestProjectPathShowsResourceReconciliationErrors(t *testing.T) {
 	if !strings.Contains(m.errorMsg, "excludes active") {
 		t.Fatalf("resource reconciliation error = %q", m.errorMsg)
 	}
-	if view := ansi.Strip(m.View()); !strings.Contains(view, "excludes active") {
+	if view := ansi.Strip(m.View().Content); !strings.Contains(view, "excludes active") {
 		t.Fatalf("path view hid resource reconciliation error:\n%s", view)
 	}
 	contents, err := os.ReadFile(filepath.Join(target, ".env"))
@@ -296,7 +383,7 @@ func TestProjectPathDoesNotCarryTargetResourceIntentForward(t *testing.T) {
 	m.moduleInput.SetValue("example.com/existing")
 	m.pathInput.SetValue(firstTarget)
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(model)
 	if m.stage != StageConfirm {
 		t.Fatalf("first target did not advance to confirmation: stage=%v error=%q", m.stage, m.errorMsg)
@@ -309,10 +396,10 @@ func TestProjectPathDoesNotCarryTargetResourceIntentForward(t *testing.T) {
 		t.Fatalf("first target Redis intent = %q selected=%t, want local", mode, ok)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	m = updated.(model)
 	m.pathInput.SetValue(secondTarget)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(model)
 	if m.stage != StageConfirm {
 		t.Fatalf("second target did not advance to confirmation: stage=%v error=%q", m.stage, m.errorMsg)
@@ -397,12 +484,21 @@ func TestNewProjectCreationKeepsWorkInsideTarget(t *testing.T) {
 	if cwd, err := os.Getwd(); err != nil || cwd != sentinel {
 		t.Fatalf("working directory = %q, %v; want unchanged %q", cwd, err, sentinel)
 	}
-	for _, path := range []string{".goforj.yml", "go.mod", filepath.Join("cmd", "app", "main.go")} {
+	for _, path := range []string{".goforj.yml", "README.md", "go.mod", filepath.Join("cmd", "app", "main.go")} {
 		if _, err := os.Stat(filepath.Join(target, path)); err != nil {
 			t.Fatalf("target output %s: %v", path, err)
 		}
 		if _, err := os.Stat(filepath.Join(sentinel, path)); !os.IsNotExist(err) {
 			t.Fatalf("process cwd received project output %s: %v", path, err)
+		}
+	}
+	readme, err := os.ReadFile(filepath.Join(target, "README.md"))
+	if err != nil {
+		t.Fatalf("read generated project README: %v", err)
+	}
+	for _, expected := range []string{"twitter-banner.png", "# Rooted App", "forj dev", "forj build"} {
+		if !strings.Contains(string(readme), expected) {
+			t.Errorf("generated project README missing %q", expected)
 		}
 	}
 	assertNewProjectCommandsRootedAt(t, commandLog, target)
@@ -580,7 +676,7 @@ func TestNewProjectComponentsExposeConcreteDatabaseEngines(t *testing.T) {
 			t.Fatalf("database row %q label = %q, want %q", key, item.Name, label)
 		}
 		m.stage = StageSelectComponents
-		if view := ansi.Strip(m.View()); !strings.Contains(view, label) {
+		if view := ansi.Strip(m.View().Content); !strings.Contains(view, label) {
 			t.Fatalf("component view is missing %q:\n%s", label, view)
 		}
 	}
@@ -624,7 +720,7 @@ func TestDatabaseEngineSelectionIsExclusive(t *testing.T) {
 	m.stage = StageSelectComponents
 	selectComponentRowByKey(t, &m, project.ComponentDatabasePostgres)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	next, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	m = next.(model)
 	m.applyComponentSelection()
 
@@ -657,7 +753,7 @@ func TestAuthBlocksLastDatabaseDeselection(t *testing.T) {
 	setComponentSelectedByKey(t, &m, project.ComponentOAuth, false)
 	selectComponentRowByKey(t, &m, project.ComponentDatabaseMySQL)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	next, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	m = next.(model)
 
 	if !componentSelectedByKey(t, m, project.ComponentDatabaseMySQL) {
@@ -679,7 +775,7 @@ func TestDatabaseCanBeDisabledWithoutAuth(t *testing.T) {
 	setComponentSelectedByKey(t, &m, project.ComponentAuth, false)
 	selectComponentRowByKey(t, &m, project.ComponentDatabaseMySQL)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	next, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	m = next.(model)
 	m.applyComponentSelection()
 
@@ -822,7 +918,7 @@ func TestAuthToggleAutoSelectsDependenciesInWizard(t *testing.T) {
 	setComponentSelectedByKey(t, &m, project.ComponentOAuth, false)
 	selectComponentRowByKey(t, &m, project.ComponentAuth)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	next, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	m = next.(model)
 
 	if !componentSelectedByKey(t, m, project.ComponentAuth) {
@@ -845,7 +941,7 @@ func TestOAuthToggleAutoSelectsAuthAndMailInWizard(t *testing.T) {
 	setComponentSelectedByKey(t, &m, project.ComponentOAuth, false)
 	selectComponentRowByKey(t, &m, project.ComponentOAuth)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	next, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	m = next.(model)
 
 	if !componentSelectedByKey(t, m, project.ComponentOAuth) {
@@ -870,7 +966,7 @@ func TestGrafanaToggleAutoSelectsObservabilityChainInWizard(t *testing.T) {
 	setComponentSelectedByKey(t, &m, project.ComponentDocker, false)
 	selectComponentRowByKey(t, &m, project.ComponentGrafana)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	next, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	m = next.(model)
 
 	if !componentSelectedByKey(t, m, project.ComponentGrafana) {
@@ -899,7 +995,7 @@ func TestAuthToggleAlsoClearsOAuthInWizard(t *testing.T) {
 	setComponentSelectedByKey(t, &m, project.ComponentMail, true)
 	selectComponentRowByKey(t, &m, project.ComponentAuth)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	next, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	m = next.(model)
 
 	if componentSelectedByKey(t, m, project.ComponentOAuth) {
@@ -919,7 +1015,7 @@ func TestMailToggleDoesNotClearAuthOrOAuthInWizard(t *testing.T) {
 	setComponentSelectedByKey(t, &m, project.ComponentOAuth, true)
 	selectComponentRowByKey(t, &m, project.ComponentMail)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	next, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	m = next.(model)
 
 	if !componentSelectedByKey(t, m, project.ComponentAuth) {
@@ -941,14 +1037,14 @@ func TestStarterKitStageAppearsWhenWebUIEnabled(t *testing.T) {
 	m.stage = StageSelectComponents
 	setComponentSelectedByKey(t, &m, project.ComponentWebUI, true)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	if m.stage != StageHelpFormat {
 		t.Fatalf("expected help format stage when web ui is enabled, got %v", m.stage)
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	if m.stage != StageStarterKit {
@@ -962,14 +1058,14 @@ func TestStarterKitStageSkippedWhenWebUIDisabled(t *testing.T) {
 	m.config.Render.StarterKit = project.StarterKitVue
 	setComponentSelectedByKey(t, &m, project.ComponentWebUI, false)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	if m.stage != StageHelpFormat {
 		t.Fatalf("expected help format stage when web ui is disabled, got %v", m.stage)
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	if m.stage != StageExtras {
@@ -986,23 +1082,23 @@ func TestDemoBackNavigationDoesNotInventSkippedStarterKit(t *testing.T) {
 	m.stage = StageSelectComponents
 	setComponentSelectedByKey(t, &m, project.ComponentWebUI, false)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageExtras || m.starterKitApplicable {
 		t.Fatalf("expected the forward path to skip Starter Kit, stage=%v applicable=%t", m.stage, m.starterKitApplicable)
 	}
 
 	m.extrasIndex = 1
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageAtlasSupport || !m.config.Render.Components.WebUI {
 		t.Fatalf("expected Demo to enable Web UI after the skipped stage, stage=%v components=%#v", m.stage, m.config.Render.Components)
 	}
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	m = next.(model)
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	m = next.(model)
 	if m.stage != StageHelpFormat {
 		t.Fatalf("expected back navigation to return to Help, got %v", m.stage)
@@ -1035,7 +1131,7 @@ func TestVueStarterKitSelectionPersists(t *testing.T) {
 	m.config.Render.Components.WebUI = true
 	selectStarterKitRow(t, &m, project.StarterKitVue)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	if m.stage != StageExtras {
@@ -1053,9 +1149,9 @@ func TestStarterKitComponentLibraryCanBeDisabled(t *testing.T) {
 	m.config.Render.Components.WebUI = true
 	selectStarterKitRow(t, &m, project.StarterKitVue)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = next.(model)
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	if m.config.Render.StarterKit != project.StarterKitVue {
@@ -1080,7 +1176,7 @@ func TestStarterKitComponentLibraryRendersAsRadioInputs(t *testing.T) {
 		}
 	}
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	view = ansi.Strip(next.(model).renderStarterKitOptions())
 	for _, expected := range []string{"○ On", "● Off"} {
 		if !strings.Contains(view, expected) {
@@ -1094,7 +1190,7 @@ func TestAtlasRecommendedMovesToProjectPath(t *testing.T) {
 	m.stage = StageAtlasSupport
 	selectAtlasModeRow(t, &m, atlasModeRecommended)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	if m.stage != StageProjectPath {
@@ -1122,7 +1218,7 @@ func TestAtlasMinimalInstallsGuidelinesOnly(t *testing.T) {
 	m.stage = StageAtlasSupport
 	selectAtlasModeRow(t, &m, atlasModeMinimal)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	surfaces := m.selectedAtlasSurfaces()
@@ -1139,7 +1235,7 @@ func TestAtlasSkipDisablesInstall(t *testing.T) {
 	m.stage = StageAtlasSupport
 	selectAtlasModeRow(t, &m, atlasModeSkip)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	if m.stage != StageProjectPath {
@@ -1158,7 +1254,7 @@ func TestAtlasCustomRequiresAgentAndSurface(t *testing.T) {
 	m.stage = StageAtlasSupport
 	selectAtlasModeRow(t, &m, atlasModeCustom)
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageAtlasAgents {
 		t.Fatalf("expected custom to open agent selection, got %v", m.stage)
@@ -1169,14 +1265,14 @@ func TestAtlasCustomRequiresAgentAndSurface(t *testing.T) {
 		item.Selected = false
 		m.atlasAgentList.SetItem(idx, item)
 	}
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageAtlasAgents || !strings.Contains(m.errorMsg, "Select at least one agent") {
 		t.Fatalf("expected custom agent validation, stage=%v error=%q", m.stage, m.errorMsg)
 	}
 
 	m.toggleAtlasAgentSelection()
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageAtlasSurfaces {
 		t.Fatalf("expected custom to open surface selection, got %v", m.stage)
@@ -1187,14 +1283,14 @@ func TestAtlasCustomRequiresAgentAndSurface(t *testing.T) {
 		item.Selected = false
 		m.atlasSurfaceList.SetItem(idx, item)
 	}
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageAtlasSurfaces || !strings.Contains(m.errorMsg, "Select at least one install option") {
 		t.Fatalf("expected custom surface validation, stage=%v error=%q", m.stage, m.errorMsg)
 	}
 
 	m.toggleAtlasSurfaceSelection()
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageProjectPath {
 		t.Fatalf("expected custom selections to continue to project path, got %v", m.stage)
@@ -1219,35 +1315,35 @@ func TestAtlasCustomWithoutGuidelinesKeepsBaselineAbsent(t *testing.T) {
 func TestDefaultResourcePlanCoordinatesJobsWithoutWizardStage(t *testing.T) {
 	m := initialModel()
 	m.projectInput.SetValue("MyApp")
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	m.moduleInput.SetValue("github.com/example/myapp")
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 
 	// Select Jobs in component list.
 	setComponentSelectedByKey(t, &m, project.ComponentJobs, true)
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageHelpFormat {
 		t.Fatalf("expected help format stage, got %v", m.stage)
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageStarterKit {
 		t.Fatalf("expected starter kit stage after help format, got %v", m.stage)
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageExtras {
 		t.Fatalf("expected extras stage after starter kit, got %v", m.stage)
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageAtlasSupport {
 		t.Fatalf("expected Atlas after extras, got %v", m.stage)
@@ -1269,12 +1365,12 @@ func TestWizardOmitsResourcesStageAndPanel(t *testing.T) {
 	m.termWidth = wizardWidth
 
 	progress := ansi.Strip(m.renderProgress())
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(m.View().Content)
 	if strings.Contains(progress, "Resources") || strings.Contains(view, "App Resources") {
 		t.Fatalf("wizard retained the removed resource stage:\nprogress=%s\nview=%s", progress, view)
 	}
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(model)
 	if m.stage != StageAtlasSupport {
 		t.Fatalf("expected Extras to continue directly to Atlas, got %v", m.stage)
@@ -1288,13 +1384,13 @@ func TestDemoExtrasExplainsTemporaryMySQLConstraint(t *testing.T) {
 	m.extrasIndex = 1
 	m.termWidth = wizardWidth
 
-	view := ansi.Strip(m.View())
+	view := ansi.Strip(m.View().Content)
 	if !strings.Contains(view, "Demo currently requires MySQL") || !strings.Contains(view, "database choice returns") {
 		t.Fatalf("Demo selection hid its temporary database constraint:\n%s", view)
 	}
 
 	m.extrasIndex = 0
-	view = ansi.Strip(m.View())
+	view = ansi.Strip(m.View().Content)
 	if strings.Contains(view, "Demo currently requires MySQL") {
 		t.Fatalf("disabled Demo added irrelevant database guidance:\n%s", view)
 	}

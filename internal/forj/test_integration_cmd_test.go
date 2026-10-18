@@ -232,6 +232,14 @@ import "testing"
 
 func TestMultiAppOnly(t *testing.T) {}
 `)
+	writeIntegrationDiscoveryFixture(t, filepath.Join(rootDir, "verifier_calibration_integration_test.go"), `//go:build integration && verifiercalibration
+
+package discovery
+
+import "testing"
+
+func TestVerifierCalibrationOnly(t *testing.T) {}
+`)
 
 	modCache, buildCache := testkit.GoCachePaths()
 	executor := integrationExecutor{caches: testexec.GoCaches{ModulePath: modCache, BuildPath: buildCache}}
@@ -239,6 +247,7 @@ func TestMultiAppOnly(t *testing.T) {}
 	integration := listGoTestsForTest(t, executor, rootDir, "integration")
 	lighthouse := listGoTestsForTest(t, executor, rootDir, "integration,lighthouse")
 	multiApp := listGoTestsForTest(t, executor, rootDir, "integration,multiapp")
+	verifierCalibration := listGoTestsForTest(t, executor, rootDir, "integration,verifiercalibration")
 
 	integrationOnly := integrationTestsForTest(t, baseline, integration)
 	assertIntegrationTestsEqual(t, integrationOnly, []integrationTestName{
@@ -256,6 +265,9 @@ func TestMultiAppOnly(t *testing.T) {}
 	})
 	assertIntegrationTestsEqual(t, integrationTestsForTest(t, integration, multiApp), []integrationTestName{
 		{packagePath: "example.com/discovery", name: "TestMultiAppOnly"},
+	})
+	assertIntegrationTestsEqual(t, integrationTestsForTest(t, integration, verifierCalibration), []integrationTestName{
+		{packagePath: "example.com/discovery", name: "TestVerifierCalibrationOnly"},
 	})
 	assertIntegrationShardsCoverTestsOnce(t, integrationOnly, 6)
 	assertIntegrationShardsCoverTestsOnce(t, integrationOnly, 8)
@@ -335,6 +347,7 @@ func TestFrameworkProfileTagsKeepsSpecializedTestsOutOfTheDefaultProfile(t *test
 		{profile: "integration", wantBaseline: "", wantTags: "integration"},
 		{profile: "lighthouse", wantBaseline: "integration", wantTags: "integration,lighthouse"},
 		{profile: "multiapp", wantBaseline: "integration", wantTags: "integration,multiapp"},
+		{profile: "verifiercalibration", wantBaseline: "integration", wantTags: "integration,verifiercalibration"},
 	}
 	for _, test := range tests {
 		t.Run(test.profile, func(t *testing.T) {

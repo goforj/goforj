@@ -26,7 +26,6 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/docker/go-connections/nat"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/goforj/goforj/internal/generate"
@@ -46,20 +45,22 @@ var (
 
 const cacheGeneratorIntegrationGoMod = `module example.com/cachegeneratorintegration
 
-go 1.24
+go 1.26.0
 
 require (
+	github.com/klauspost/compress v1.20.2
+	golang.org/x/text v0.41.0
 	github.com/goforj/cache v0.4.0
-	github.com/goforj/cache/cachecore v0.4.0
-	github.com/goforj/cache/cachetest v0.4.0
-	github.com/goforj/cache/driver/dynamocache v0.4.0
-	github.com/goforj/cache/driver/memcachedcache v0.4.0
-	github.com/goforj/cache/driver/mysqlcache v0.4.0
-	github.com/goforj/cache/driver/natscache v0.4.0
-	github.com/goforj/cache/driver/postgrescache v0.4.0
-	github.com/goforj/cache/driver/rediscache v0.4.0
-	github.com/goforj/cache/driver/sqlcore v0.4.0
-	github.com/goforj/cache/driver/sqlitecache v0.4.0
+	github.com/goforj/cache/cachecore v0.4.2
+	github.com/goforj/cache/cachetest v0.4.2
+	github.com/goforj/cache/driver/dynamocache v0.4.2
+	github.com/goforj/cache/driver/memcachedcache v0.4.2
+	github.com/goforj/cache/driver/mysqlcache v0.4.2
+	github.com/goforj/cache/driver/natscache v0.4.2
+	github.com/goforj/cache/driver/postgrescache v0.4.2
+	github.com/goforj/cache/driver/rediscache v0.4.2
+	github.com/goforj/cache/driver/sqlcore v0.4.2
+	github.com/goforj/cache/driver/sqlitecache v0.4.2
 	github.com/goforj/env/v2 v2.6.1
 	github.com/goforj/str/v2 v2.0.1
 )
@@ -67,18 +68,22 @@ require (
 
 const storageGeneratorIntegrationGoMod = `module example.com/storagegeneratorintegration
 
-go 1.24
+go 1.26.0
 
 require (
+	github.com/klauspost/compress v1.20.2
 	github.com/goforj/env/v2 v2.6.1
-	github.com/goforj/storage v0.5.1-0.20261018063152-b403d13f1e70
-	github.com/goforj/storage/driver/ftpstorage v0.5.0
-	github.com/goforj/storage/driver/gcsstorage v0.5.0
-	github.com/goforj/storage/driver/localstorage v0.5.0
-	github.com/goforj/storage/driver/memorystorage v0.5.0
-	github.com/goforj/storage/driver/redisstorage v0.5.0
-	github.com/goforj/storage/driver/s3storage v0.5.1-0.20261018063152-b403d13f1e70
-	github.com/goforj/storage/driver/sftpstorage v0.5.0
+	golang.org/x/net v0.61.0
+	go.opentelemetry.io/otel/sdk v1.45.0
+	go.opentelemetry.io/otel/sdk/metric v1.45.0
+	github.com/goforj/storage v0.5.2-0.20261018070033-d7c4338e0d01
+	github.com/goforj/storage/driver/ftpstorage v0.5.1
+	github.com/goforj/storage/driver/gcsstorage v0.5.1
+	github.com/goforj/storage/driver/localstorage v0.5.1
+	github.com/goforj/storage/driver/memorystorage v0.5.1
+	github.com/goforj/storage/driver/redisstorage v0.5.1
+	github.com/goforj/storage/driver/s3storage v0.5.2-0.20261018070033-d7c4338e0d01
+	github.com/goforj/storage/driver/sftpstorage v0.5.1
 	github.com/goforj/str/v2 v2.0.1
 )
 `
@@ -574,7 +579,7 @@ func startGenericContainerResult(ctx context.Context, req testcontainers.Contain
 		_ = container.Terminate(context.Background())
 		return startedContainer{}, fmt.Errorf("container host %s: %w", req.Image, err)
 	}
-	mapped, err := container.MappedPort(ctx, nat.Port(port))
+	mapped, err := container.MappedPort(ctx, port)
 	if err != nil {
 		_ = container.Terminate(context.Background())
 		return startedContainer{}, fmt.Errorf("container mapped port %s: %w", req.Image, err)

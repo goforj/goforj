@@ -69,7 +69,7 @@ func artifactPath(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", fmt.Errorf("backup artifact path is required")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", fmt.Errorf("create backup artifact directory: %w", err)
 	}
 	return path, nil
@@ -106,6 +106,9 @@ func (s sqliteStrategy) Backup(ctx context.Context, conn Connection, artifact st
 	}
 	if _, err := db.ExecContext(ctx, "VACUUM INTO ?", path); err != nil {
 		return fmt.Errorf("backup SQLite database: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("protect SQLite backup: %w", err)
 	}
 	return nil
 }
@@ -274,7 +277,7 @@ func postgresEnv(conn Connection) []string {
 
 // runRedirectedTool runs a native tool with stdout redirected to an artifact.
 func runRedirectedTool(ctx context.Context, name string, args []string, env []string, output string) error {
-	file, err := os.Create(output)
+	file, err := openPrivateOutput(output)
 	if err != nil {
 		return fmt.Errorf("create %s output: %w", name, err)
 	}

@@ -474,6 +474,28 @@ func TestEffectiveEvaluationWorkersCapsIdleCapacity(t *testing.T) {
 	}
 }
 
+// TestValidateObservedEvaluationFileModeRejectsCallerUmaskDrift keeps shell policy from contaminating candidate ownership results.
+func TestValidateObservedEvaluationFileModeRejectsCallerUmaskDrift(t *testing.T) {
+	if err := validateObservedEvaluationFileMode(0o644); err != nil {
+		t.Fatalf("conventional file mode rejected: %v", err)
+	}
+	for _, mode := range []os.FileMode{0o600, 0o640, 0o664} {
+		if err := validateObservedEvaluationFileMode(mode); err == nil || !strings.Contains(err.Error(), "umask 022") {
+			t.Fatalf("validateObservedEvaluationFileMode(%04o) = %v, want actionable rejection", mode, err)
+		}
+	}
+}
+
+// TestValidateEvaluationFileCreationModeAcceptsConventionalProcessPolicy exercises the real preflight before provider authority is loaded.
+func TestValidateEvaluationFileCreationModeAcceptsConventionalProcessPolicy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not apply POSIX creation masks")
+	}
+	if err := validateEvaluationFileCreationMode(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // fakeEvaluationComparisonDiagnostic exposes worker requests without starting a real model session.
 type fakeEvaluationComparisonDiagnostic struct {
 	run func(context.Context, eval.LocalGuidanceDiagnosticRequest) (eval.GuidanceDiagnosticResult, error)

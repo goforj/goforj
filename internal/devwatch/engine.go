@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -26,7 +27,7 @@ const (
 type BackendKind string
 
 const (
-	// BackendAuto prefers filesystem notifications and falls back to polling when setup fails.
+	// BackendAuto uses notifications where directory watches do not retain every child, otherwise filtered polling.
 	BackendAuto BackendKind = "auto"
 	// BackendNotify requires native filesystem notifications.
 	BackendNotify BackendKind = "notify"
@@ -268,7 +269,7 @@ type devWatchBackendStart struct {
 // devWatchBackend abstracts physical event delivery so all logical watchers share one subscription layer.
 type devWatchBackend interface {
 	// start defines the start behavior required from implementations.
-	start(context.Context, []string, func(string) bool) (devWatchBackendStart, error)
+	start(context.Context, []string, func(string) bool, func(string) bool) (devWatchBackendStart, error)
 }
 
 type devWatchPending struct {
@@ -358,12 +359,12 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 
 	backend, backendKind := e.configuredBackend()
-	started, err := backend.start(ctx, e.roots, e.shouldDescend)
-	if err != nil && e.config.Backend == BackendAuto {
+	started, err := backend.start(ctx, e.roots, e.shouldDescend, e.shouldTrackFile)
+	if err != nil && e.config.Backend == BackendAuto && backendKind == BackendNotify {
 		notifyErr := err
 		backendKind = BackendPoll
 		backend = &devWatchPollBackend{interval: e.config.PollInterval}
-		started, err = backend.start(ctx, e.roots, e.shouldDescend)
+		started, err = backend.start(ctx, e.roots, e.shouldDescend, e.shouldTrackFile)
 		if err != nil {
 			err = errors.Join(
 				fmt.Errorf("start filesystem notification backend: %w", notifyErr),
@@ -426,6 +427,11 @@ func validateDevWatchRoot(root string) error {
 
 // configuredBackend selects the requested physical event source.
 func (e *Engine) configuredBackend() (devWatchBackend, BackendKind) {
+	return e.configuredBackendForPlatform(runtime.GOOS)
+}
+
+// configuredBackendForPlatform keeps platform policy testable without changing the process environment.
+func (e *Engine) configuredBackendForPlatform(goos string) (devWatchBackend, BackendKind) {
 	if e.config.backendForTest != nil {
 		backendKind := e.config.Backend
 		if backendKind == BackendAuto {
@@ -436,7 +442,20 @@ func (e *Engine) configuredBackend() (devWatchBackend, BackendKind) {
 	if e.config.Backend == BackendPoll {
 		return &devWatchPollBackend{interval: e.config.PollInterval}, BackendPoll
 	}
+	if e.config.Backend == BackendAuto && devWatchPlatformUsesFileDescriptorNotifications(goos) {
+		return &devWatchPollBackend{interval: e.config.PollInterval}, BackendPoll
+	}
 	return &devWatchFSNotifyBackend{}, BackendNotify
+}
+
+// devWatchPlatformUsesFileDescriptorNotifications identifies native backends that open every child of a watched directory.
+func devWatchPlatformUsesFileDescriptorNotifications(goos string) bool {
+	switch goos {
+	case "darwin", "dragonfly", "freebsd", "netbsd", "openbsd":
+		return true
+	default:
+		return false
+	}
 }
 
 // Events returns debounced logical watcher batches.
@@ -645,6 +664,17 @@ func (e *Engine) setHealth(health Health) {
 func (e *Engine) shouldDescend(directory string) bool {
 	for _, watcher := range e.watchers {
 		if devWatchSpecNeedsDirectory(watcher, directory) {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldTrackFile reports whether at least one logical watcher selected a physical file.
+func (e *Engine) shouldTrackFile(filePath string) bool {
+	for _, watcher := range e.watchers {
+		relativePath, ok := relativeDevWatchPath(watcher.Roots, filePath)
+		if ok && devWatchSpecMatches(watcher, relativePath) {
 			return true
 		}
 	}

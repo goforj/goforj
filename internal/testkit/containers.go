@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/go-connections/nat"
 	testcontainers "github.com/testcontainers/testcontainers-go"
 	tclog "github.com/testcontainers/testcontainers-go/log"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -251,7 +250,7 @@ func mappedContainerEndpoint(ctx context.Context, container testcontainers.Conta
 	if err != nil {
 		return "", "", fmt.Errorf("resolve testcontainer host: %w", err)
 	}
-	mappedPort, err := container.MappedPort(ctx, nat.Port(portSpec))
+	mappedPort, err := container.MappedPort(ctx, portSpec)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve testcontainer port %s: %w", portSpec, err)
 	}

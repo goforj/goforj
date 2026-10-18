@@ -1,4 +1,6 @@
-FROM grafana/grafana:12.0.2
+FROM grafana/grafana:12.0.2@sha256:b5b59bfc7561634c2d7b136c4543d702ebcc94a3da477f21ff26f89ffd4214fa
 
 COPY provisioning /etc/grafana/provisioning
 COPY dashboards /etc/grafana/dashboards
+
+USER 472

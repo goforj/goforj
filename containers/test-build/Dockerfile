@@ -1,10 +1,17 @@
-FROM debian:trixie
+FROM debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5 AS runtime
 
 # Versions (override at build time if desired)
-ARG GO_VERSION=1.25.0
+ARG GO_VERSION=1.26.9
+ARG GO_AMD64_SHA256=42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d
+ARG GO_ARM64_SHA256=4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052
 
-# Install base deps + Docker Engine dependencies
-RUN apt-get update && apt-get install -y \
+ARG BUILDX_VERSION=0.38.0
+ARG COMPOSE_VERSION=5.6.0
+ARG PLUGIN_X_NET_VERSION=v0.61.0
+ARG PLUGIN_GO_ARCHIVE_VERSION=v0.3.3
+
+# Apply security fixes to inherited packages before adding Docker Engine dependencies.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     gnupg \
@@ -28,12 +35,10 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
       $(. /etc/os-release; echo $VERSION_CODENAME) stable" \
       > /etc/apt/sources.list.d/docker.list
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     docker-ce \
     docker-ce-cli \
     containerd.io \
-    docker-buildx-plugin \
-    docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ln -s /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
@@ -41,7 +46,14 @@ RUN ln -s /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-c
 # -------------------------------------------------------------
 # Install Go
 # -------------------------------------------------------------
-RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-$(dpkg --print-architecture).tar.gz -o /tmp/go.tgz && \
+RUN arch="$(dpkg --print-architecture)" && \
+    case "$arch" in \
+      amd64) checksum="$GO_AMD64_SHA256" ;; \
+      arm64) checksum="$GO_ARM64_SHA256" ;; \
+      *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" -o /tmp/go.tgz && \
+    echo "${checksum}  /tmp/go.tgz" | sha256sum -c - && \
     tar -C /usr/local -xzf /tmp/go.tgz && \
     rm /tmp/go.tgz
 
@@ -51,6 +63,12 @@ ENV PATH="${GOPATH}/bin:/usr/local/go/bin:${PATH}"
 
 RUN mkdir -p /go && chmod -R 777 /go
 
+ARG PLUGIN_COMPRESS_VERSION=v1.20.2
+COPY build-plugins.sh /tmp/build-plugins.sh
+RUN --mount=type=cache,target=/tmp/gocache \
+    --mount=type=cache,target=/go/pkg/mod \
+    GOCACHE=/tmp/gocache sh /tmp/build-plugins.sh && rm /tmp/build-plugins.sh
+
 # -------------------------------------------------------------
 # Docker-in-Docker setup
 # -------------------------------------------------------------
@@ -58,10 +76,24 @@ RUN mkdir -p /go && chmod -R 777 /go
 RUN mkdir -p /var/lib/docker
 
 # Standard DinD entrypoint (similar to docker:dind)
-COPY --from=docker:27-dind /usr/local/bin/dind /usr/local/bin/dind
-COPY --from=docker:27-dind /usr/local/bin/docker-init /usr/local/bin/docker-init
+COPY --from=docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce /usr/local/bin/dind /usr/local/bin/dind
+COPY --from=docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce /usr/local/bin/docker-init /usr/local/bin/docker-init
 
 # Make dockerd the default entrypoint
 ENTRYPOINT ["/usr/local/bin/dind"]
 
 CMD ["dockerd"]
+
+# Rebuild affected engine binaries without shipping native build dependencies.
+FROM runtime AS engine-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential pkg-config libseccomp-dev libsystemd-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY build-engine.sh /tmp/build-engine.sh
+RUN --mount=type=cache,target=/tmp/gocache \
+    --mount=type=cache,target=/go/pkg/mod \
+    GOCACHE=/tmp/gocache sh /tmp/build-engine.sh
+
+FROM runtime
+COPY --from=engine-builder /out/bin/ /usr/bin/
+COPY --from=engine-builder /out/licenses/ /usr/share/doc/docker-engine-security/

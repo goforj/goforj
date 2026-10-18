@@ -6,33 +6,37 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// pinnedModuleVersions keeps rendered projects on the framework versions validated together by GoForj's integration suite.
+// pinnedModuleVersions records validated framework releases and ecosystem security minimums for rendered projects.
 var pinnedModuleVersions = map[string]string{
+	"charm.land/bubbles/v2":                               "v2.2.1",
+	"charm.land/bubbletea/v2":                             "v2.1.0",
+	"charm.land/lipgloss/v2":                              "v2.0.6",
 	"github.com/a-h/templ":                                "v0.3.1020",
+	"github.com/charmbracelet/x/cellbuf":                  "v0.0.15",
 	"github.com/goforj/cache":                             "v0.4.0",
-	"github.com/goforj/cache/cachecore":                   "v0.4.0",
-	"github.com/goforj/cache/cachetest":                   "v0.4.0",
-	"github.com/goforj/cache/driver/dynamocache":          "v0.4.0",
-	"github.com/goforj/cache/driver/memcachedcache":       "v0.4.0",
-	"github.com/goforj/cache/driver/mysqlcache":           "v0.4.0",
-	"github.com/goforj/cache/driver/natscache":            "v0.4.0",
-	"github.com/goforj/cache/driver/postgrescache":        "v0.4.0",
-	"github.com/goforj/cache/driver/rediscache":           "v0.4.0",
-	"github.com/goforj/cache/driver/sqlcore":              "v0.4.0",
-	"github.com/goforj/cache/driver/sqlitecache":          "v0.4.0",
+	"github.com/goforj/cache/cachecore":                   "v0.4.2",
+	"github.com/goforj/cache/cachetest":                   "v0.4.2",
+	"github.com/goforj/cache/driver/dynamocache":          "v0.4.2",
+	"github.com/goforj/cache/driver/memcachedcache":       "v0.4.2",
+	"github.com/goforj/cache/driver/mysqlcache":           "v0.4.2",
+	"github.com/goforj/cache/driver/natscache":            "v0.4.2",
+	"github.com/goforj/cache/driver/postgrescache":        "v0.4.2",
+	"github.com/goforj/cache/driver/rediscache":           "v0.4.2",
+	"github.com/goforj/cache/driver/sqlcore":              "v0.4.2",
+	"github.com/goforj/cache/driver/sqlitecache":          "v0.4.2",
 	"github.com/goforj/console":                           "v0.2.0",
 	"github.com/goforj/crypt":                             "v1.2.0",
 	"github.com/goforj/env/v2":                            "v2.6.1",
-	"github.com/goforj/events":                            "v0.2.0",
-	"github.com/goforj/events/driver/gcppubsubevents":     "v0.2.0",
-	"github.com/goforj/events/driver/kafkaevents":         "v0.2.0",
-	"github.com/goforj/events/driver/natsevents":          "v0.2.0",
-	"github.com/goforj/events/driver/natsjetstreamevents": "v0.2.0",
-	"github.com/goforj/events/driver/redisevents":         "v0.2.0",
-	"github.com/goforj/events/driver/snsevents":           "v0.2.0",
-	"github.com/goforj/events/eventscore":                 "v0.2.0",
-	"github.com/goforj/events/eventsfake":                 "v0.2.0",
-	"github.com/goforj/events/eventstest":                 "v0.2.0",
+	"github.com/goforj/events":                            "v0.2.1",
+	"github.com/goforj/events/driver/gcppubsubevents":     "v0.2.1",
+	"github.com/goforj/events/driver/kafkaevents":         "v0.2.1",
+	"github.com/goforj/events/driver/natsevents":          "v0.2.1",
+	"github.com/goforj/events/driver/natsjetstreamevents": "v0.2.1",
+	"github.com/goforj/events/driver/redisevents":         "v0.2.1",
+	"github.com/goforj/events/driver/snsevents":           "v0.2.1",
+	"github.com/goforj/events/eventscore":                 "v0.2.1",
+	"github.com/goforj/events/eventsfake":                 "v0.2.1",
+	"github.com/goforj/events/eventstest":                 "v0.2.1",
 	"github.com/goforj/execx":                             "v1.1.4",
 	"github.com/goforj/godump":                            "v1.9.1",
 	"github.com/goforj/httpx":                             "v1.1.0",
@@ -50,31 +54,61 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/queue/driver/sqlqueuecore":         "v0.2.1",
 	"github.com/goforj/queue/driver/sqsqueue":             "v0.2.1",
 	"github.com/goforj/scheduler/v2":                      "v2.1.4",
-	"github.com/goforj/storage":                           "v0.5.1-0.20261018063152-b403d13f1e70",
-	"github.com/goforj/storage/driver/dropboxstorage":     "v0.5.0",
-	"github.com/goforj/storage/driver/ftpstorage":         "v0.5.0",
-	"github.com/goforj/storage/driver/gcsstorage":         "v0.5.0",
-	"github.com/goforj/storage/driver/localstorage":       "v0.5.0",
-	"github.com/goforj/storage/driver/memorystorage":      "v0.5.0",
-	"github.com/goforj/storage/driver/rclonestorage":      "v0.5.0",
-	"github.com/goforj/storage/driver/redisstorage":       "v0.5.0",
-	"github.com/goforj/storage/driver/s3storage":          "v0.5.1-0.20261018063152-b403d13f1e70",
-	"github.com/goforj/storage/driver/sftpstorage":        "v0.5.0",
-	"github.com/goforj/storage/storagecore":               "v0.5.1-0.20261018062947-24ec77d658d3",
-	"github.com/goforj/storage/storagetest":               "v0.5.0",
-	"github.com/goforj/web":                               "v0.6.2",
+	"github.com/goforj/storage":                           "v0.5.2-0.20261018070033-d7c4338e0d01",
+	"github.com/goforj/storage/driver/dropboxstorage":     "v0.5.1",
+	"github.com/goforj/storage/driver/ftpstorage":         "v0.5.1",
+	"github.com/goforj/storage/driver/gcsstorage":         "v0.5.1",
+	"github.com/goforj/storage/driver/localstorage":       "v0.5.1",
+	"github.com/goforj/storage/driver/memorystorage":      "v0.5.1",
+	"github.com/goforj/storage/driver/rclonestorage":      "v0.5.1",
+	"github.com/goforj/storage/driver/redisstorage":       "v0.5.1",
+	"github.com/goforj/storage/driver/s3storage":          "v0.5.2-0.20261018070033-d7c4338e0d01",
+	"github.com/goforj/storage/driver/sftpstorage":        "v0.5.1",
+	"github.com/goforj/storage/storagecore":               "v0.5.2-0.20261018064156-39419460440b",
+	"github.com/goforj/storage/storagetest":               "v0.5.1",
 	"github.com/goforj/str":                               "v1.3.0",
 	"github.com/goforj/str/v2":                            "v2.0.1",
+	"github.com/goforj/web":                               "v0.6.4",
 	"github.com/goforj/wire":                              "v1.2.0",
-	"github.com/nats-io/nats.go":                          "v1.50.0",
+	"github.com/klauspost/compress":                       "v1.20.2",
+	"github.com/labstack/echo/v5":                         "v5.4.0",
+	"github.com/nats-io/nats.go":                          "v1.53.1",
+	"github.com/rabbitmq/amqp091-go":                      "v1.15.0",
+	"github.com/rclone/rclone":                            "v1.75.2",
+	"go.opentelemetry.io/otel/sdk":                        "v1.45.0",
+	"go.opentelemetry.io/otel/sdk/metric":                 "v1.45.0",
+	"golang.org/x/net":                                    "v0.61.0",
+	"golang.org/x/text":                                   "v0.41.0",
+	"golang.org/x/tools":                                  "v0.52.0",
+}
+
+// UsesMinimumVersion identifies ecosystem fixes that must not downgrade a caller-selected newer version.
+func UsesMinimumVersion(module string) bool {
+	switch module {
+	case "github.com/klauspost/compress", "github.com/labstack/echo/v5", "github.com/rabbitmq/amqp091-go", "golang.org/x/net", "golang.org/x/text", "golang.org/x/tools", "github.com/rclone/rclone", "go.opentelemetry.io/otel/sdk", "go.opentelemetry.io/otel/sdk/metric":
+		return true
+	default:
+		return false
+	}
+}
+
+var webRendererSyncModules = []string{
+	"golang.org/x/net",
+	"golang.org/x/tools",
 }
 
 var rendererSyncModules = []string{
+	"charm.land/bubbles/v2",
+	"charm.land/bubbletea/v2",
+	"charm.land/lipgloss/v2",
+	"github.com/charmbracelet/x/cellbuf",
 	"github.com/goforj/console",
 	"github.com/goforj/metrics",
 	"github.com/goforj/httpx",
+	"github.com/klauspost/compress",
 	"github.com/goforj/godump",
 	"github.com/goforj/web",
+	"github.com/labstack/echo/v5",
 	"github.com/goforj/str/v2",
 	"github.com/goforj/scheduler/v2",
 	"github.com/goforj/env/v2",
@@ -84,6 +118,7 @@ var rendererSyncModules = []string{
 }
 
 var cacheRendererSyncModules = []string{
+	"golang.org/x/text",
 	"github.com/goforj/cache",
 	"github.com/goforj/cache/cachecore",
 	"github.com/goforj/cache/driver/dynamocache",
@@ -102,6 +137,9 @@ var schedulerRendererSyncModules = []string{
 }
 
 var eventsRendererSyncModules = []string{
+	"golang.org/x/net",
+	"go.opentelemetry.io/otel/sdk",
+	"go.opentelemetry.io/otel/sdk/metric",
 	"github.com/goforj/events",
 	"github.com/goforj/events/eventscore",
 	"github.com/goforj/events/driver/gcppubsubevents",
@@ -113,6 +151,10 @@ var eventsRendererSyncModules = []string{
 }
 
 var storageRendererSyncModules = []string{
+	"golang.org/x/net",
+	"go.opentelemetry.io/otel/sdk",
+	"go.opentelemetry.io/otel/sdk/metric",
+	"github.com/rclone/rclone",
 	"github.com/goforj/storage",
 	"github.com/goforj/storage/storagecore",
 	"github.com/goforj/storage/driver/dropboxstorage",
@@ -136,6 +178,8 @@ var databaseRendererSyncModules = []string{
 }
 
 var jobsRendererSyncModules = []string{
+	"github.com/rabbitmq/amqp091-go",
+	"golang.org/x/text",
 	"github.com/goforj/queue",
 	"github.com/goforj/queue/driver/mysqlqueue",
 	"github.com/goforj/queue/driver/natsqueue",
@@ -165,6 +209,9 @@ func MustVersionFor(module string) string {
 // SyncCoreLibraries returns the pinned renderer dependencies required by the selected project capabilities.
 func SyncCoreLibraries(components project.Components) []string {
 	modules := append([]string(nil), rendererSyncModules...)
+	if components.WebAPI || components.WebUI {
+		modules = append(modules, webRendererSyncModules...)
+	}
 	if components.Cache {
 		modules = append(modules, cacheRendererSyncModules...)
 	}

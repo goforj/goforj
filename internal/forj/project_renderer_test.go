@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/goforj/goforj/internal/coredeps"
 	"github.com/goforj/goforj/project"
@@ -113,6 +112,58 @@ func TestGeneratedGitignoreCoversProjectLocalArtifacts(t *testing.T) {
 		if patterns[tracked] {
 			t.Errorf("generated gitignore unexpectedly hides trackable path %q", tracked)
 		}
+	}
+}
+
+// TestGeneratedProjectReadmeBrandsNewProjectsWithoutReplacingOwnerDocumentation verifies the initial guide is useful while remaining project-owned.
+func TestGeneratedProjectReadmeBrandsNewProjectsWithoutReplacingOwnerDocumentation(t *testing.T) {
+	root := t.TempDir()
+	workspace, err := resolveProjectRenderWorkspace(root)
+	if err != nil {
+		t.Fatalf("resolve render workspace: %v", err)
+	}
+	renderer := &ProjectRenderer{
+		workspace: workspace,
+		config: &project.Config{
+			ProjectName: "Parcel Pilot",
+		},
+		stats: &renderStats{},
+	}
+
+	if err := renderer.writeTemplatesOnce([]string{"README.md.tmpl"}); err != nil {
+		t.Fatalf("render project README: %v", err)
+	}
+	readmePath := filepath.Join(root, "README.md")
+	readme, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read project README: %v", err)
+	}
+	for _, expected := range []string{
+		"twitter-banner.png",
+		"# Parcel Pilot",
+		"forj dev",
+		"forj build",
+		"go test ./...",
+		"https://goforj.dev",
+	} {
+		if !strings.Contains(string(readme), expected) {
+			t.Errorf("generated project README missing %q", expected)
+		}
+	}
+
+	const ownerContent = "# Parcel Pilot\n\nTeam-owned deployment notes.\n"
+	if err := os.WriteFile(readmePath, []byte(ownerContent), 0o644); err != nil {
+		t.Fatalf("write owner README: %v", err)
+	}
+	if err := renderer.writeTemplatesOnce([]string{"README.md.tmpl"}); err != nil {
+		t.Fatalf("rerender project README: %v", err)
+	}
+	preserved, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read preserved project README: %v", err)
+	}
+	if string(preserved) != ownerContent {
+		t.Fatalf("owner README changed:\n%s", preserved)
 	}
 }
 
@@ -746,6 +797,7 @@ func TestNextStepsUseSimpleLocalServicesCommand(t *testing.T) {
 	}
 }
 
+// TestRunWireGenerateRunsAppDirsInParallel requires both Wire processes to reach a barrier before either can finish.
 func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	root := t.TempDir()
 	for _, path := range []string{
@@ -764,7 +816,26 @@ func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 
 	toolsDir := t.TempDir()
 	wirePath := filepath.Join(toolsDir, "wire")
-	wireScript := "#!/bin/sh\nsleep 0.2\nexit 0\n"
+	barrierDir := t.TempDir()
+	t.Setenv("FORJ_TEST_WIRE_BARRIER", barrierDir)
+	wireScript := `#!/bin/sh
+set -eu
+case "$PWD" in
+  */app/wire) marker=default ;;
+  */app/billing/wire) marker=billing ;;
+  *) printf 'unexpected Wire directory: %s\n' "$PWD" >&2; exit 1 ;;
+esac
+: > "$FORJ_TEST_WIRE_BARRIER/$marker.started"
+attempt=0
+while [ ! -f "$FORJ_TEST_WIRE_BARRIER/default.started" ] || [ ! -f "$FORJ_TEST_WIRE_BARRIER/billing.started" ]; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 1000 ]; then
+    printf 'Wire process %s never reached the peer startup barrier\n' "$marker" >&2
+    exit 1
+  fi
+  sleep 0.01
+done
+`
 	if err := os.WriteFile(wirePath, []byte(wireScript), 0o755); err != nil {
 		t.Fatalf("write fake wire: %v", err)
 	}
@@ -774,13 +845,13 @@ func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	if err := renderer.beginRenderInvocation(root); err != nil {
 		t.Fatalf("begin render invocation: %v", err)
 	}
-	start := time.Now()
 	if err := renderer.runWireGenerate(); err != nil {
 		t.Fatalf("runWireGenerate returned error: %v", err)
 	}
-	elapsed := time.Since(start)
-	if elapsed > 350*time.Millisecond {
-		t.Fatalf("expected wire dirs to run in parallel, took %s", elapsed)
+	for _, marker := range []string{"default.started", "billing.started"} {
+		if _, err := os.Stat(filepath.Join(barrierDir, marker)); err != nil {
+			t.Fatalf("Wire startup marker %s: %v", marker, err)
+		}
 	}
 }
 
@@ -2567,5 +2638,53 @@ func TestWriteAppEnvDefaultsKeepsSupportedDriversInBaseEnv(t *testing.T) {
 	}
 	if !strings.Contains(hostText, "REPORTING_DB_HOST=localhost") {
 		t.Fatalf(".env.host missing app localhost override:\n%s", hostText)
+	}
+}
+
+// TestCoreModulesNeedingSyncPreservesNewerMinimums verifies fixes upgrade old consumers without downgrading newer selections or local replacements.
+func TestCoreModulesNeedingSyncPreservesNewerMinimums(t *testing.T) {
+	cases := []struct {
+		name, module, current, desired, replacement string
+		pending                                     bool
+	}{
+		{name: "older minimum", module: "golang.org/x/net", current: "v0.58.0", desired: "v0.61.0", pending: true},
+		{name: "equal minimum", module: "golang.org/x/net", current: "v0.61.0", desired: "v0.61.0"},
+		{name: "newer minimum", module: "golang.org/x/net", current: "v0.62.0", desired: "v0.61.0"},
+		{name: "newer prerelease", module: "golang.org/x/net", current: "v0.62.0-rc.1", desired: "v0.61.0"},
+		{name: "replacement", module: "golang.org/x/net", current: "v0.58.0", desired: "v0.61.0", replacement: "\nreplace golang.org/x/net => ../net\n"},
+		{name: "exact framework pin", module: "github.com/goforj/web", current: "v0.7.0", desired: "v0.6.2", pending: true},
+		{name: "missing minimum", module: "golang.org/x/net", desired: "v0.61.0", pending: true},
+		{name: "older Echo minimum", module: "github.com/labstack/echo/v5", current: "v5.2.0", desired: "v5.4.0", pending: true},
+		{name: "equal Echo minimum", module: "github.com/labstack/echo/v5", current: "v5.4.0", desired: "v5.4.0"},
+		{name: "newer Echo minimum", module: "github.com/labstack/echo/v5", current: "v5.5.0", desired: "v5.4.0"},
+		{name: "Echo replacement", module: "github.com/labstack/echo/v5", current: "v5.2.0", desired: "v5.4.0", replacement: "\nreplace github.com/labstack/echo/v5 => ../echo\n"},
+		{name: "older compression minimum", module: "github.com/klauspost/compress", current: "v1.20.1", desired: "v1.20.2", pending: true},
+		{name: "equal compression minimum", module: "github.com/klauspost/compress", current: "v1.20.2", desired: "v1.20.2"},
+		{name: "newer compression minimum", module: "github.com/klauspost/compress", current: "v1.20.3", desired: "v1.20.2"},
+		{name: "compression replacement", module: "github.com/klauspost/compress", current: "v1.20.1", desired: "v1.20.2", replacement: "\nreplace github.com/klauspost/compress => ../compress\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "go.mod")
+			body := "module example.com/app\n\ngo 1.26.0\n"
+			if tc.current != "" {
+				body += "\nrequire " + tc.module + " " + tc.current + "\n"
+			}
+			if err := os.WriteFile(path, []byte(body+tc.replacement), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			spec := tc.module + "@" + tc.desired
+			pending, skipped, err := coreModulesNeedingSync(path, []string{spec})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.pending {
+				if !reflect.DeepEqual(pending, []string{spec}) || skipped != 0 {
+					t.Fatalf("pending=%v skipped=%d, want %s pending", pending, skipped, spec)
+				}
+			} else if len(pending) != 0 || skipped != 1 {
+				t.Fatalf("pending=%v skipped=%d, want retained selection", pending, skipped)
+			}
+		})
 	}
 }

@@ -2,6 +2,10 @@ package backup
 
 import (
 	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,6 +74,34 @@ func TestPortableArchiveStoreVerifiesArtifact(t *testing.T) {
 	}
 	if got.Version != 1 || got.Tables[0].Name != "users" {
 		t.Fatalf("unexpected portable archive: %#v", got)
+	}
+}
+
+// TestPortableServiceCreateRejectsExistingBackupSet ensures timestamp collisions cannot overwrite a completed backup.
+func TestPortableServiceCreateRejectsExistingBackupSet(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "existing")
+	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewPortableService().Create(context.Background(), dir, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "create exclusive portable backup set") {
+		t.Fatalf("create error = %v, want exclusive backup set rejection", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("existing backup set changed: %v", err)
+	}
+}
+
+// TestPortableServiceCreateCleansFailedBackupSet ensures failed exports do not block an immediate retry.
+func TestPortableServiceCreateCleansFailedBackupSet(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "portable-backup")
+	_, err := NewPortableService().Create(context.Background(), dir, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "database connection is required") {
+		t.Fatalf("create error = %v, want database validation failure", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("failed backup set stat error = %v, want not found", err)
 	}
 }
 
