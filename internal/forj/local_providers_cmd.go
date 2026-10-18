@@ -18,12 +18,12 @@ type LocalProvidersCmd struct {
 
 // Signature places the local-provider switch alongside the existing environment commands.
 func (*LocalProvidersCmd) Signature() string {
-	return `name:"env:local" help:"Switch resources to local providers or restore previous settings"`
+	return `name:"env:local" help:"Choose resource drivers, use local providers, or restore settings"`
 }
 
 // Help explains which files and running processes the local-provider switch affects.
 func (*LocalProvidersCmd) Help() string {
-	return "Select resources to switch to SQLite or in-process providers, review the changes, and update .env.\nOne private backup allows you to restore the previous settings.\nRun forj build afterward to regenerate driver support. Database contents and existing containers stay in place."
+	return "Choose resource drivers or switch to SQLite and in-process providers, review the changes, and update .env.\nOne private backup allows you to restore the previous settings.\nRun forj build afterward to regenerate driver support. Database contents and existing containers stay in place."
 }
 
 // Run previews every mutation and leaves generation and process management to their existing commands.
@@ -40,22 +40,28 @@ func (c *LocalProvidersCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	restore := session.HasPrevious()
+	options := []string{"Use local providers", "Choose drivers", "Cancel"}
+	defaultChoice := 0
+	if session.HasPrevious() {
+		options = []string{"Use local providers", "Choose drivers", "Restore previous settings", "Cancel"}
+		defaultChoice = 2
+	}
+	choice, err := ui.ChooseIndex("Resource drivers", options, defaultChoice)
+	if err != nil || choice == len(options)-1 {
+		return err
+	}
+	restore := choice == 2
 	var values map[string]string
-	if restore {
-		choice, err := ui.ChooseIndex("Local-provider restore point available", []string{"Restore previous settings", "Cancel"}, 0)
-		if err != nil || choice != 0 {
-			return err
-		}
-		values, err = session.Previous()
-		if err != nil {
-			return err
-		}
-	} else {
+	switch choice {
+	case 0:
 		values, err = chooseLocalResources(ui, session)
-		if err != nil || values == nil {
-			return err
-		}
+	case 1:
+		values, err = chooseResourceDrivers(ui, session)
+	case 2:
+		values, err = session.Previous()
+	}
+	if err != nil || values == nil {
+		return err
 	}
 	return applyLocalProviders(ui, session, values, restore)
 }
@@ -94,6 +100,47 @@ func chooseLocalResources(ui *console.Console, s *localproviders.Session) (map[s
 		}
 		key := s.Resources[choice-1].Key
 		excluded[key] = !excluded[key]
+	}
+}
+
+// chooseResourceDrivers edits only catalog driver choices and leaves credentials in project configuration.
+func chooseResourceDrivers(ui *console.Console, s *localproviders.Session) (map[string]string, error) {
+	selections := map[string]string{}
+	for {
+		choices := []string{"Review changes"}
+		for _, resource := range s.Resources {
+			driver := "keep current"
+			if selected, ok := selections[resource.Key]; ok {
+				driver = selected
+			}
+			current := resourceDriverDisplay(resource.Definition, s.Current[resource.Key], false)
+			if current == "" {
+				current = "inherited/default"
+			}
+			choices = append(choices, fmt.Sprintf("%s: %s -> %s", resource.Key, current, driver))
+		}
+		choices = append(choices, "Cancel")
+		choice, err := ui.ChooseIndex("Choose resource drivers", choices, 0)
+		if err != nil || choice == len(choices)-1 {
+			return nil, err
+		}
+		if choice == 0 {
+			return s.Drivers(selections)
+		}
+		resource := s.Resources[choice-1]
+		drivers := []string{"Keep current setting"}
+		for _, driver := range resource.Definition.Drivers {
+			drivers = append(drivers, driver.Name)
+		}
+		selected, err := ui.ChooseIndex(resource.Key, drivers, 0)
+		if err != nil {
+			return nil, err
+		}
+		if selected == 0 {
+			delete(selections, resource.Key)
+		} else {
+			selections[resource.Key] = resource.Definition.Drivers[selected-1].Name
+		}
 	}
 }
 
@@ -181,6 +228,7 @@ func applyLocalProviders(ui *console.Console, s *localproviders.Session, values 
 		ui.Infof("No changes needed")
 		return nil
 	}
+	ui.Infof("Check connection settings for newly selected service drivers before starting the App.")
 	ui.Infof("Database contents stay in place. Apply compatible migrations separately before starting the App.")
 	ui.Infof("Memory and inproc providers are process-local. Existing containers keep running.")
 	ui.Infof("Stop forj dev before applying changes if its startup tasks could touch the database.")

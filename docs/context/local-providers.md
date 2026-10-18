@@ -6,7 +6,7 @@ Use `forj env:local` when a project configured for MySQL, Redis, or other extern
 forj env:local
 ```
 
-Select which resources to switch, review the changes, and confirm. The defaults are SQLite for databases, memory for caches, workerpool for queues, inproc for events, local storage, and log mail. Disabled components stay disabled. The picker includes named resources and App overrides. Exclude a resource to keep its current provider; inherited settings are pinned when needed to preserve its database target or driver.
+Choose **Use local providers**, select which resources to switch, review the changes, and confirm. The defaults are SQLite for databases, memory for caches, workerpool for queues, inproc for events, local storage, and log mail. Disabled components stay disabled. The picker includes named resources and App overrides. Exclude a resource to keep its current provider; inherited settings are pinned when needed to preserve its database target or driver.
 
 For example, switching all three service-backed resources changes:
 
@@ -43,11 +43,29 @@ forj build
 
 This regenerates driver support and builds the App. The switch itself does not build, restart Apps, or stop existing containers. A running `forj dev` session can detect `.env` changes and run its configured startup tasks. Stop it before preparing a database transition.
 
+## Choose individual drivers
+
+Run `forj env:local` and choose **Choose drivers** to switch back to distributed providers or pick another combination:
+
+```text
+Resource drivers
+  Use local providers
+  Choose drivers
+  Restore previous settings
+  Cancel
+```
+
+Choose a resource, pick a driver from its supported catalog choices, and repeat for any other resources. Choose **Review changes** when ready. For example, choose MySQL for `DB_DRIVER` and Redis for `CACHE_DRIVER` and `QUEUE_DRIVER`. **Keep current setting** leaves a resource alone, including inherited settings. Named resources and App overrides appear separately.
+
+The preview shows driver selections, compiled support, and Compose profile changes. Newly required service profiles are enabled. Unselected resources keep their providers and database targets. Connection values stay private. Switching back to the original database driver recovers its saved DSN when the local switch changed it. A SQLite DSN is cleared when selecting a service database, so it cannot be mistaken for a MySQL or Postgres DSN. Check host, port, database, credentials, and any required DSN before starting a newly selected service driver. The picker does not collect credentials or provision remote services.
+
+You can make further selections without restoring first. One restore point still leads back to the settings before the first switch. Run `forj build` after applying your choices, then restart the App.
+
 ## Restore previous settings
 
 Run `forj env:local` again and choose **Restore previous settings**. It previews the restoration and asks for confirmation. There are no named profiles or saved configuration collections.
 
-One ignored, owner-only file, `.env.local-providers.backup`, records the changed settings before and after the switch. Unchanged credentials remain in `.env`; changed connection values are retained privately for restoration. A no-op does not replace the backup. Another switch requires restoring the outstanding change first.
+One ignored, owner-only file, `.env.local-providers.backup`, records the changed settings before and after the switch. Unchanged credentials remain in `.env`; changed connection values are retained privately for restoration. A no-op does not replace the backup. Further switches update that same restore point without losing the original settings. There is no per-switch history.
 
 Restoration changes only assignments touched by the switch. Later edits to unrelated settings survive. If a controlled setting changed after the switch, restoration stops and identifies the conflicting key without displaying its value. Review that edit before restoring. Successful restoration clears the private values from the backup.
 

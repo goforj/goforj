@@ -136,15 +136,27 @@ func TestApplyPreservesExistingRestorePoint(t *testing.T) {
 	if err := s.Apply(s.Current); err != nil {
 		t.Fatal(err)
 	}
-	changed := clone(s.Current)
-	changed["CACHE_DRIVER"] = "redis"
-	if err := s.Apply(changed); err == nil {
-		t.Fatal("replaced outstanding restore point")
-	}
 	after, _ := os.ReadFile(filepath.Join(root, stateName))
 	if !bytes.Equal(before, after) {
-		t.Fatal("restore point changed")
+		t.Fatal("no-op changed restore point")
 	}
+	changed := clone(s.Current)
+	changed["CACHE_DRIVER"] = "redis"
+	if err := s.Apply(changed); err != nil {
+		t.Fatal(err)
+	}
+	s = openTest(t, root)
+	previous, err := s.Previous()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous["DB_DRIVER"] != "mysql" || previous["CACHE_DRIVER"] != "redis" {
+		t.Fatal("second switch lost original settings")
+	}
+	if err := s.Restore(); err != nil {
+		t.Fatal(err)
+	}
+
 }
 
 // TestSessionRejectsStaleUnsafeAndInvalidFiles covers publication preflight without disclosing private values.
