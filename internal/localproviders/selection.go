@@ -2,6 +2,7 @@ package localproviders
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/goforj/goforj/internal/devservices"
@@ -161,4 +162,73 @@ func (s *Session) localComposeProfiles(values map[string]string) string {
 		return original
 	}
 	return strings.Join(profiles, ",")
+}
+
+// Drivers plans explicit selections while preserving unselected resources and the original restore point.
+func (s *Session) Drivers(selections map[string]string) (map[string]string, error) {
+	original := s.Current
+	if s.HasPrevious() {
+		var err error
+		original, err = s.Previous()
+		if err != nil {
+			return nil, err
+		}
+	}
+	values := clone(s.Current)
+	ordered := slices.Clone(s.Resources)
+	slices.SortStableFunc(ordered, func(a, b Resource) int { return s.portableOrder(a) - s.portableOrder(b) })
+	excluded := map[string]bool{}
+	known := map[string]bool{}
+	for _, resource := range ordered {
+		known[resource.Key] = true
+		driver, selected := selections[resource.Key]
+		if !selected {
+			excluded[resource.Key] = true
+			continue
+		}
+		driver = project.CanonicalResourceDriver(resource.Definition.Key, driver)
+		if err := s.setDriver(values, resource, driver, s.Current); err != nil {
+			return nil, err
+		}
+		if resource.Definition.Key == project.ResourceDatabase && driver != s.databaseValue(s.Current, resource.Key, "DRIVER") {
+			prefix := strings.TrimSuffix(resource.Key, "DRIVER")
+			// A SQLite DSN cannot be reused as a service DSN. Recover the original connection only for its original driver.
+			if driver != "sqlite" {
+				values[prefix+"DSN"] = ""
+			}
+			if driver == s.databaseValue(original, resource.Key, "DRIVER") {
+				for key := range changedKeys(s.state.Previous, s.state.Applied) {
+					if key == prefix+"DSN" || key == prefix+"SQLITE_DATABASE" {
+						if value, present := original[key]; present {
+							values[key] = value
+						} else {
+							delete(values, key)
+						}
+					}
+				}
+			}
+		}
+	}
+	for key := range selections {
+		if !known[key] {
+			return nil, fmt.Errorf("%s is not a selectable resource", key)
+		}
+	}
+	if err := s.preserveExcluded(values, excluded); err != nil {
+		return nil, err
+	}
+	profiles := s.localComposeProfiles(values)
+	before, after := s.usedProfiles(s.Current), s.usedProfiles(values)
+	for _, profile := range keys(after) {
+		if !before[profile] && !slices.Contains(strings.Split(profiles, ","), profile) {
+			if profiles != "" {
+				profiles += ","
+			}
+			profiles += profile
+		}
+	}
+	if _, present := s.Current["COMPOSE_PROFILES"]; present || profiles != "" {
+		values["COMPOSE_PROFILES"] = profiles
+	}
+	return values, s.Validate(values)
 }

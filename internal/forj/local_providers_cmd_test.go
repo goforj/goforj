@@ -31,7 +31,7 @@ func localProvidersFixture(t *testing.T) string {
 func TestLocalProvidersCommandSwitchAndRestore(t *testing.T) {
 	root := localProvidersFixture(t)
 	var output bytes.Buffer
-	command := LocalProvidersCmd{root: root, ui: moduleRenameTestConsole("\ny\n", &output)}
+	command := LocalProvidersCmd{root: root, ui: moduleRenameTestConsole("\n\ny\n", &output)}
 	if err := command.Run(); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestLocalProvidersCommandSwitchAndRestore(t *testing.T) {
 
 // TestLocalProvidersCommandCancellationAndInputFailure never writes unconfirmed changes.
 func TestLocalProvidersCommandCancellationAndInputFailure(t *testing.T) {
-	for _, input := range []string{"\nn\n", "", "5\n"} {
+	for _, input := range []string{"\n\nn\n", "", "3\n", "2\n5\n"} {
 		t.Run(input, func(t *testing.T) {
 			root := localProvidersFixture(t)
 			before, _ := os.ReadFile(filepath.Join(root, ".env"))
@@ -107,7 +107,7 @@ func TestLocalProvidersCommandExclusionKeepsItsService(t *testing.T) {
 		t.Fatal("cache resource missing")
 	}
 	var output bytes.Buffer
-	input := fmt.Sprintf("%d\n1\ny\n", index)
+	input := fmt.Sprintf("1\n%d\n1\ny\n", index)
 	command := LocalProvidersCmd{root: root, ui: moduleRenameTestConsole(input, &output)}
 	if err := command.Run(); err != nil {
 		t.Fatal(err)
@@ -156,5 +156,81 @@ func TestLocalProvidersCommandRegistration(t *testing.T) {
 	}
 	if _, err := parser.Parse([]string{"env:local"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestResourceDriverPickerSwitchesBackToServices keeps switching interactive while a restore point exists.
+func TestResourceDriverPickerSwitchesBackToServices(t *testing.T) {
+	root := localProvidersFixture(t)
+	s, err := localproviders.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, err := s.Portable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(values); err != nil {
+		t.Fatal(err)
+	}
+	s, err = localproviders.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := "2\n"
+	for i, resource := range s.Resources {
+		target := map[string]string{"DB_DRIVER": "mysql", "CACHE_DRIVER": "redis", "QUEUE_DRIVER": "redis"}[resource.Key]
+		for j, driver := range resource.Definition.Drivers {
+			if driver.Name == target {
+				input += fmt.Sprintf("%d\n%d\n", i+2, j+2)
+			}
+		}
+	}
+	input += "1\ny\n"
+	var output bytes.Buffer
+	command := LocalProvidersCmd{root: root, ui: moduleRenameTestConsole(input, &output)}
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = localproviders.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{"DB_DRIVER": "mysql", "CACHE_DRIVER": "redis", "QUEUE_DRIVER": "redis", "DB_DSN": "synthetic-private-dsn"} {
+		if s.Current[key] != want {
+			t.Fatalf("%s was not recovered", key)
+		}
+	}
+	if !strings.Contains(s.Current["COMPOSE_PROFILES"], "mysql") || !strings.Contains(s.Current["COMPOSE_PROFILES"], "redis") {
+		t.Fatal("service profiles not enabled")
+	}
+	if strings.Contains(output.String(), "synthetic-private-dsn") {
+		t.Fatal("picker disclosed connection credentials")
+	}
+	if err := s.Restore(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestResourceDriverPickerInputFailureDoesNotWrite covers cancellation and incomplete driver input.
+func TestResourceDriverPickerInputFailureDoesNotWrite(t *testing.T) {
+	for _, input := range []string{"2\n", "2\n2\n", "2\n2\n1\n5\n", "2\n1\nn\n"} {
+		t.Run(input, func(t *testing.T) {
+			root := localProvidersFixture(t)
+			before, err := os.ReadFile(filepath.Join(root, ".env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			command := LocalProvidersCmd{root: root, ui: moduleRenameTestConsole(input, &output)}
+			_ = command.Run()
+			after, err := os.ReadFile(filepath.Join(root, ".env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("unconfirmed picker changed settings")
+			}
+		})
 	}
 }

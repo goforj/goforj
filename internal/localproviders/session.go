@@ -113,7 +113,7 @@ func (s *Session) Previous() (map[string]string, error) {
 	return values, s.Validate(values)
 }
 
-// Apply saves the original managed settings once and publishes the reviewed local configuration.
+// Apply keeps one original restore point across reviewed provider changes.
 func (s *Session) Apply(values map[string]string) error {
 	if err := s.Validate(values); err != nil {
 		return err
@@ -121,12 +121,17 @@ func (s *Session) Apply(values map[string]string) error {
 	if len(changedKeys(s.Current, values)) == 0 {
 		return nil
 	}
+	original := s.Current
 	if s.HasPrevious() {
-		return fmt.Errorf("restore the previous configuration before switching providers again")
+		var err error
+		original, err = s.Previous()
+		if err != nil {
+			return err
+		}
 	}
 	previous, applied := map[string]string{}, map[string]string{}
-	for key := range changedKeys(s.Current, values) {
-		if value, present := s.Current[key]; present {
+	for key := range changedKeys(original, values) {
+		if value, present := original[key]; present {
 			previous[key] = value
 		}
 		if value, present := values[key]; present {

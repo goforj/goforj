@@ -43,7 +43,23 @@ func TestLocalProvidersRenderedComposition(t *testing.T) {
 	if values["COMPOSE_PROFILES"] != "grafana" || values["ADMIN_DB_DRIVER"] != "sqlite" || values["ADMIN_QUEUE_DRIVER"] != "workerpool" {
 		t.Fatal("full composition did not switch to local providers")
 	}
-	for _, phase := range []string{"local", "restored"} {
+	for _, phase := range []string{"local", "picked-services", "restored"} {
+		if phase == "picked-services" {
+			fresh, err := localproviders.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values, err := fresh.Drivers(map[string]string{"DB_DRIVER": "mysql", "ADMIN_DB_DRIVER": "mysql", "CACHE_DRIVER": "redis", "ADMIN_CACHE_DRIVER": "redis", "QUEUE_DRIVER": "redis", "ADMIN_QUEUE_DRIVER": "redis"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if values["DB_DSN"] != "synthetic-service-dsn" {
+				t.Fatal("picker did not recover service DSN")
+			}
+			if err := fresh.Apply(values); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if phase == "restored" {
 			fresh, err := localproviders.Open(root)
 			if err != nil {
