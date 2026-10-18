@@ -29,6 +29,7 @@ type AppMetadata struct {
 
 // Resource describes one database or storage artifact in a backup set.
 type Resource struct {
+	Database string `json:"database,omitempty"`
 	ID       string `json:"id"`
 	Kind     string `json:"kind"`
 	Name     string `json:"name"`

@@ -9,12 +9,13 @@ import (
 
 // RestoreCmd restores a native backup set into its matching database drivers.
 type RestoreCmd struct {
-	From         string `name:"from" required:"" help:"Backup set directory"`
-	Resource     string `help:"Optional database connection name"`
-	Portable     bool   `help:"Restore a database-neutral portable archive"`
-	TargetDriver string `help:"Target SQL driver for portable restore"`
-	DryRun       bool   `help:"Print the restore plan without changing data"`
-	Confirm      string `help:"Type restore-production to confirm destructive restore"`
+	PrepareTargets bool   `name:"prepare-targets" help:"Create missing selected S3 target buckets before a confirmed restore"`
+	From           string `name:"from" required:"" help:"Backup set directory"`
+	Resource       string `help:"Optional database connection name"`
+	Portable       bool   `help:"Restore a database-neutral portable archive"`
+	TargetDriver   string `help:"Target SQL driver for portable restore"`
+	DryRun         bool   `help:"Print the restore plan without changing data"`
+	Confirm        string `help:"Type restore-production to confirm destructive restore"`
 }
 
 // NewRestoreCmd creates a native backup restore command.
@@ -77,6 +78,18 @@ func (c *RestoreCmd) Run() error {
 	}
 	if c.DryRun {
 		return nil
+	}
+	if c.PrepareTargets {
+		if c.Confirm != "restore-production" {
+			return fmt.Errorf("target preparation requires --confirm restore-production")
+		}
+		for _, resource := range manifest.Resources {
+			if resource.Strategy == "object-archive" && (c.Resource == "" || c.Resource == resource.ID || c.Resource == resource.Name) {
+				if err := PrepareObjectRestore(context.Background(), resource.Name); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	if err := NewService().Restore(context.Background(), c.From, c.Resource, c.Confirm); err != nil {
 		return err

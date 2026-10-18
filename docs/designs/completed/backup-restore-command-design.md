@@ -1091,3 +1091,37 @@ Generated Apps expose only the resource contract used to select backup inputs.
   by more than one App?
 - Should deployment archive helpers become a separate generated task such as
   `deploy:archive`, or remain documented project-specific operations?
+
+## Explicit resource sets and object-content archives
+
+The additive `backup:create --resources db.default,db.reporting,storage.public`
+selector produces one manifest-backed set containing exactly the requested
+resources. It rejects duplicates, missing resources, and unsupported selected
+storage before capturing data. Existing `--resource` and unfiltered command
+behavior remain compatible. `--resources` cannot be combined with `--resource`
+or `--portable`.
+
+Use `--copy-objects` with `--resources` to retain independent S3 object copies.
+The resulting `object-archive` artifact stores opaque object keys, contents,
+checksums, and common HTTP/user metadata in a compressed tar artifact. It preserves
+keys without interpreting them as filesystem paths, verifies all embedded copies,
+and supports restoration into the configured target bucket and prefix. The
+existing `object-manifest` inventory remains the default for older invocations
+and continues to refuse object-content restoration.
+
+`--max-bytes` bounds the selected set's artifact size and each object-copy source
+budget. Object-content archives have a 100,000-object and 64 MiB metadata limit.
+A failed copy removes its incomplete object artifact. Native database artifacts
+retain the source logical database name for isolated recovery planning; manifests
+still exclude credentials and DSNs. Unselected resources are omitted entirely.
+
+S3 restore verifies the retained artifact before writing, copies object contents
+and metadata, and reads each restored object back to verify its checksum. Bucket
+configuration, permissions, and object tags are outside this data archive. With
+`backup:restore --prepare-targets --confirm restore-production`, missing selected
+S3 target buckets can be created before restoration. A forbidden bucket is not
+treated as a missing bucket. Dry-run mode performs no target provisioning.
+
+These interfaces support Ship orchestration while keeping driver-specific backup
+and restore behavior in the framework. They do not make database and storage
+captures an atomic application-wide snapshot.
