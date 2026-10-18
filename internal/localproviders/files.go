@@ -104,7 +104,8 @@ func commit(root string, files []file, rename func(string, string) error) error 
 		// Publish the ignore rules before creating any temporary file containing private settings.
 		staged, err := stage(root, replacement, f.after)
 		if err != nil {
-			return rollback(root, files[:i], err, staged != "")
+			uncertain := f.name == ".env" && checkFile(root, f) != nil
+			return rollback(root, files[:i], err, staged != "" || uncertain, uncertain)
 		}
 		err = checkFile(root, f)
 		privateConflict := err != nil && isPrivateFile(f.name)
@@ -117,16 +118,21 @@ func commit(root string, files []file, rename func(string, string) error) error 
 			if removeErr != nil {
 				failure = errors.Join(failure, fmt.Errorf("remove temporary local-provider file: %w", removeErr))
 			}
-			return rollback(root, files[:i], failure, removeErr != nil || privateConflict)
+			uncertain := f.name == ".env" && checkFile(root, f) != nil
+			return rollback(root, files[:i], failure, removeErr != nil || privateConflict || uncertain, uncertain)
 		}
 	}
 	return nil
 }
 
 // rollback restores published files in reverse order so ignore rules remain in place while private replacements are removed.
-func rollback(root string, files []file, failure error, preserveIgnore bool) error {
+func rollback(root string, files []file, failure error, preserveIgnore, preserveRecovery bool) error {
 	for j := len(files) - 1; j >= 0; j-- {
 		original := files[j]
+		if original.name == stateName && preserveRecovery {
+			preserveIgnore = true
+			continue
+		}
 		if original.name == ".gitignore" && preserveIgnore {
 			continue
 		}

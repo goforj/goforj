@@ -67,7 +67,15 @@ Run `forj env:local` again and choose **Restore previous settings**. It previews
 
 One ignored, owner-only file, `.env.local-providers.backup`, records the changed settings before and after the switch. Unchanged credentials remain in `.env`; changed connection values are retained privately for restoration. A no-op does not replace the backup. Further switches update that same restore point without losing the original settings. There is no per-switch history.
 
-Restoration changes only assignments touched by the switch. Later edits to unrelated settings survive. If a controlled setting changed after the switch, restoration stops and identifies the conflicting key without displaying its value. Review that edit before restoring. Successful restoration clears the private values from the backup.
+Restoration changes only assignments touched by the switch. Later edits to unrelated settings survive. If a controlled setting changed after the switch, restoration stops and identifies the conflicting key without displaying its value. Review that edit before restoring. Successful restoration clears the private values from the backup after `.env` has been restored.
+
+### Interrupted operations
+
+During publication, the same private backup retains a pending change until the new `.env` is in place. Opening the command reads the active settings to determine whether the old or new configuration was published. It does not modify files while making that decision. If controlled settings match neither side, it stops and preserves the recovery data for review.
+
+A terminated process can leave `.env.local-providers.lock`. Confirm the original command has stopped, then remove that stale lock and run `forj env:local` again. Do not remove the backup. If restoration finished but backup cleanup was interrupted, choose **Restore previous settings** to confirm cleanup without changing `.env` or requiring another build.
+
+If cleanup fails after `.env` was replaced, the command explicitly reports that settings were updated and retains the pending recovery record. It does not undo a published configuration over a newer edit. These guarantees cover process interruption. Power-loss durability depends on the filesystem and is not guaranteed.
 
 Before publishing, the command reparses the proposed `.env` and checks every resolved value against the reviewed configuration. If a preserved reference such as `DB_REPORTS_DRIVER=${DB_DRIVER}` would change an excluded resource, or another dependent setting would change unexpectedly, the command stops without writing. Replace the affected reference with a literal value and retry. The same check protects restoration. Stable references remain untouched.
 
@@ -82,3 +90,5 @@ Switching providers changes configuration. It does not translate migrations, cre
 Existing SQLite paths and DSNs are retained. Converted service databases receive distinct paths under `./_data/local/`. Shared environment keys with incompatible inherited database targets fail before writing; use distinct resource or App names, or exclude the affected parent resources.
 
 Memory and inproc providers are process-local. Separate App processes do not share their state. Keep a distributed provider selected when cross-process coordination or persistence is required.
+
+The [maintainer acceptance matrix](../maintainer/local-provider-acceptance.md) records the recovery and generated-runtime checks for this command.

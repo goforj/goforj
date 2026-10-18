@@ -4,7 +4,7 @@ package forj
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -118,34 +118,7 @@ func TestLocalProvidersRenderedComposition(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wantDSN := "synthetic-service-dsn"
-		if phase == "local" {
-			wantDSN = ""
-		}
-		probe := fmt.Sprintf(`package database
-
-import ("testing"; "strings")
-
-// TestDriverSwitchRuntimeDSN checks the actual generated runtime fallback after a provider switch.
-func TestDriverSwitchRuntimeDSN(t *testing.T) {
-    t.Setenv("DB_DSN", %q)
-    t.Setenv("DB_REPORTS_DSN", %q)
-    if got := envOr("reports", "DSN"); got != %q { t.Fatal("generated runtime selected the wrong DSN") }
-    t.Setenv("DB_EXISTING_DSN", %q)
-    t.Setenv("DB_EXISTING_SQLITE_DATABASE", %q)
-    if got := strings.TrimSpace(envOr("existing", "DSN")); got != "" { t.Fatal("whitespace DSN unexpectedly inherited a service connection") }
-    if got, err := buildDSN("existing", "sqlite"); err != nil || got != "existing.db" { t.Fatal("existing SQLite target changed") }
-}
-`, fresh.Current["DB_DSN"], fresh.Current["DB_REPORTS_DSN"], wantDSN, fresh.Current["DB_EXISTING_DSN"], fresh.Current["DB_EXISTING_SQLITE_DATABASE"])
-		if err := os.WriteFile(filepath.Join(root, "internal/database/driver_switch_test.go"), []byte(probe), 0600); err != nil {
-			t.Fatal(err)
-		}
-		command = exec.Command("go", "test", "./internal/database", "-run", "^TestDriverSwitchRuntimeDSN$", "-count=1")
-		command.Dir = root
-		command.Env = testkit.IntegrationGoProcessEnv(t, map[string]string{"GOWORK": "off"})
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("%s runtime DSN: %v\n%s", phase, err, output)
-		}
+		assertRenderedProviderTargets(t, root, phase, fresh.Current)
 	}
 	command := exec.Command("go", "list", "-m", "-f", "{{if .Replace}}{{.Path}}{{end}}", "all")
 	command.Dir = root
@@ -156,5 +129,103 @@ func TestDriverSwitchRuntimeDSN(t *testing.T) {
 	}
 	if strings.TrimSpace(string(output)) != "" {
 		t.Fatalf("render used local replacements: %s", output)
+	}
+}
+
+// assertRenderedProviderTargets exercises the generated App overlay and database resolver together for both Apps.
+func assertRenderedProviderTargets(t *testing.T, root, phase string, values map[string]string) {
+	t.Helper()
+	expected := map[string]map[string]string{}
+	for _, app := range []string{"app", "admin"} {
+		prefix := ""
+		if app == "admin" {
+			prefix = "ADMIN_"
+		}
+		rootTarget, reportsTarget := "synthetic-service-dsn", "synthetic-service-dsn"
+		rootDriver, reportsDriver := "mysql", "mysql"
+		if phase == "local" || phase == "picked-named-service" {
+			rootDriver = "sqlite"
+			rootTarget = values[prefix+"DB_SQLITE_DATABASE"]
+			if rootTarget == "" {
+				rootTarget = values["DB_SQLITE_DATABASE"]
+			}
+		}
+		if phase == "local" || phase == "picked-named-service" && app == "admin" {
+			reportsDriver = "sqlite"
+			reportsTarget = values[prefix+"DB_REPORTS_SQLITE_DATABASE"]
+			if reportsTarget == "" {
+				reportsTarget = values["DB_REPORTS_SQLITE_DATABASE"]
+			}
+		}
+		expected[app] = map[string]string{"default": rootTarget, "reports": reportsTarget, "existing": "existing.db", "default_driver": rootDriver, "reports_driver": reportsDriver, "existing_driver": "sqlite"}
+	}
+	data, err := json.Marshal(struct {
+		Values   map[string]string
+		Expected map[string]map[string]string
+	}{values, expected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valuesPath, resultPath := filepath.Join(root, ".provider-probe-values.json"), filepath.Join(root, ".provider-probe-result.json")
+	if err := os.WriteFile(valuesPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	overlayProbe := `package cmd
+
+import ("encoding/json"; "os"; "strings"; "testing")
+
+// TestDriverSwitchAppOverlay exports the actual generated App environment for the database resolver probe.
+func TestDriverSwitchAppOverlay(t *testing.T) {
+ raw,err := os.ReadFile(os.Getenv("FORJ_PROVIDER_PROBE_VALUES")); if err != nil { t.Fatal(err) }
+ var input struct { Values map[string]string; Expected map[string]map[string]string }
+ if err := json.Unmarshal(raw,&input); err != nil { t.Fatal(err) }
+ for _,entry := range os.Environ() { key,_,_ := strings.Cut(entry,"="); if strings.HasPrefix(key,"DB_") || strings.HasPrefix(key,"ADMIN_DB_") { t.Setenv(key,"") } }
+ for key,value := range input.Values { t.Setenv(key,value) }
+ app := os.Getenv("FORJ_PROVIDER_PROBE_APP")
+ t.Setenv("FORJ_APP",app)
+ if err := ApplyAppEnvOverlay(); err != nil { t.Fatal(err) }
+ settings := map[string]string{}
+ for _,entry := range os.Environ() { key,value,_ := strings.Cut(entry,"="); if strings.HasPrefix(key,"DB_") { settings[key] = value } }
+ data,err := json.Marshal(struct { Settings map[string]string; Expected map[string]string }{settings,input.Expected[app]}); if err != nil { t.Fatal(err) }
+ if err := os.WriteFile(os.Getenv("FORJ_PROVIDER_PROBE_RESULT"),data,0600); err != nil { t.Fatal(err) }
+}
+`
+	databaseProbe := `package database
+
+import ("encoding/json"; "os"; "strings"; "testing")
+
+// TestDriverSwitchRuntimeDSN checks actual generated lookup after the actual App overlay has run.
+func TestDriverSwitchRuntimeDSN(t *testing.T) {
+ raw,err := os.ReadFile(os.Getenv("FORJ_PROVIDER_PROBE_RESULT")); if err != nil { t.Fatal(err) }
+ var input struct { Settings map[string]string; Expected map[string]string }
+ if err := json.Unmarshal(raw,&input); err != nil { t.Fatal(err) }
+ for _,entry := range os.Environ() { key,_,_ := strings.Cut(entry,"="); if strings.HasPrefix(key,"DB_") { t.Setenv(key,"") } }
+ for key,value := range input.Settings { t.Setenv(key,value) }
+ for _,name := range []string{"default","reports","existing"} {
+  driver := strings.ToLower(strings.TrimSpace(envOr(name,"DRIVER"))); if driver == "" { driver = "sqlite" }
+  if driver != input.Expected[name+"_driver"] { t.Fatalf("%s selected the wrong driver",name) }
+  target := strings.TrimSpace(envOr(name,"DSN"))
+  if target == "" { target,err = buildDSN(name,driver); if err != nil { t.Fatal(err) } }
+  if target != input.Expected[name] { t.Fatalf("%s selected the wrong database target",name) }
+ }
+}
+`
+	for path, source := range map[string]string{"internal/cmd/provider_overlay_test.go": overlayProbe, "internal/database/driver_switch_test.go": databaseProbe} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, app := range []string{"app", "admin"} {
+		for _, probe := range []struct{ path, name string }{{"./internal/cmd", "TestDriverSwitchAppOverlay"}, {"./internal/database", "TestDriverSwitchRuntimeDSN"}} {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			command := exec.CommandContext(ctx, "go", "test", probe.path, "-run", "^"+probe.name+"$", "-count=1")
+			command.Dir = root
+			command.Env = testkit.IntegrationGoProcessEnv(t, map[string]string{"GOWORK": "off", "FORJ_PROVIDER_PROBE_VALUES": valuesPath, "FORJ_PROVIDER_PROBE_RESULT": resultPath, "FORJ_PROVIDER_PROBE_APP": app})
+			output, err := command.CombinedOutput()
+			cancel()
+			if err != nil {
+				t.Fatalf("%s/%s %s: %v\n%s", phase, app, probe.name, err, output)
+			}
+		}
 	}
 }
