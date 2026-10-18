@@ -56,7 +56,8 @@ test('Zod field rules preserve successful values and validation messages', () =>
 })
 
 test('the production graph retains the complete component showroom', async () => {
-  let moduleIDs = []
+  const renderedModuleIDs = new Set()
+  let javascriptBytes = 0
 
   await build({
     root: frontendRoot,
@@ -64,8 +65,14 @@ test('the production graph retains the complete component showroom', async () =>
     logLevel: 'silent',
     plugins: [{
       name: 'goforj:test-production-module-graph',
-      generateBundle() {
-        moduleIDs = [...this.getModuleIds()]
+      generateBundle(_options, bundle) {
+        for (const output of Object.values(bundle)) {
+          if (output.type !== 'chunk') continue
+          javascriptBytes += Buffer.byteLength(output.code)
+          for (const [id, module] of Object.entries(output.modules)) {
+            if (module.renderedLength > 0) renderedModuleIDs.add(id)
+          }
+        }
       },
     }],
     build: {
@@ -74,9 +81,12 @@ test('the production graph retains the complete component showroom', async () =>
     },
   })
 
-  const normalized = moduleIDs.map((id) => id.replaceAll('\\', '/'))
+  const normalized = [...renderedModuleIDs].map((id) => id.replaceAll('\\', '/'))
   for (const view of ['Overview', 'Forms', 'Navigation', 'Overlays', 'Data']) {
     assert.ok(normalized.some((id) => id.endsWith(`/src/views/components/Components${view}View.vue`)), `Components${view}View.vue was removed from the production graph`)
   }
-  assert.ok(moduleIDs.length < 3400, `expected fewer than 3400 total modules, received ${moduleIDs.length}`)
+  // Unused icon exports grow between releases. Budget the code that survives
+  // tree shaking instead, while keeping every showroom page in the output.
+  assert.ok(renderedModuleIDs.size < 1250, `expected fewer than 1250 rendered modules, received ${renderedModuleIDs.size}`)
+  assert.ok(javascriptBytes < 1_200_000, `expected less than 1200000 JavaScript bytes, received ${javascriptBytes}`)
 })
