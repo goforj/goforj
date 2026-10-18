@@ -190,13 +190,13 @@ func (s *Session) Drivers(selections map[string]string) (map[string]string, erro
 		if err := s.setDriver(values, resource, driver, s.Current); err != nil {
 			return nil, err
 		}
-		if resource.Definition.Key == project.ResourceDatabase && driver != s.databaseValue(s.Current, resource.Key, "DRIVER") {
+		if s.databaseResource(resource.Key) && driver != databaseDriver(s.Current, resource.Key, s.databaseScope(resource.Key)) {
 			prefix := strings.TrimSuffix(resource.Key, "DRIVER")
 			// A SQLite DSN cannot be reused as a service DSN. Recover the original connection only for its original driver.
 			if driver != "sqlite" {
 				values[prefix+"DSN"] = ""
 			}
-			if driver == s.databaseValue(original, resource.Key, "DRIVER") {
+			if driver == databaseDriver(original, resource.Key, s.databaseScope(resource.Key)) {
 				for key := range changedKeys(s.state.Previous, s.state.Applied) {
 					if key == prefix+"DSN" || key == prefix+"SQLITE_DATABASE" {
 						if value, present := original[key]; present {
@@ -205,6 +205,9 @@ func (s *Session) Drivers(selections map[string]string) (map[string]string, erro
 							delete(values, key)
 						}
 					}
+				}
+				if err := s.recoverDatabaseDSN(values, original, resource.Key, driver); err != nil {
+					return nil, err
 				}
 			}
 		}
@@ -215,6 +218,9 @@ func (s *Session) Drivers(selections map[string]string) (map[string]string, erro
 		}
 	}
 	if err := s.preserveExcluded(values, excluded); err != nil {
+		return nil, err
+	}
+	if err := s.validateSelectedDatabaseDSNs(values, selections); err != nil {
 		return nil, err
 	}
 	profiles := s.localComposeProfiles(values)
@@ -231,4 +237,73 @@ func (s *Session) Drivers(selections map[string]string) (map[string]string, erro
 		values["COMPOSE_PROFILES"] = profiles
 	}
 	return values, s.Validate(values)
+}
+
+// databaseDriver compares the effective provider rather than its accepted configuration alias.
+func databaseDriver(values map[string]string, key, app string) string {
+	return databaseTargetInScope(values, key, app).driver
+}
+
+// recoverDatabaseDSN pins an original inherited connection when its parent remains on a different provider.
+func (s *Session) recoverDatabaseDSN(values, original map[string]string, key, driver string) error {
+	scopes := s.declaredDatabaseScopes(original, key)
+	if len(scopes) == 0 {
+		scopes = []string{s.databaseScope(key)}
+	}
+	desired := map[string]bool{}
+	needsPin := false
+	for _, app := range scopes {
+		if databaseDriver(original, key, app) != driver {
+			return fmt.Errorf("%s has conflicting original database drivers across App scopes; use distinct resource names before changing drivers", key)
+		}
+		_, dsn := databaseSettingInScope(original, key, "DSN", app)
+		desired[dsn] = true
+		_, current := databaseSettingInScope(values, key, "DSN", app)
+		needsPin = needsPin || dsn != "" && current != dsn
+	}
+	if !needsPin {
+		return nil
+	}
+	if len(desired) != 1 {
+		return fmt.Errorf("%s has conflicting original database DSNs across App scopes; use distinct resource names before changing drivers", key)
+	}
+	for dsn := range desired {
+		values[strings.TrimSuffix(key, "DRIVER")+"DSN"] = dsn
+	}
+	return nil
+}
+
+// validateSelectedDatabaseDSNs rejects inherited connection strings belonging to a different provider before publication.
+func (s *Session) validateSelectedDatabaseDSNs(values, selections map[string]string) error {
+	for _, resource := range s.Resources {
+		selected, ok := selections[resource.Key]
+		if !ok || !s.databaseResource(resource.Key) {
+			continue
+		}
+		driver := project.CanonicalResourceDriver(project.ResourceDatabase, selected)
+		for _, app := range s.declaredDatabaseScopes(values, resource.Key) {
+			if driver == databaseDriver(s.Current, resource.Key, app) {
+				continue
+			}
+			source, dsn := databaseSettingInScope(values, resource.Key, "DSN", app)
+			if dsn == "" {
+				continue
+			}
+			owner := strings.TrimSuffix(source, "DSN") + "DRIVER"
+			if driver != databaseDriver(values, owner, app) {
+				return fmt.Errorf("%s would inherit a DSN for a different database driver via %s; switch its parent too, or configure its driver and dedicated DSN together in .env", resource.Key, source)
+			}
+		}
+	}
+	return nil
+}
+
+// databaseResource includes database consumers of a key shared with another resource family.
+func (s *Session) databaseResource(key string) bool {
+	for _, definition := range resourceDefinitions(s.config, key) {
+		if definition.Key == project.ResourceDatabase {
+			return true
+		}
+	}
+	return false
 }

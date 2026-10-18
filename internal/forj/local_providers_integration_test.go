@@ -4,7 +4,10 @@ package forj
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +29,7 @@ func TestLocalProvidersRenderedComposition(t *testing.T) {
 		ProjectName: "Local Providers", GoModuleName: "example.com/localproviders", Render: project.RenderConfig{Components: components},
 		Apps: map[string]project.AppConfig{"admin": {Components: components}},
 	}})
-	for key, value := range map[string]string{"CACHE_DRIVER": "redis", "CACHE_SUPPORTED_DRIVERS": "memory,redis", "QUEUE_SUPPORTED_DRIVERS": "workerpool,redis", "QUEUE_DRIVER": "redis", "DB_DRIVER": "mysql", "DB_SUPPORTED_DRIVERS": "mysql,sqlite", "DB_DSN": "synthetic-service-dsn", "ADMIN_DB_DRIVER": "mysql", "ADMIN_CACHE_DRIVER": "redis", "ADMIN_QUEUE_DRIVER": "redis", "COMPOSE_PROFILES": "mysql,redis,grafana"} {
+	for key, value := range map[string]string{"CACHE_DRIVER": "redis", "CACHE_SUPPORTED_DRIVERS": "memory,redis", "QUEUE_SUPPORTED_DRIVERS": "workerpool,redis", "QUEUE_DRIVER": "redis", "DB_DRIVER": "mysql", "DB_SUPPORTED_DRIVERS": "mysql,sqlite", "DB_DSN": "synthetic-service-dsn", "DB_REPORTS_DRIVER": "mysql", "ADMIN_DB_DRIVER": "mysql", "ADMIN_CACHE_DRIVER": "redis", "ADMIN_QUEUE_DRIVER": "redis", "COMPOSE_PROFILES": "mysql,redis,grafana"} {
 		setRenderedEnvValue(t, root, key, value)
 	}
 	session, err := localproviders.Open(root)
@@ -43,13 +46,45 @@ func TestLocalProvidersRenderedComposition(t *testing.T) {
 	if values["COMPOSE_PROFILES"] != "grafana" || values["ADMIN_DB_DRIVER"] != "sqlite" || values["ADMIN_QUEUE_DRIVER"] != "workerpool" {
 		t.Fatal("full composition did not switch to local providers")
 	}
-	for _, phase := range []string{"local", "picked-services", "restored"} {
+	for _, phase := range []string{"local", "picked-named-service", "picked-services", "restored"} {
+		if phase == "picked-named-service" {
+			fresh, err := localproviders.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values, err := fresh.Drivers(map[string]string{"DB_REPORTS_DRIVER": "mysql"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if values["DB_DRIVER"] != "sqlite" || values["ADMIN_DB_DRIVER"] != "sqlite" || values["DB_REPORTS_DSN"] != "synthetic-service-dsn" {
+				t.Fatal("named service did not recover its inherited connection independently")
+			}
+			if err := fresh.Apply(values); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if phase == "picked-services" {
 			fresh, err := localproviders.Open(root)
 			if err != nil {
 				t.Fatal(err)
 			}
-			values, err := fresh.Drivers(map[string]string{"DB_DRIVER": "mysql", "ADMIN_DB_DRIVER": "mysql", "CACHE_DRIVER": "redis", "ADMIN_CACHE_DRIVER": "redis", "QUEUE_DRIVER": "redis", "ADMIN_QUEUE_DRIVER": "redis"})
+			choices := map[string]string{"DB_DRIVER": "mysql", "ADMIN_DB_DRIVER": "mysql", "CACHE_DRIVER": "redis", "ADMIN_CACHE_DRIVER": "redis", "QUEUE_DRIVER": "redis", "ADMIN_QUEUE_DRIVER": "redis"}
+			before, err := os.ReadFile(filepath.Join(root, ".env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fresh.Drivers(choices); err == nil {
+				t.Fatal("partial selection accepted incompatible App DSN inheritance")
+			}
+			after, err := os.ReadFile(filepath.Join(root, ".env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Fatal("rejected selection changed the active environment")
+			}
+			choices["ADMIN_DB_REPORTS_DRIVER"] = "mysql"
+			values, err := fresh.Drivers(choices)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,6 +114,34 @@ func TestLocalProvidersRenderedComposition(t *testing.T) {
 			t.Fatalf("%s forj build: %v\n%s", phase, err, output)
 		}
 		buildMultiAppRuntimeBinaries(t, root, []multiAppRuntimeSpec{{name: "app", packagePath: "./cmd/app"}, {name: "admin", packagePath: "./cmd/admin"}})
+		fresh, err := localproviders.Open(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantDSN := "synthetic-service-dsn"
+		if phase == "local" {
+			wantDSN = ""
+		}
+		probe := fmt.Sprintf(`package database
+
+import "testing"
+
+// TestDriverSwitchRuntimeDSN checks the actual generated runtime fallback after a provider switch.
+func TestDriverSwitchRuntimeDSN(t *testing.T) {
+    t.Setenv("DB_DSN", %q)
+    t.Setenv("DB_REPORTS_DSN", %q)
+    if got := envOr("reports", "DSN"); got != %q { t.Fatal("generated runtime selected the wrong DSN") }
+}
+`, fresh.Current["DB_DSN"], fresh.Current["DB_REPORTS_DSN"], wantDSN)
+		if err := os.WriteFile(filepath.Join(root, "internal/database/driver_switch_test.go"), []byte(probe), 0600); err != nil {
+			t.Fatal(err)
+		}
+		command = exec.Command("go", "test", "./internal/database", "-run", "^TestDriverSwitchRuntimeDSN$", "-count=1")
+		command.Dir = root
+		command.Env = testkit.IntegrationGoProcessEnv(t, map[string]string{"GOWORK": "off"})
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("%s runtime DSN: %v\n%s", phase, err, output)
+		}
 	}
 	command := exec.Command("go", "list", "-m", "-f", "{{if .Replace}}{{.Path}}{{end}}", "all")
 	command.Dir = root
