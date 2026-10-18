@@ -29,7 +29,7 @@ require (
 	github.com/goforj/storage v0.5.1
 	github.com/goforj/str v1.3.0
 	github.com/goforj/str/v2 v2.0.1
-	github.com/goforj/web v0.6.3
+	github.com/goforj/web v0.6.4
 	github.com/goforj/wire v1.2.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
