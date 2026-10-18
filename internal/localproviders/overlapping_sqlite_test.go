@@ -1,4 +1,4 @@
-package stacks
+package localproviders
 
 import (
 	"os"
@@ -11,7 +11,7 @@ import (
 func overlappingDatabaseSession(t *testing.T, values map[string]string) *Session {
 	t.Helper()
 	root := fixture(t)
-	put(t, root, ".goforj.yml", "project_name: stacks\nmodule_name: example.org/stacks\nrender:\n  components: [database_mysql]\napps:\n  foo:\n    components: [database_mysql]\n  foo-db:\n    components: [database_mysql]\n")
+	put(t, root, ".goforj.yml", "project_name: local\nmodule_name: example.org/local\nrender:\n  components: [database_mysql]\napps:\n  foo:\n    components: [database_mysql]\n  foo-db:\n    components: [database_mysql]\n")
 	put(t, root, ".env", string(encodeDocument(values)))
 	return openTest(t, root)
 }
@@ -26,46 +26,6 @@ func overlappingDatabaseResource(t *testing.T, s *Session) Resource {
 	}
 	t.Fatal("overlapping database was not discovered")
 	return Resource{}
-}
-
-// TestOverlappingInheritedSQLitePathIsShareable retains a shorter App's named path even when the longer App inherits a service driver.
-func TestOverlappingInheritedSQLitePathIsShareable(t *testing.T) {
-	values := map[string]string{"DB_DRIVER": "mysql", "FOO_DB_DRIVER": "sqlite", "FOO_DB_DB_SQLITE_DATABASE": "./data/foo-named.db"}
-	s := overlappingDatabaseSession(t, values)
-	if err := s.Save("saved", s.Current); err != nil {
-		t.Fatal(err)
-	}
-	defaults, err := BuildDefaults(s.Root, "saved")
-	if err != nil {
-		t.Fatal(err)
-	}
-	baked, err := AppDefaults(s.Root, defaults, "foo")
-	if err != nil || baked["DB_DB_SQLITE_DATABASE"] != values["FOO_DB_DB_SQLITE_DATABASE"] {
-		t.Fatalf("shorter App's inherited SQLite target was lost: %v, %v", baked, err)
-	}
-}
-
-// TestOverlappingPrivateSQLiteDSNProtectsDatabaseNames keeps a generic name private whenever an overlapping SQLite scope does not consume it.
-func TestOverlappingPrivateSQLiteDSNProtectsDatabaseNames(t *testing.T) {
-	values := map[string]string{
-		"DB_DRIVER": "sqlite", "FOO_DB_DRIVER": "sqlite", "FOO_DB_DSN": "file:private.db?secret=private",
-		"FOO_DB_DB_DRIVER": "sqlite", "FOO_DB_DB_DATABASE": "private-service-name",
-	}
-	s := overlappingDatabaseSession(t, values)
-	if err := s.Save("saved", s.Current); err != nil {
-		t.Fatal(err)
-	}
-	defaults, err := BuildDefaults(s.Root, "saved")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, present := defaults["FOO_DB_DB_DATABASE"]; present {
-		t.Fatal("a private DSN's unused database name was published")
-	}
-	loaded, err := openTest(t, s.Root).Load("saved", true)
-	if err != nil || !equalValues(loaded, values) {
-		t.Fatalf("private configuration changed: %v, %v", loaded, err)
-	}
 }
 
 // TestOverlappingDatabaseTransitionsRejectDifferentTargets prevents a shared setting from collapsing distinct source databases during conversion.
@@ -84,7 +44,7 @@ func TestOverlappingDatabaseTransitionsRejectDifferentTargets(t *testing.T) {
 			tc.values["FOO_DB_DB_MAX_OPEN_CONNECTIONS"] = "10"
 			s := overlappingDatabaseSession(t, tc.values)
 			values := clone(s.Current)
-			err := s.SetDriver(values, overlappingDatabaseResource(t, s), tc.next)
+			err := s.selectDriver(values, overlappingDatabaseResource(t, s), tc.next)
 			if err == nil || !strings.Contains(err.Error(), "conflicting database targets") || strings.Contains(err.Error(), "secret") {
 				t.Fatalf("expected a redacted scope conflict, got %v", err)
 			}
@@ -126,11 +86,7 @@ func TestOverlappingSQLiteNoOpPreservesInheritedTargets(t *testing.T) {
 					t.Fatalf("scope %s changed targets", scope)
 				}
 			}
-			invalid := clone(values)
-			invalid[SQLiteDSNsKey] = `{"FOO_DB_DB_DRIVER":17}`
-			if err := s.SetDriver(invalid, overlappingDatabaseResource(t, s), "sqlite"); err == nil {
-				t.Fatal("no-op driver edit accepted invalid SQLite metadata")
-			}
+
 		})
 	}
 }

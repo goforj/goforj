@@ -134,7 +134,6 @@ var (
 		"HOST",
 		"PORT",
 		"DATABASE",
-		"SQLITE_DATABASE",
 		"USERNAME",
 		"PASSWORD",
 		"QUERY_LOGGING",
@@ -855,7 +854,7 @@ func aboutPrimitiveChildDefined(prefix string, scope env.Scope) bool {
 }
 
 func aboutDatabaseChildDefined(scope env.Scope) bool {
-	return aboutAnySet(scope, "DRIVER", "DSN", "DATABASE", "SQLITE_DATABASE", "HOST")
+	return aboutAnySet(scope, "DRIVER", "DSN", "DATABASE", "HOST")
 }
 
 func aboutAnySet(scope env.Scope, keys ...string) bool {

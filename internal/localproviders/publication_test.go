@@ -1,4 +1,4 @@
-package stacks
+package localproviders
 
 import (
 	"errors"
@@ -13,18 +13,18 @@ func TestCommitProtectsPrivateTemporaryFiles(t *testing.T) {
 	for _, outcome := range []string{"success", "rename failure", "restore failure", "cleanup failure"} {
 		t.Run(outcome, func(t *testing.T) {
 			root := t.TempDir()
-			runStackGit(t, root, "init", "-q")
+			runLocalGit(t, root, "init", "-q")
 			put(t, root, ".env", "APP_NAME=original\n")
 			ignore, err := readFile(root, ".gitignore")
 			if err != nil {
 				t.Fatal(err)
 			}
-			ignore.after = []byte(".env.stack.*.local\n.env.stack-tmp-*.local\n")
-			private, err := readFile(root, ".env.stack.services.local")
+			ignore.after = []byte(".env.local-providers.*\n.env.local-providers.tmp-*\n")
+			private, err := readFile(root, ".env.local-providers.backup")
 			if err != nil {
 				t.Fatal(err)
 			}
-			secret := "synthetic-stack-publication-secret"
+			secret := "synthetic-local-publication-secret"
 			private.after = []byte("DB_PASSWORD=" + secret + "\n")
 			active, err := readFile(root, ".env")
 			if err != nil {
@@ -33,7 +33,7 @@ func TestCommitProtectsPrivateTemporaryFiles(t *testing.T) {
 			active.after = []byte("APP_NAME=changed\n")
 			leftover := ""
 			err = commit(root, []file{active, private, ignore}, func(from, to string) error {
-				assertStackSecretUntracked(t, root, secret)
+				assertLocalSecretUntracked(t, root, secret)
 				if filepath.Base(to) != ".env" || outcome == "success" {
 					return os.Rename(from, to)
 				}
@@ -66,17 +66,17 @@ func TestCommitProtectsPrivateTemporaryFiles(t *testing.T) {
 				if _, err := os.Stat(filepath.Join(root, ".gitignore")); err != nil {
 					t.Fatalf("removed ignore protection after incomplete rollback: %v", err)
 				}
-				runStackGit(t, root, "check-ignore", "-q", leftover)
+				runLocalGit(t, root, "check-ignore", "-q", leftover)
 			}
-			assertStackSecretUntracked(t, root, secret)
+			assertLocalSecretUntracked(t, root, secret)
 		})
 	}
 }
 
-// assertStackSecretUntracked simulates an owner staging everything while a Stack write is in progress.
-func assertStackSecretUntracked(t *testing.T, root, secret string) {
+// assertLocalSecretUntracked simulates an owner staging everything while a local-provider write is in progress.
+func assertLocalSecretUntracked(t *testing.T, root, secret string) {
 	t.Helper()
-	runStackGit(t, root, "add", "-A")
+	runLocalGit(t, root, "add", "-A")
 	command := exec.Command("git", "grep", "--cached", "-q", "--", secret)
 	command.Dir = root
 	err := command.Run()

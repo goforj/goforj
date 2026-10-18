@@ -1,7 +1,6 @@
-package stacks
+package localproviders
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/goforj/goforj/project"
@@ -66,62 +65,4 @@ func sharedResourceChoices(config *project.Config, resource Resource) Resource {
 		}
 	}
 	return resource
-}
-
-// SetValue validates generic editor input and preserves the provider picker's driver transition rules.
-func (s *Session) SetValue(values map[string]string, key, value string) error {
-	candidate := clone(values)
-	definitions := resourceDefinitions(s.config, key)
-	if strings.HasSuffix(key, "_DRIVER") && len(definitions) > 0 {
-		base := resourceKey(s.config, key)
-		definition := definitions[0]
-		for _, current := range definitions {
-			if strings.HasPrefix(base, current.EnvironmentPrefix+"_") {
-				definition = current
-			}
-		}
-		resource := Resource{Key: key, SupportedKey: definition.EnvironmentKey("SUPPORTED_DRIVERS"), Label: key, Definition: definition}
-		if strings.TrimSpace(value) == "" {
-			candidate[key] = value
-			if err := s.restoreDriverInheritance(candidate, values, key); err != nil {
-				return err
-			}
-		} else if err := s.SetDriver(candidate, resource, value); err != nil {
-			return err
-		}
-	} else {
-		candidate[key] = value
-	}
-	if err := s.Validate(candidate); err != nil {
-		return err
-	}
-	for key := range values {
-		delete(values, key)
-	}
-	for key, value := range candidate {
-		values[key] = value
-	}
-	return nil
-}
-
-// restoreDriverInheritance preserves database targets when clearing an override selects a different effective provider.
-func (s *Session) restoreDriverInheritance(values, previous map[string]string, key string) error {
-	for _, definition := range resourceDefinitions(s.config, key) {
-		if definition.Key != project.ResourceDatabase {
-			continue
-		}
-		driver := ""
-		for _, app := range s.databaseScopes(key) {
-			current := databaseTargetInScope(values, key, app).driver
-			if driver != "" && driver != current {
-				return fmt.Errorf("%s inherits conflicting database drivers across App scopes; use distinct App or resource names before clearing the driver", key)
-			}
-			driver = current
-		}
-		if err := s.prepareSQLiteTarget(values, previous, key, driver); err != nil {
-			return err
-		}
-	}
-	s.retainDriverSupport(values, key, previous[key], "")
-	return nil
 }

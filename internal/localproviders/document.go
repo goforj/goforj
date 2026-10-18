@@ -1,5 +1,5 @@
-// Package stacks manages reusable resource configurations without moving application data.
-package stacks
+// Package localproviders switches project resources to local providers without moving application data.
+package localproviders
 
 import (
 	"fmt"
@@ -82,15 +82,6 @@ func (d document) replace(managed func(string) bool, values map[string]string) [
 	}
 	for _, key := range keys(remaining) {
 		out.WriteString(key + "=" + envfile.EncodeValue(remaining[key]) + ending)
-	}
-	return []byte(out.String())
-}
-
-// encodeDocument produces deterministic dotenv files with literal, round-trippable values.
-func encodeDocument(values map[string]string) []byte {
-	var out strings.Builder
-	for _, key := range keys(values) {
-		out.WriteString(key + "=" + envfile.EncodeValue(values[key]) + "\n")
 	}
 	return []byte(out.String())
 }

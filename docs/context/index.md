@@ -16,13 +16,12 @@ That should usually keep context to 2-3 files, not the whole folder.
 
 ## Topic Map
 
-### Stacks, portable resources, dotenv profiles, or baked binary defaults
+### Switching resources to local providers
 
 Read:
 
-- [Stacks](stacks.md)
+- [Local Providers](local-providers.md)
 - [Migration Translation Design](../designs/migration-translation-design.md) when changing database providers
-
 
 ### App layout, `cmd/app`, `app/`, app composition, or multi-app routing
 

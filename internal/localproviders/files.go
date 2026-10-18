@@ -1,4 +1,4 @@
-package stacks
+package localproviders
 
 import (
 	"bytes"
@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
 
 // file retains absence and permissions for optimistic concurrency checks and rollback.
@@ -19,11 +18,8 @@ type file struct {
 	exists        bool
 }
 
-// isPrivateStackFile distinguishes working copies and recovery state from the public definition named local.
-func isPrivateStackFile(name string) bool {
-	profile, definition := strings.CutPrefix(name, ".env.stack.")
-	return name == stateName || (definition && strings.HasSuffix(profile, ".local"))
-}
+// isPrivateFile restricts active settings and their recovery copy to owner access.
+func isPrivateFile(name string) bool { return name == stateName || name == ".env" }
 
 // readFile rejects symlinks and special files before opening project-owned configuration.
 func readFile(root, name string) (file, error) {
@@ -51,14 +47,14 @@ func checkFile(root string, expected file) error {
 		return err
 	}
 	if current.exists != expected.exists || !bytes.Equal(current.before, expected.before) || current.mode != expected.mode {
-		return fmt.Errorf("%s changed while the wizard was open; run forj stack again", expected.name)
+		return fmt.Errorf("%s changed while the wizard was open; run forj env:local again", expected.name)
 	}
 	return nil
 }
 
 // stage writes a complete replacement on the destination filesystem before publishing it.
 func stage(root string, f file, data []byte) (string, error) {
-	tmp, err := os.CreateTemp(root, ".env.stack-tmp-*.local")
+	tmp, err := os.CreateTemp(root, ".env.local-providers.tmp-*")
 	if err != nil {
 		return "", err
 	}
@@ -72,7 +68,7 @@ func stage(root string, f file, data []byte) (string, error) {
 	err = errors.Join(err, tmp.Close())
 	if err != nil {
 		if removeErr := os.Remove(name); removeErr != nil {
-			return name, errors.Join(err, fmt.Errorf("remove temporary stack file: %w", removeErr))
+			return name, errors.Join(err, fmt.Errorf("remove temporary local-provider file: %w", removeErr))
 		}
 		return "", err
 	}
@@ -101,7 +97,7 @@ func commit(root string, files []file, rename func(string, string) error) error 
 	}
 	for i, f := range files {
 		replacement := f
-		if isPrivateStackFile(f.name) {
+		if isPrivateFile(f.name) {
 			// Keep the original mode for conflict detection and rollback, but publish secrets only to their owner.
 			replacement.mode = 0600
 		}
@@ -111,7 +107,7 @@ func commit(root string, files []file, rename func(string, string) error) error 
 			return rollback(root, files[:i], err, staged != "")
 		}
 		err = checkFile(root, f)
-		privateConflict := err != nil && isPrivateStackFile(f.name)
+		privateConflict := err != nil && isPrivateFile(f.name)
 		if err == nil {
 			err = rename(staged, filepath.Join(root, f.name))
 		}
@@ -119,7 +115,7 @@ func commit(root string, files []file, rename func(string, string) error) error 
 			failure := fmt.Errorf("replace %s: %w", f.name, err)
 			removeErr := os.Remove(staged)
 			if removeErr != nil {
-				failure = errors.Join(failure, fmt.Errorf("remove temporary stack file: %w", removeErr))
+				failure = errors.Join(failure, fmt.Errorf("remove temporary local-provider file: %w", removeErr))
 			}
 			return rollback(root, files[:i], failure, removeErr != nil || privateConflict)
 		}
@@ -137,7 +133,7 @@ func rollback(root string, files []file, failure error, preserveIgnore bool) err
 		published := original
 		published.exists = true
 		published.before = original.after
-		if isPrivateStackFile(original.name) {
+		if isPrivateFile(original.name) {
 			published.mode = 0600
 		}
 		if err := checkFile(root, published); err != nil {

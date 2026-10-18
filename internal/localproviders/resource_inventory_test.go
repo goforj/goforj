@@ -1,25 +1,22 @@
-package stacks
+package localproviders
 
 import (
 	"reflect"
 	"testing"
 )
 
-// TestResourcesForRetainsProjectAndSelectedDeclarations keeps saved-only providers visible without changing the active session.
+// TestResourcesForRetainsProjectAndSelectedDeclarations keeps preview resources visible without changing the active session.
 func TestResourcesForRetainsProjectAndSelectedDeclarations(t *testing.T) {
 	root := fixture(t)
 	put(t, root, ".env.example", "DB_EXAMPLE_DATABASE=example\n")
-	put(t, root, ".env.stack.services", "DB_DRIVER=sqlite\nDB_SUPPORTED_DRIVERS=sqlite,postgres\nDB_ANALYTICS_DRIVER=postgres\nADMIN_DB_REPORTS_DRIVER=postgres\n")
+
 	s := openTest(t, root)
 	before := make([]string, 0, len(s.Resources))
 	for _, resource := range s.Resources {
 		before = append(before, resource.Key)
 	}
 	current := clone(s.Current)
-	values, err := s.Load("services", false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	values := map[string]string{"DB_ANALYTICS_DRIVER": "postgres", "ADMIN_DB_REPORTS_DRIVER": "postgres"}
 	got := map[string]bool{}
 	for _, resource := range s.ResourcesFor(values) {
 		if got[resource.Key] {
@@ -46,7 +43,7 @@ func TestResourcesIncludeNormalizedAppDependencies(t *testing.T) {
 	for _, component := range []string{"auth", "oauth"} {
 		t.Run(component, func(t *testing.T) {
 			root := fixture(t)
-			put(t, root, ".goforj.yml", "project_name: stacks\nmodule_name: example.org/stacks\nrender:\n  components:\n    database_sqlite: true\napps:\n  accounts:\n    components:\n      "+component+": true\n  utility:\n    components:\n      cli: true\n")
+			put(t, root, ".goforj.yml", "project_name: local\nmodule_name: example.org/local\nrender:\n  components:\n    database_sqlite: true\napps:\n  accounts:\n    components:\n      "+component+": true\n  utility:\n    components:\n      cli: true\n")
 			put(t, root, ".env", "DB_DRIVER=sqlite\nDB_REPORTS_DATABASE=reports.db\n")
 			s := openTest(t, root)
 			inventory := map[string]Resource{}
@@ -62,7 +59,7 @@ func TestResourcesIncludeNormalizedAppDependencies(t *testing.T) {
 				t.Fatal("database added to an App without database dependencies")
 			}
 			values := clone(s.Current)
-			if err := s.SetDriver(values, inventory["ACCOUNTS_DB_DRIVER"], "postgres"); err != nil {
+			if err := s.selectDriver(values, inventory["ACCOUNTS_DB_DRIVER"], "postgres"); err != nil {
 				t.Fatal(err)
 			}
 			if values["ACCOUNTS_DB_DRIVER"] != "postgres" || values["DB_DRIVER"] != "sqlite" {
