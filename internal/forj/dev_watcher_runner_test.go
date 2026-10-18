@@ -1753,6 +1753,9 @@ func runDevWatcherRunnerHostFailure(failure string) {
 		if err != nil || process.Kill() != nil {
 			os.Exit(137)
 		}
+		// Darwin can return before delivering a self-signal. Prevent this helper
+		// from resuming the build and partially writing its counter before death.
+		time.Sleep(time.Hour)
 	default:
 		os.Exit(2)
 	}

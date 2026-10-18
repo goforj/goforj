@@ -31,6 +31,7 @@ import (
 )
 
 type testAgentInfo struct {
+	Key    string `json:"key"`
 	Source string `json:"source"`
 }
 
@@ -606,7 +607,7 @@ func waitForServerReady(ctx context.Context, baseURL, token string, timeout time
 	return fmt.Errorf("server not ready within %s", timeout)
 }
 
-// waitForAgents centralizes wait for agents behavior so callers follow the same contract.
+// waitForAgents waits for each requested source or exact agent key to appear in the registry.
 func waitForAgents(ctx context.Context, baseURL, token string, sources []string, timeout time.Duration) error {
 	if len(sources) == 0 {
 		return nil
@@ -634,6 +635,7 @@ func waitForAgents(ctx context.Context, baseURL, token string, sources []string,
 			seen := map[string]struct{}{}
 			for _, agent := range agents {
 				seen[agent.Source] = struct{}{}
+				seen[agent.Key] = struct{}{}
 			}
 			missing := false
 			for source := range required {
@@ -1313,7 +1315,7 @@ func TestDevwatchStreamIntegration(t *testing.T) {
 	consoleConn := dialWS(t, baseURL, "/lighthouse/ws/devwatch", token)
 	defer consoleConn.Close()
 
-	writer := newDevwatchWriter(io.Discard, streamer, "stdout", "API", "go test ./...", nil)
+	writer := newDevwatchWriter(io.Discard, streamer, "stdout", "API", nil)
 	if _, err := writer.Write([]byte("Test > API > Hello\n")); err != nil {
 		t.Fatalf("write devwatch line: %v", err)
 	}
@@ -1354,6 +1356,7 @@ func TestDevwatchStreamIntegration(t *testing.T) {
 	t.Fatal("devwatch message not received")
 }
 
+// TestLighthouseCommandRoutingIntegration targets a specific agent while the real HTTP agent shares its source.
 func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 	configureWebsocketDialer(t)
 
@@ -1368,16 +1371,22 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 	serverProc, baseURL := startAppServer(t, projectDir, binPath, port, token)
 	defer stopProcAsync(t, "server", serverProc, 1*time.Second)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	if err := waitForServerReady(ctx, baseURL, token, 1*time.Second); err != nil {
 		t.Fatalf("control plane not ready: %v", err)
 	}
 
+	if err := waitForAgents(ctx, baseURL, token, []string{"http"}, 3*time.Second); err != nil {
+		t.Fatalf("app HTTP agent did not register: %v", err)
+	}
+
+	const agentKey = "TestApp/http/command-routing-test"
 	agentConn := dialWS(t, baseURL, "/lighthouse/ws/agent", token)
 	defer agentConn.Close()
 	registerPayload, _ := json.Marshal(map[string]any{
 		"id":            "agent-1",
+		"key":           agentKey,
 		"source":        "http",
 		"app":           "TestApp",
 		"version":       "test",
@@ -1394,8 +1403,8 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		"source":  "http",
 		"payload": json.RawMessage(registerPayload),
 	})
-	if err := waitForAgents(ctx, baseURL, token, []string{"http"}, 3*time.Second); err != nil {
-		t.Fatalf("agent did not register: %v", err)
+	if err := waitForAgents(ctx, baseURL, token, []string{agentKey}, 3*time.Second); err != nil {
+		t.Fatalf("test agent did not register: %v", err)
 	}
 
 	consoleConn := dialWS(t, baseURL, "/lighthouse/ws/console", token)
@@ -1408,7 +1417,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 	if err := consoleConn.WriteJSON(map[string]any{
 		"type":        "command",
 		"id":          "cmd-1",
-		"destination": "http",
+		"destination": agentKey,
 		"payload":     json.RawMessage(commandPayload),
 	}); err != nil {
 		t.Fatalf("send command: %v", err)
@@ -1425,7 +1434,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 			Payload     json.RawMessage `json:"payload"`
 		}
 		readEncryptedAgentJSON(t, agentConn, token, &msg)
-		if msg.Type != "command" || msg.Destination != "http" {
+		if msg.Type != "command" || msg.Destination != agentKey {
 			continue
 		}
 		gotCommand = true
@@ -1452,6 +1461,7 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		var msg struct {
 			Type    string          `json:"type"`
 			ReplyTo string          `json:"reply_to"`
+			Source  string          `json:"source"`
 			Payload json.RawMessage `json:"payload"`
 		}
 		if err := consoleConn.ReadJSON(&msg); err != nil {
@@ -1459,6 +1469,9 @@ func TestLighthouseCommandRoutingIntegration(t *testing.T) {
 		}
 		if msg.Type != "response" || msg.ReplyTo != "cmd-1" {
 			continue
+		}
+		if msg.Source != agentKey {
+			t.Fatalf("response source = %q, want %q", msg.Source, agentKey)
 		}
 		var resp struct {
 			Ok   bool            `json:"ok"`

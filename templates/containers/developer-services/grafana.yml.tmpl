@@ -18,7 +18,7 @@
     depends_on:
       - victoriametrics
     ports:
-      - ${IP_ADDRESS:-0.0.0.0}:${GRAFANA_PORT:-13001}:3000
+      - ${IP_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-13001}:3000
     environment:
       - TZ=${TZ:-UTC}
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}

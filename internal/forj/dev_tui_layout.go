@@ -2,16 +2,36 @@ package forj
 
 import (
 	"fmt"
+	"image/color"
 	"os"
 	"strings"
+	"sync"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/goforj/console"
 	"golang.org/x/term"
 )
 
 const devSectionSeparatorRuleWidth = 5
+
+// devHasDarkBackground caches terminal detection because querying the terminal for every rendered color would add visible latency.
+var devHasDarkBackground = sync.OnceValue(func() bool {
+	return detectDarkBackground(os.Stdin, os.Stdout)
+})
+
+// adaptiveColor preserves the existing automatic light and dark terminal palette selection.
+func adaptiveColor(light, dark string) color.Color {
+	return lipgloss.LightDark(devHasDarkBackground())(lipgloss.Color(light), lipgloss.Color(dark))
+}
+
+// detectDarkBackground avoids terminal queries for redirected streams because Windows opens the console and waits for a response in that case.
+func detectDarkBackground(in, out *os.File) bool {
+	if !term.IsTerminal(int(in.Fd())) || !term.IsTerminal(int(out.Fd())) {
+		return true
+	}
+	return lipgloss.HasDarkBackground(in, out)
+}
 
 // buildDevFooterSeparatorLine keeps the build dev footer separator line representation consistent.
 func buildDevFooterSeparatorLine() string {
@@ -27,13 +47,13 @@ func buildDevFooterSeparatorLineAtWidth(width int) string {
 	if width <= 0 {
 		width = 120
 	}
-	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#E4E4E7", Dark: "#18181B"})
+	ruleStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#E4E4E7", "#18181B"))
 	return ruleStyle.Render(strings.Repeat("─", width))
 }
 
 // buildDevWatcherStopSeparatorLine keeps the transcript boundary compact once the full-width interactive footer is gone.
 func buildDevWatcherStopSeparatorLine() string {
-	borderColor := lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}
+	borderColor := adaptiveColor("#D9DCCF", "#383838")
 	return lipgloss.NewStyle().Foreground(borderColor).Render(strings.Repeat("─", devSectionSeparatorRuleWidth*2))
 }
 
@@ -45,7 +65,7 @@ func buildDevStartupSeparatorLine() string {
 
 // buildDevShutdownSeparatorLine keeps the build dev shutdown separator line representation consistent.
 func buildDevShutdownSeparatorLine() string {
-	transition := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9A3412", Dark: "#F59E0B"})
+	transition := lipgloss.NewStyle().Foreground(adaptiveColor("#9A3412", "#F59E0B"))
 	return buildDevSectionSeparatorLine(transition.Render("•") + " Shutdown")
 }
 
@@ -66,7 +86,7 @@ func buildDevSectionSeparatorLineAtWidth(label string, width int) string {
 	if width < 20 {
 		width = 20
 	}
-	borderColor := lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}
+	borderColor := adaptiveColor("#D9DCCF", "#383838")
 	if strings.TrimSpace(label) == "" {
 		return lipgloss.NewStyle().Foreground(borderColor).Render(strings.Repeat("─", width))
 	}
@@ -175,10 +195,10 @@ func layoutDevFooterGroups(statuses []string, actions []string, itemGap int, wid
 func renderDevFooterBooleanStatus(label string, active bool) string {
 	labelStyle := devNormalForegroundStyle()
 	indicator := "○"
-	indicatorStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A1A1AA", Dark: "#52525B"})
+	indicatorStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#A1A1AA", "#52525B"))
 	if active {
 		indicator = "●"
-		indicatorStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"})
+		indicatorStyle = lipgloss.NewStyle().Foreground(adaptiveColor("#166534", "#7CFC93"))
 	}
 	return indicatorStyle.Render(indicator) + " " + labelStyle.Render(label)
 }
@@ -199,17 +219,17 @@ func renderDevFooterShortcut(key, label string) string {
 
 // devInteractiveAccentStyle keeps keyboard destinations and actions visually related.
 func devInteractiveAccentStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
+	return lipgloss.NewStyle().Foreground(adaptiveColor("#166534", "#7CFC93")).Bold(true)
 }
 
 // devNormalForegroundStyle keeps persistent navigation labels quieter than semantic state.
 func devNormalForegroundStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#3F3F46", Dark: "#E5E7EB"})
+	return lipgloss.NewStyle().Foreground(adaptiveColor("#3F3F46", "#E5E7EB"))
 }
 
 // devMutedForegroundStyle keeps secondary values and labels subordinate to interactive keys.
 func devMutedForegroundStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	return lipgloss.NewStyle().Foreground(adaptiveColor("#6B7280", "#A1A1AA"))
 }
 
 type devOverlaySpec struct {
@@ -270,11 +290,11 @@ func buildDevResourceHeaderLineAtWidth(tools []devToolLink, width int) string {
 
 // buildDevHotkeyPanel keeps the build dev hotkey panel representation consistent.
 func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug string) []string {
-	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"}).Bold(true)
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#E5E7EB"})
-	sectionStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#71717A"}).Bold(true)
-	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#2F3136"})
+	titleStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#27272A", "#F4F4F5")).Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#166534", "#7CFC93")).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#D9DCCF", "#E5E7EB"))
+	sectionStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#6B7280", "#71717A")).Bold(true)
+	ruleStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#D9DCCF", "#2F3136"))
 	type hotkeyItem struct {
 		key   string
 		label string
@@ -371,7 +391,7 @@ func buildDevHotkeyPanel(tools []devToolLink, dbQueryLogging bool, appDebug stri
 func buildDevOverlayBox(spec devOverlaySpec) string {
 	content := spec.Body
 	if strings.TrimSpace(spec.Title) != "" {
-		titleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#27272A", Dark: "#F4F4F5"}).Bold(true)
+		titleStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#27272A", "#F4F4F5")).Bold(true)
 		if strings.TrimSpace(content) != "" {
 			content = lipgloss.JoinVertical(lipgloss.Left, titleStyle.Render(spec.Title), content)
 		} else {
@@ -380,7 +400,7 @@ func buildDevOverlayBox(spec devOverlaySpec) string {
 	}
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#383838"}).
+		BorderForeground(adaptiveColor("#D9DCCF", "#383838")).
 		Padding(1, 2)
 	if spec.MinWidth > 0 {
 		boxStyle = boxStyle.Width(spec.MinWidth)
@@ -389,17 +409,17 @@ func buildDevOverlayBox(spec devOverlaySpec) string {
 	if strings.TrimSpace(spec.Hint) == "" {
 		return box
 	}
-	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	hintStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#6B7280", "#A1A1AA"))
 	return lipgloss.JoinVertical(lipgloss.Center, box, "", hintStyle.Render(spec.Hint))
 }
 
 // buildDevFilterModalBox keeps the build dev filter modal box representation consistent.
 func buildDevFilterModalBox(shown map[string]bool) string {
 	keyStyle := devInteractiveAccentStyle()
-	onStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"})
-	offStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A1A1AA", Dark: "#52525B"})
+	onStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#166534", "#7CFC93"))
+	offStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#A1A1AA", "#52525B"))
 	labelStyle := devNormalForegroundStyle()
-	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#2F3136"})
+	ruleStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#D9DCCF", "#2F3136"))
 	const (
 		filterKeyWidth   = 5
 		filterStateWidth = 2
@@ -441,18 +461,18 @@ func buildDevHotkeyModalBox(tools []devToolLink, dbQueryLogging bool, appDebug s
 
 // buildDevCommandModalBox keeps the build dev command modal box representation consistent.
 func buildDevCommandModalBox(commands []devAppCommandOption, selected int, args string, argsFocused bool, loadError string) string {
-	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#166534", Dark: "#7CFC93"}).Bold(true)
-	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#F4F4F5"})
-	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#A1A1AA"})
+	keyStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#166534", "#7CFC93")).Bold(true)
+	nameStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#D9DCCF", "#F4F4F5"))
+	helpStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#6B7280", "#A1A1AA"))
 	selectedStyle := lipgloss.NewStyle().
-		Background(lipgloss.AdaptiveColor{Light: "#E5F7E8", Dark: "#1E2A21"}).
-		Foreground(lipgloss.AdaptiveColor{Light: "#111827", Dark: "#F4F4F5"}).
+		Background(adaptiveColor("#E5F7E8", "#1E2A21")).
+		Foreground(adaptiveColor("#111827", "#F4F4F5")).
 		Bold(true)
 	focusedInputStyle := lipgloss.NewStyle().
-		Background(lipgloss.AdaptiveColor{Light: "#E5F7E8", Dark: "#1E2A21"}).
-		Foreground(lipgloss.AdaptiveColor{Light: "#111827", Dark: "#F4F4F5"}).
+		Background(adaptiveColor("#E5F7E8", "#1E2A21")).
+		Foreground(adaptiveColor("#111827", "#F4F4F5")).
 		Bold(true)
-	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#D9DCCF", Dark: "#2F3136"})
+	ruleStyle := lipgloss.NewStyle().Foreground(adaptiveColor("#D9DCCF", "#2F3136"))
 	const (
 		commandModalMinWidth     = 88
 		commandModalNameWidth    = 24

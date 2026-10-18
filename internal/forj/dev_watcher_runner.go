@@ -449,11 +449,11 @@ func configureCompiledDevCommand(
 		onTrigger = func() { startup.noteTrigger(spec.ID) }
 	}
 	stdout := setDevwatchOrchestrationOutput(
-		newDevwatchWriterForApp(outWriter, streamer, "stdout", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle, onTrigger),
+		newDevwatchWriterForApp(outWriter, streamer, "stdout", spec.Name, appName, appNameWidth, showAppColumn, lifecycle, onTrigger),
 		orchestrationOut,
 	)
 	stderr := setDevwatchOrchestrationOutput(
-		newDevwatchWriterForApp(errWriter, streamer, "stderr", spec.Name, triggerCommand, appName, appNameWidth, showAppColumn, lifecycle, onTrigger),
+		newDevwatchWriterForApp(errWriter, streamer, "stderr", spec.Name, appName, appNameWidth, showAppColumn, lifecycle, onTrigger),
 		orchestrationErr,
 	)
 	if spec.Kind == devWatcherAppRun && !spec.Legacy && !spec.FullProcessOverride {

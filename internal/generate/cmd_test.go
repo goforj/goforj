@@ -12,6 +12,18 @@ func skipModuleTidy(string) error {
 	return nil
 }
 
+// TestRunGoModTidyPreservesCommandDiagnostics keeps generator-triggered failures actionable during project creation.
+func TestRunGoModTidyPreservesCommandDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("not a module file\n"), 0o644); err != nil {
+		t.Fatalf("write malformed go.mod: %v", err)
+	}
+	err := runGoModTidy(root)
+	if err == nil || !strings.Contains(err.Error(), "go mod tidy: exit status 1") || !strings.Contains(err.Error(), "\n  go: errors parsing go.mod") {
+		t.Fatalf("runGoModTidy() error = %v, want formatted command diagnostics", err)
+	}
+}
+
 // TestGenerateProjectFilesSynchronizesEnvironmentContracts verifies every build caller receives contract publication through generation itself.
 func TestGenerateProjectFilesSynchronizesEnvironmentContracts(t *testing.T) {
 	root := t.TempDir()

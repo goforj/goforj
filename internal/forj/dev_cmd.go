@@ -569,7 +569,7 @@ type devDatabase struct {
 	Name   string
 }
 
-// devDatabasesForApps discovers every server database the current dev session must create.
+// devDatabasesForApps discovers server databases whose Compose services participate in the current dev session.
 func devDatabasesForApps(config *project.Config, apps []project.App) ([]devDatabase, error) {
 	seen := map[string]bool{}
 	databases := make([]devDatabase, 0, len(apps))
@@ -583,7 +583,7 @@ func devDatabasesForApps(config *project.Config, apps []project.App) ([]devDatab
 		if driver == "" {
 			driver = normalizeDevDatabaseDriver(components.DatabaseDriver())
 		}
-		if driver == "" || driver == "sqlite" {
+		if driver == "" || driver == "sqlite" || composeServiceDisabled(driver) {
 			continue
 		}
 		name := appScopedEnvValue(app, "DB_DATABASE")
@@ -661,7 +661,7 @@ func validateDevDatabaseName(name string) error {
 
 // mysqlCreateDatabasesScript creates every needed MySQL database after the service is ready.
 func mysqlCreateDatabasesScript(names []string) string {
-	return `while ! mysqladmin ping -h "mysql" --silent; do sleep .5; done; for db in ` + strings.Join(names, " ") + `; do mysql -h "mysql" -uroot -p"$MARIADB_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \` + "`" + `$db\` + "`" + `; GRANT ALL PRIVILEGES ON \` + "`" + `$db\` + "`" + `.* TO '$MARIADB_USER'@'%';"; done; mysql -h "mysql" -uroot -p"$MARIADB_ROOT_PASSWORD" -e "FLUSH PRIVILEGES;"`
+	return `while ! mariadb-admin ping -h "mysql" --silent; do sleep .5; done; for db in ` + strings.Join(names, " ") + `; do mariadb -h "mysql" -uroot -p"$MARIADB_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \` + "`" + `$db\` + "`" + `; GRANT ALL PRIVILEGES ON \` + "`" + `$db\` + "`" + `.* TO '$MARIADB_USER'@'%';"; done; mariadb -h "mysql" -uroot -p"$MARIADB_ROOT_PASSWORD" -e "FLUSH PRIVILEGES;"`
 }
 
 // postgresCreateDatabasesScript creates every needed Postgres database after the service is ready.

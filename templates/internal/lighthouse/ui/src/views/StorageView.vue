@@ -204,7 +204,7 @@
                       </span>
                     </td>
                     <td class="px-4 py-2.5 text-muted">{{ entry.is_dir ? "Directory" : "File" }}</td>
-                    <td class="px-4 py-2.5 text-muted">{{ entry.is_dir ? "—" : formatBytes(entry.size) }}</td>
+                    <td class="px-4 py-2.5 text-muted">{{ entry.is_dir ? "N/A" : formatBytes(entry.size) }}</td>
                     <td class="px-4 py-2.5">
                       <div class="flex items-center gap-2">
                         <Button v-if="entry.is_dir" variant="outline" size="sm" @click="openPath(entry.path)">

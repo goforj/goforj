@@ -106,6 +106,29 @@ func TestInsertBuildPassthroughBoundaryPreservesGoFlags(t *testing.T) {
 	}
 }
 
+// TestNormalizeLegacyLongAliases verifies the former long alias remains compatible without rewriting unrelated arguments.
+func TestNormalizeLegacyLongAliases(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{name: "legacy alias", args: []string{"--x", "build"}, want: []string{"--dev", "build"}},
+		{name: "legacy alias true", args: []string{"--x=true", "build"}, want: []string{"--dev=true", "build"}},
+		{name: "legacy alias false", args: []string{"--x=false", "build"}, want: []string{"--dev=false", "build"}},
+		{name: "short alias", args: []string{"-x", "build"}, want: []string{"-x", "build"}},
+		{name: "explicit boundary", args: []string{"build", "--", "--x"}, want: []string{"build", "--", "--x"}},
+		{name: "unrelated prefix", args: []string{"--xray", "build"}, want: []string{"--xray", "build"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := normalizeLegacyLongAliases(test.args); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("normalized args = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
 // TestBuildPassthroughBoundarySurvivesKong verifies parser behavior rather than only the pre-parser transformation.
 func TestBuildPassthroughBoundarySurvivesKong(t *testing.T) {
 	tests := []struct {
@@ -120,6 +143,7 @@ func TestBuildPassthroughBoundarySurvivesKong(t *testing.T) {
 		{name: "tags", args: []string{"build", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}},
 		{name: "root flag before build", args: []string{"--dev", "build", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}, wantDev: true},
 		{name: "root alias before build", args: []string{"--x", "build", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}, wantDev: true},
+		{name: "root short alias before build", args: []string{"-x", "build", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}, wantDev: true},
 		{name: "inherited root flag after build", args: []string{"build", "--dev", "-tags", "dev"}, wantGoArgs: []string{"-tags", "dev"}, wantDev: true},
 		{name: "root alias after build", args: []string{"build", "--x", "-tags=dev"}, wantGoArgs: []string{"-tags=dev"}, wantDev: true},
 		{name: "Go x flag", args: []string{"build", "-x"}, wantGoArgs: []string{"-x"}},
@@ -141,7 +165,8 @@ func TestBuildPassthroughBoundarySurvivesKong(t *testing.T) {
 			if err != nil {
 				t.Fatalf("create parser: %v", err)
 			}
-			if _, err := parser.Parse(insertBuildPassthroughBoundary(test.args)); err != nil {
+			args := normalizeLegacyLongAliases(test.args)
+			if _, err := parser.Parse(insertBuildPassthroughBoundary(args)); err != nil {
 				t.Fatalf("parse build command: %v", err)
 			}
 			goArgs := buildPassthroughArgs(root.BuildCmd.Args)

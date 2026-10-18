@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	charmansi "github.com/charmbracelet/x/ansi"
 	"github.com/goforj/console"
 	"github.com/goforj/goforj/project"
@@ -24,8 +24,8 @@ const (
 	devBubbleSpinnerInterval = 80 * time.Millisecond
 	devLifecycleBufferLines  = 400
 	devLifecycleVisibleLines = 8
-	devTerminalProgressClear = "\x1b]9;4;0;0\x07"
-	devTerminalProgressBusy  = "\x1b]9;4;3;0\x07"
+	devTerminalProgressClear = "\x1b]9;4;0\x07"
+	devTerminalProgressBusy  = "\x1b]9;4;3\x07"
 )
 
 var devBubbleSpinnerFrames = console.DefaultMarks().SpinnerFrames
@@ -273,7 +273,7 @@ func newDevBubbleWriter(config *project.Config, requestRestart func(), requestRe
 		requestCommand: requestCommand,
 	}
 	done := make(chan struct{})
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithoutSignalHandler())
+	program := tea.NewProgram(model, tea.WithoutSignalHandler())
 	go func() {
 		defer close(done)
 		_, _ = program.Run()
@@ -752,7 +752,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.invalidateVisibleTranscriptCache()
 	case devQuitMsg:
 		return m, tea.Quit
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
 			return m, devForwardInterruptCmd()
 		}
@@ -775,8 +775,8 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.updateSearchMatches()
 				}
 			default:
-				if len(msg.Runes) > 0 && !msg.Alt {
-					m.searchQuery += string(msg.Runes)
+				if msg.Text != "" && msg.Mod == 0 {
+					m.searchQuery += msg.Text
 					m.updateSearchMatches()
 				}
 			}
@@ -794,7 +794,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.invalidateVisibleTranscriptCache()
 				m.updateSearchMatches()
 			case "1", "2", "3", "4", "5", "6", "7":
-				index := int(msg.Runes[0] - '1')
+				index := int(msg.String()[0] - '1')
 				if index >= 0 && index < len(devComponentFilterOrder) {
 					component := devComponentFilterOrder[index]
 					m.componentShown[component] = !m.componentShown[component]
@@ -844,8 +844,8 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.jumpCommandSelection(m.commandJump)
 				}
 			default:
-				if len(msg.Runes) > 0 && !msg.Alt {
-					m.handleCommandTextInput(string(msg.Runes))
+				if msg.Text != "" && msg.Mod == 0 {
+					m.handleCommandTextInput(msg.Text)
 				}
 			}
 			return m, nil
@@ -895,7 +895,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollDown(1)
 		case "pgup", "b":
 			m.scrollUp(m.bodyHeight())
-		case "pgdown", " ":
+		case "pgdown", "space":
 			m.scrollDown(m.bodyHeight())
 		case "home", "g":
 			m.scrollToTop()
@@ -946,7 +946,7 @@ func (m devBubbleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = openURL(m.apiURL)
 			}
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			index := int(msg.Runes[0] - '1')
+			index := int(msg.String()[0] - '1')
 			if index >= 0 && index < len(m.tools) && strings.TrimSpace(m.tools[index].URL) != "" {
 				if helpVisible {
 					m.helpVisible = false
@@ -980,7 +980,7 @@ func devForwardInterruptCmdWith(signalInterrupt func() error) tea.Cmd {
 }
 
 // View renders the receiver's current terminal state.
-func (m devBubbleModel) View() string {
+func (m devBubbleModel) View() tea.View {
 	width := m.width
 	if width <= 0 {
 		width = 120
@@ -1051,18 +1051,21 @@ func (m devBubbleModel) View() string {
 	}
 	base := strings.Join(parts, "\n")
 	overlay := m.currentOverlay()
-	if overlay == "" {
-		return m.terminalProgressSequence() + base
+	if overlay != "" {
+		base = renderDevBubbleOverlay(base, overlay, width, height)
 	}
-	return m.terminalProgressSequence() + renderDevBubbleOverlay(base, overlay, width, height)
+	view := tea.NewView(base)
+	view.AltScreen = true
+	view.ProgressBar = m.terminalProgressBar()
+	return view
 }
 
-// terminalProgressSequence keeps terminal-owned progress aligned with the TUI's active lifecycle row.
-func (m devBubbleModel) terminalProgressSequence() string {
+// terminalProgressBar keeps terminal-owned progress aligned with the TUI's active lifecycle row.
+func (m devBubbleModel) terminalProgressBar() *tea.ProgressBar {
 	if strings.TrimSpace(m.statusLine) != "" {
-		return devTerminalProgressBusy
+		return tea.NewProgressBar(tea.ProgressBarIndeterminate, 0)
 	}
-	return devTerminalProgressClear
+	return tea.NewProgressBar(tea.ProgressBarNone, 0)
 }
 
 // devBubbleSpinnerTick schedules one TUI-owned animation frame without writing around Bubble Tea.
@@ -1125,7 +1128,7 @@ func (m devBubbleModel) lifecycleShelfLines(width int, available int, heading st
 		return nil
 	}
 	rail := lipgloss.NewStyle().
-		Foreground(lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#64748B"}).
+		Foreground(adaptiveColor("#64748B", "#64748B")).
 		Render("┃")
 	lines := []string{rail + " " + heading}
 	for _, line := range m.visibleLifecycleLines(width-2, available-1) {

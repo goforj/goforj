@@ -9,14 +9,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.1.18",
-    "basecoat-css": "^0.3.11",
-    "htmx.org": "^2.0.8",
-    "shadcn": "^4.11.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "basecoat-css": "^1.0.2",
+    "htmx.org": "^2.0.11",
     "tailwindcss": "^4.1.18"
   },
   "devDependencies": {
-    "typescript": "~5.9.3",
-    "vite": "^7.2.4"
+    "esbuild": "^0.28.2",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.4"
   }
 }

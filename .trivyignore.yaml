@@ -1,0 +1,13 @@
+vulnerabilities: []
+
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - dockerfiles/mariadb-Dockerfile/Dockerfile
+    expired_at: 2026-12-04
+    statement: The official MariaDB entrypoint starts with root privileges so it can prepare mounted directories, then drops to the mysql user before starting the server. Setting USER in this derived image would bypass that supported initialization path.
+  - id: AVD-DS-0002
+    paths:
+      - dockerfiles/mariadb-Dockerfile/Dockerfile
+    expired_at: 2026-12-04
+    statement: The official MariaDB entrypoint starts with root privileges so it can prepare mounted directories, then drops to the mysql user before starting the server. Setting USER in this derived image would bypass that supported initialization path.
