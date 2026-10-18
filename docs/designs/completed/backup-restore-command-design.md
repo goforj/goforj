@@ -1099,7 +1099,9 @@ selector produces one manifest-backed set containing exactly the requested
 resources. It rejects duplicates, missing resources, and unsupported selected
 storage before capturing data. Existing `--resource` and unfiltered command
 behavior remain compatible. `--resources` cannot be combined with `--resource`
-or `--portable`.
+or `--portable`. Apps without a resource-contract command retain environment-based
+discovery: local and S3 disks are eligible for selected capture; unsupported
+external drivers remain excluded.
 
 Use `--copy-objects` with `--resources` to retain independent S3 object copies.
 The resulting `object-archive` artifact stores opaque object keys, contents,
