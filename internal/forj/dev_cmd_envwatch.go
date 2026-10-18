@@ -133,7 +133,7 @@ func snapshotDevEnvFiles() (map[string]devEnvFileFingerprint, error) {
 		if name != ".env" && !strings.HasPrefix(name, ".env.") {
 			continue
 		}
-		if name == ".env.example" || name == ".env.testing" {
+		if name == ".env.example" || name == ".env.testing" || strings.HasPrefix(name, ".env.local-providers.") {
 			continue
 		}
 		info, err := entry.Info()
