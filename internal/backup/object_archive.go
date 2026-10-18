@@ -17,6 +17,10 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// objectArchiveMaxObjectBytes matches the single-PUT transport used by the storage streaming API.
+// Larger objects require multipart restoration before they can be recoverable archives.
+const objectArchiveMaxObjectBytes int64 = 5_000_000_000
+
 // objectArchiveReader lets cancellation stop local decompression and temporary-file writes.
 type objectArchiveReader struct {
 	ctx    context.Context
@@ -130,6 +134,9 @@ func BackupObjectArchive(ctx context.Context, name, artifact string, maxBytes in
 			return fmt.Errorf("object backup exceeds 100000 objects")
 		}
 		size := object.Size
+		if size > objectArchiveMaxObjectBytes {
+			return fmt.Errorf("object size limit is %d bytes for single-upload restoration; multipart restoration is required", objectArchiveMaxObjectBytes)
+		}
 		if size < 0 || (maxBytes > 0 && size > maxBytes-total) {
 			return fmt.Errorf("object backup exceeds its size limit")
 		}
@@ -232,6 +239,9 @@ func inspectObjectArchive(ctx context.Context, artifact string, maxBytes int64) 
 		}
 		if header.Size > maxBytes-expandedBytes {
 			return manifest, fmt.Errorf("object archive exceeds %d expanded bytes", maxBytes)
+		}
+		if header.Size > objectArchiveMaxObjectBytes {
+			return manifest, fmt.Errorf("object size limit is %d bytes for single-upload restoration; multipart restoration is required", objectArchiveMaxObjectBytes)
 		}
 		expandedBytes += header.Size
 		hash := sha256.New()

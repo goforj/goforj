@@ -132,3 +132,69 @@ func TestObjectArchiveCaptureRespectsRestoreLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestObjectArchiveSingleUploadLimitPreflightsRestore rejects unsupported objects before payload processing or provider access.
+func TestObjectArchiveSingleUploadLimitPreflightsRestore(t *testing.T) {
+	for _, size := range []int64{objectArchiveMaxObjectBytes, objectArchiveMaxObjectBytes + 1} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			artifact := filepath.Join(t.TempDir(), "header-only.tar.zst")
+			file, err := os.Create(artifact)
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoder, err := zstd.NewWriter(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writer := tar.NewWriter(encoder)
+			if err := writer.WriteHeader(&tar.Header{Name: "objects/00000000", Size: size, Typeflag: tar.TypeReg, Mode: 0600}); err != nil {
+				t.Fatal(err)
+			}
+			// A header alone distinguishes the size preflight from later payload validation without allocating gigabytes.
+			if err := encoder.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			for _, check := range []func() error{
+				func() error { return VerifyObjectArchive(artifact) },
+				func() error { return RestoreObjectArchive(context.Background(), "default", artifact) },
+			} {
+				err := check()
+				if err == nil {
+					t.Fatal("accepted an archive missing its payload")
+				}
+				limited := strings.Contains(err.Error(), "single-upload")
+				if limited != (size > objectArchiveMaxObjectBytes) {
+					t.Fatalf("size %d: error = %v", size, err)
+				}
+			}
+		})
+	}
+}
+
+// TestObjectArchiveCaptureRejectsUnrestorableObjects prevents reporting a successful backup above the single-upload limit.
+func TestObjectArchiveCaptureRejectsUnrestorableObjects(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("list-type") != "2" {
+			t.Error("unrestorable source was opened")
+			w.WriteHeader(403)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		fmt.Fprintf(w, `<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>too-large</Key><Size>%d</Size></Contents></ListBucketResult>`, objectArchiveMaxObjectBytes+1)
+	}))
+	defer server.Close()
+	for key, value := range map[string]string{"STORAGE_BUCKET": "fixture", "STORAGE_ENDPOINT": server.URL, "STORAGE_REGION": "us-east-1", "STORAGE_ACCESS_KEY_ID": "fixture", "STORAGE_SECRET_ACCESS_KEY": "fixture", "STORAGE_USE_PATH_STYLE": "true", "STORAGE_PREFIX": ""} {
+		t.Setenv(key, value)
+	}
+	artifact := filepath.Join(t.TempDir(), "objects.tar.zst")
+	err := BackupObjectArchive(context.Background(), "default", artifact, 0)
+	if err == nil || !strings.Contains(err.Error(), "single-upload") {
+		t.Fatalf("capture error = %v", err)
+	}
+	if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+		t.Fatal("unrestorable archive retained", err)
+	}
+}

@@ -148,15 +148,14 @@ func (s *Service) create(ctx context.Context, root string, resourceName string, 
 		}
 		artifactName := storage.Name + ".local.tar.zst"
 		artifact := filepath.Join(dir, "storage", artifactName)
-		storageRoot := storage.Root
-		if options != nil && storage.Prefix != "" {
-			storageRoot, err = safeExtractPath(storage.Root, storage.Prefix)
-			if err != nil {
-				return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, err)
-			}
+		var archiveErr error
+		if options != nil {
+			archiveErr = archiveScopedDirectory(storage.Root, storage.Prefix, artifact)
+		} else {
+			archiveErr = ArchiveDirectory(storage.Root, artifact)
 		}
-		if err := ArchiveDirectory(storageRoot, artifact); err != nil {
-			return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, err)
+		if archiveErr != nil {
+			return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, archiveErr)
 		}
 		fingerprint, err := Checksum(artifact)
 		if err != nil {
@@ -259,15 +258,14 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 				restored = true
 				continue
 			}
-			storageRoot := storage.Root
-			if resource.Scoped && storage.Prefix != "" {
-				storageRoot, err = safeExtractPath(storage.Root, storage.Prefix)
-				if err != nil {
-					return err
-				}
+			var restoreErr error
+			if resource.Scoped {
+				restoreErr = restoreScopedDirectoryArchive(artifact, storage.Root, storage.Prefix, archiveRestoreLimits{entries: storageArchiveMaxEntries, bytes: storageArchiveMaxExpandedBytes})
+			} else {
+				restoreErr = RestoreDirectoryArchive(artifact, storage.Root)
 			}
-			if err := RestoreDirectoryArchive(artifact, storageRoot); err != nil {
-				return fmt.Errorf("restore %s: %w", resource.ID, err)
+			if restoreErr != nil {
+				return fmt.Errorf("restore %s: %w", resource.ID, restoreErr)
 			}
 			restored = true
 			continue
