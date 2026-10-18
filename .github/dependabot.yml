@@ -21,11 +21,9 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: [version-update:semver-major]
-      # Cache v0.4.1 requires Go 1.27, while GoForj supports Go 1.26.
+      # Newer Cache roots require Go 1.27; core and drivers remain independently updatable.
       - dependency-name: github.com/goforj/cache
-        versions: [0.4.1]
-      - dependency-name: github.com/goforj/cache/cachecore
-        versions: [0.4.1]
+        versions: [">=0.4.1"]
       # Kong v1.16.1 changes passthrough parsing used by GoForj commands.
       - dependency-name: github.com/alecthomas/kong
         versions: [1.16.1]

@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/goforj/goforj/internal/coredeps"
 	"github.com/goforj/goforj/project"
@@ -798,6 +797,7 @@ func TestNextStepsUseSimpleLocalServicesCommand(t *testing.T) {
 	}
 }
 
+// TestRunWireGenerateRunsAppDirsInParallel requires both Wire processes to reach a barrier before either can finish.
 func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	root := t.TempDir()
 	for _, path := range []string{
@@ -816,7 +816,26 @@ func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 
 	toolsDir := t.TempDir()
 	wirePath := filepath.Join(toolsDir, "wire")
-	wireScript := "#!/bin/sh\nsleep 0.2\nexit 0\n"
+	barrierDir := t.TempDir()
+	t.Setenv("FORJ_TEST_WIRE_BARRIER", barrierDir)
+	wireScript := `#!/bin/sh
+set -eu
+case "$PWD" in
+  */app/wire) marker=default ;;
+  */app/billing/wire) marker=billing ;;
+  *) printf 'unexpected Wire directory: %s\n' "$PWD" >&2; exit 1 ;;
+esac
+: > "$FORJ_TEST_WIRE_BARRIER/$marker.started"
+attempt=0
+while [ ! -f "$FORJ_TEST_WIRE_BARRIER/default.started" ] || [ ! -f "$FORJ_TEST_WIRE_BARRIER/billing.started" ]; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 1000 ]; then
+    printf 'Wire process %s never reached the peer startup barrier\n' "$marker" >&2
+    exit 1
+  fi
+  sleep 0.01
+done
+`
 	if err := os.WriteFile(wirePath, []byte(wireScript), 0o755); err != nil {
 		t.Fatalf("write fake wire: %v", err)
 	}
@@ -826,13 +845,13 @@ func TestRunWireGenerateRunsAppDirsInParallel(t *testing.T) {
 	if err := renderer.beginRenderInvocation(root); err != nil {
 		t.Fatalf("begin render invocation: %v", err)
 	}
-	start := time.Now()
 	if err := renderer.runWireGenerate(); err != nil {
 		t.Fatalf("runWireGenerate returned error: %v", err)
 	}
-	elapsed := time.Since(start)
-	if elapsed > 350*time.Millisecond {
-		t.Fatalf("expected wire dirs to run in parallel, took %s", elapsed)
+	for _, marker := range []string{"default.started", "billing.started"} {
+		if _, err := os.Stat(filepath.Join(barrierDir, marker)); err != nil {
+			t.Fatalf("Wire startup marker %s: %v", marker, err)
+		}
 	}
 }
 
@@ -2635,6 +2654,14 @@ func TestCoreModulesNeedingSyncPreservesNewerMinimums(t *testing.T) {
 		{name: "replacement", module: "golang.org/x/net", current: "v0.58.0", desired: "v0.61.0", replacement: "\nreplace golang.org/x/net => ../net\n"},
 		{name: "exact framework pin", module: "github.com/goforj/web", current: "v0.7.0", desired: "v0.6.2", pending: true},
 		{name: "missing minimum", module: "golang.org/x/net", desired: "v0.61.0", pending: true},
+		{name: "older Echo minimum", module: "github.com/labstack/echo/v5", current: "v5.2.0", desired: "v5.4.0", pending: true},
+		{name: "equal Echo minimum", module: "github.com/labstack/echo/v5", current: "v5.4.0", desired: "v5.4.0"},
+		{name: "newer Echo minimum", module: "github.com/labstack/echo/v5", current: "v5.5.0", desired: "v5.4.0"},
+		{name: "Echo replacement", module: "github.com/labstack/echo/v5", current: "v5.2.0", desired: "v5.4.0", replacement: "\nreplace github.com/labstack/echo/v5 => ../echo\n"},
+		{name: "older compression minimum", module: "github.com/klauspost/compress", current: "v1.20.1", desired: "v1.20.2", pending: true},
+		{name: "equal compression minimum", module: "github.com/klauspost/compress", current: "v1.20.2", desired: "v1.20.2"},
+		{name: "newer compression minimum", module: "github.com/klauspost/compress", current: "v1.20.3", desired: "v1.20.2"},
+		{name: "compression replacement", module: "github.com/klauspost/compress", current: "v1.20.1", desired: "v1.20.2", replacement: "\nreplace github.com/klauspost/compress => ../compress\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

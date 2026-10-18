@@ -1,4 +1,4 @@
-FROM debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
+FROM debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5 AS runtime
 
 # Versions (override at build time if desired)
 ARG GO_VERSION=1.26.9
@@ -63,6 +63,7 @@ ENV PATH="${GOPATH}/bin:/usr/local/go/bin:${PATH}"
 
 RUN mkdir -p /go && chmod -R 777 /go
 
+ARG PLUGIN_COMPRESS_VERSION=v1.20.2
 COPY build-plugins.sh /tmp/build-plugins.sh
 RUN --mount=type=cache,target=/tmp/gocache \
     --mount=type=cache,target=/go/pkg/mod \
@@ -82,3 +83,17 @@ COPY --from=docker:27-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305
 ENTRYPOINT ["/usr/local/bin/dind"]
 
 CMD ["dockerd"]
+
+# Rebuild affected engine binaries without shipping native build dependencies.
+FROM runtime AS engine-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential pkg-config libseccomp-dev libsystemd-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY build-engine.sh /tmp/build-engine.sh
+RUN --mount=type=cache,target=/tmp/gocache \
+    --mount=type=cache,target=/go/pkg/mod \
+    GOCACHE=/tmp/gocache sh /tmp/build-engine.sh
+
+FROM runtime
+COPY --from=engine-builder /out/bin/ /usr/bin/
+COPY --from=engine-builder /out/licenses/ /usr/share/doc/docker-engine-security/

@@ -45,21 +45,22 @@ var (
 
 const cacheGeneratorIntegrationGoMod = `module example.com/cachegeneratorintegration
 
-go 1.25.0
+go 1.26.0
 
 require (
+	github.com/klauspost/compress v1.20.2
 	golang.org/x/text v0.41.0
 	github.com/goforj/cache v0.4.0
-	github.com/goforj/cache/cachecore v0.4.0
-	github.com/goforj/cache/cachetest v0.4.0
-	github.com/goforj/cache/driver/dynamocache v0.4.0
-	github.com/goforj/cache/driver/memcachedcache v0.4.0
-	github.com/goforj/cache/driver/mysqlcache v0.4.0
-	github.com/goforj/cache/driver/natscache v0.4.0
-	github.com/goforj/cache/driver/postgrescache v0.4.0
-	github.com/goforj/cache/driver/rediscache v0.4.0
-	github.com/goforj/cache/driver/sqlcore v0.4.0
-	github.com/goforj/cache/driver/sqlitecache v0.4.0
+	github.com/goforj/cache/cachecore v0.4.2
+	github.com/goforj/cache/cachetest v0.4.2
+	github.com/goforj/cache/driver/dynamocache v0.4.2
+	github.com/goforj/cache/driver/memcachedcache v0.4.2
+	github.com/goforj/cache/driver/mysqlcache v0.4.2
+	github.com/goforj/cache/driver/natscache v0.4.2
+	github.com/goforj/cache/driver/postgrescache v0.4.2
+	github.com/goforj/cache/driver/rediscache v0.4.2
+	github.com/goforj/cache/driver/sqlcore v0.4.2
+	github.com/goforj/cache/driver/sqlitecache v0.4.2
 	github.com/goforj/env/v2 v2.6.1
 	github.com/goforj/str/v2 v2.0.1
 )
@@ -70,18 +71,19 @@ const storageGeneratorIntegrationGoMod = `module example.com/storagegeneratorint
 go 1.26.0
 
 require (
+	github.com/klauspost/compress v1.20.2
 	github.com/goforj/env/v2 v2.6.1
 	golang.org/x/net v0.61.0
 	go.opentelemetry.io/otel/sdk v1.45.0
 	go.opentelemetry.io/otel/sdk/metric v1.45.0
-	github.com/goforj/storage v0.5.0
-	github.com/goforj/storage/driver/ftpstorage v0.5.0
-	github.com/goforj/storage/driver/gcsstorage v0.5.0
-	github.com/goforj/storage/driver/localstorage v0.5.0
-	github.com/goforj/storage/driver/memorystorage v0.5.0
-	github.com/goforj/storage/driver/redisstorage v0.5.0
-	github.com/goforj/storage/driver/s3storage v0.5.0
-	github.com/goforj/storage/driver/sftpstorage v0.5.0
+	github.com/goforj/storage v0.5.1
+	github.com/goforj/storage/driver/ftpstorage v0.5.1
+	github.com/goforj/storage/driver/gcsstorage v0.5.1
+	github.com/goforj/storage/driver/localstorage v0.5.1
+	github.com/goforj/storage/driver/memorystorage v0.5.1
+	github.com/goforj/storage/driver/redisstorage v0.5.1
+	github.com/goforj/storage/driver/s3storage v0.5.1
+	github.com/goforj/storage/driver/sftpstorage v0.5.1
 	github.com/goforj/str/v2 v2.0.1
 )
 `
