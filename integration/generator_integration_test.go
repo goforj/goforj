@@ -71,13 +71,13 @@ go 1.24
 
 require (
 	github.com/goforj/env/v2 v2.6.1
-	github.com/goforj/storage v0.5.0
+	github.com/goforj/storage v0.5.1-0.20261018063152-b403d13f1e70
 	github.com/goforj/storage/driver/ftpstorage v0.5.0
 	github.com/goforj/storage/driver/gcsstorage v0.5.0
 	github.com/goforj/storage/driver/localstorage v0.5.0
 	github.com/goforj/storage/driver/memorystorage v0.5.0
 	github.com/goforj/storage/driver/redisstorage v0.5.0
-	github.com/goforj/storage/driver/s3storage v0.5.0
+	github.com/goforj/storage/driver/s3storage v0.5.1-0.20261018063152-b403d13f1e70
 	github.com/goforj/storage/driver/sftpstorage v0.5.0
 	github.com/goforj/str/v2 v2.0.1
 )

@@ -134,8 +134,12 @@ github.com/goforj/scheduler/v2 v2.1.4 h1:L9HG4PCDelqIpnNjD2he50ZZfjzA/PYAVeHu2/E
 github.com/goforj/scheduler/v2 v2.1.4/go.mod h1:tV/57F7kcD7rkhydaZuBq6c9oHtZ3oyIGPlWz54+f2c=
 github.com/goforj/storage v0.5.0 h1:bXeUaDYsiibnGn+9FuMcq5U9WBRLE2TrIQ9PoSWYgMk=
 github.com/goforj/storage v0.5.0/go.mod h1:LRIclkYlI8Pp2kjmkzawMSF44Ka94XkN7/NjMPEP/hs=
+github.com/goforj/storage v0.5.1-0.20261018063152-b403d13f1e70 h1:6r0iJOudzIzoAyhfX1McJg5i/rHP5BH303lH6pweMsE=
+github.com/goforj/storage v0.5.1-0.20261018063152-b403d13f1e70/go.mod h1:1TeJ7BZk6BMEocKqqzOGJvd3AjrjHoUzSyx2PcYlPzQ=
 github.com/goforj/storage/storagecore v0.5.0 h1:1NHEDS/P6BOEOk0DIq5gQsvgz/Zew3v1ZG2XZ3pZ9Zw=
 github.com/goforj/storage/storagecore v0.5.0/go.mod h1:n6epEk/dinioVPKa8VkWduaf0b1ggcnycXRmd6nURCY=
+github.com/goforj/storage/storagecore v0.5.1-0.20261018062947-24ec77d658d3 h1:GmAeqDaGG5B733T8KtOIdOtaug0A7iU23fm0Q/fAHao=
+github.com/goforj/storage/storagecore v0.5.1-0.20261018062947-24ec77d658d3/go.mod h1:n6epEk/dinioVPKa8VkWduaf0b1ggcnycXRmd6nURCY=
 github.com/goforj/str v1.3.0 h1:m9NQQDiAO1+g8N7vxZIhwcerueyMWc8l2ffxYjdAxFA=
 github.com/goforj/str v1.3.0/go.mod h1:LGUzW/UEbvNG8TbN7kIzd9O10oq4wyGyF5Xk4SzfKZk=
 github.com/goforj/str/v2 v2.0.1 h1:fu33B6ZkYZ2627p6ztNPavjernrEadMdetkzJy0hzvw=

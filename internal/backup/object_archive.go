@@ -6,18 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/smithy-go"
+	"github.com/goforj/storage"
+	"github.com/goforj/storage/driver/s3storage"
+	"github.com/goforj/storage/storagecore"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -39,27 +35,37 @@ type objectArchiveManifest struct {
 	Objects []objectArchiveEntry `json:"objects"`
 }
 
-// objectArchiveStore keeps streaming SDK access in the framework backup adapter.
+// objectArchiveStore delegates provider I/O to the App storage library.
 type objectArchiveStore struct {
-	client *s3.Client
-	bucket string
-	prefix string
+	objects storagecore.ObjectStorage
+	prefix  string
 }
 
-// configuredObjectArchiveStore uses the same named resource environment contract as App storage.
-func configuredObjectArchiveStore(name string) *objectArchiveStore {
-	scope := storageEnvScope(name)
-	endpoint := scope.Get("ENDPOINT", "")
-	pathStyle, _ := parseEnvBool(scope.Key("USE_PATH_STYLE"))
-	return &objectArchiveStore{client: s3.New(s3.Options{BaseEndpoint: optionalEndpoint(endpoint), Region: scope.Get("REGION", "us-east-1"), Credentials: credentials.NewStaticCredentialsProvider(scope.Get("ACCESS_KEY_ID", ""), scope.Get("SECRET_ACCESS_KEY", ""), ""), UsePathStyle: pathStyle, HTTPClient: &http.Client{Timeout: 5 * time.Minute}, RetryMaxAttempts: 2, RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired, ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired}), bucket: scope.Get("BUCKET", ""), prefix: strings.Trim(scope.Get("PREFIX", ""), "/")}
-}
-
-// optionalEndpoint preserves AWS endpoint resolution when no compatible endpoint is configured.
-func optionalEndpoint(endpoint string) *string {
-	if endpoint == "" {
-		return nil
+// configuredObjectArchiveConfig preserves the archive adapter's default region while reusing App disk configuration.
+func configuredObjectArchiveConfig(name string) (s3storage.Config, error) {
+	cfg, err := configuredObjectStorageConfig(name)
+	if cfg.Region == "" {
+		cfg.Region = "us-east-1"
 	}
-	return aws.String(endpoint)
+	cfg.Prefix = strings.Trim(cfg.Prefix, "/")
+	return cfg, err
+}
+
+// configuredObjectArchiveStore resolves the optional streaming capability through goforj/storage.
+func configuredObjectArchiveStore(ctx context.Context, name string) (*objectArchiveStore, error) {
+	cfg, err := configuredObjectArchiveConfig(name)
+	if err != nil {
+		return nil, err
+	}
+	disk, err := storage.BuildContext(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	objects, err := storage.Objects(disk)
+	if err != nil {
+		return nil, err
+	}
+	return &objectArchiveStore{objects: objects, prefix: cfg.Prefix}, nil
 }
 
 // objectPrefix retains the resource boundary when a neighbouring prefix shares its leading characters.
@@ -75,11 +81,8 @@ func BackupObjectArchive(ctx context.Context, name, artifact string, maxBytes in
 	if maxBytes < 0 {
 		return fmt.Errorf("object backup size limit cannot be negative")
 	}
-	store := configuredObjectArchiveStore(name)
-	if store.bucket == "" {
-		return fmt.Errorf("object backup bucket is required")
-	}
-	if _, err := parseEnvBool(storageEnvScope(name).Key("USE_PATH_STYLE")); err != nil {
+	store, err := configuredObjectArchiveStore(ctx, name)
+	if err != nil {
 		return err
 	}
 	if _, err := artifactPath(artifact); err != nil {
@@ -104,51 +107,41 @@ func BackupObjectArchive(ctx context.Context, name, artifact string, maxBytes in
 	writer := tar.NewWriter(encoder)
 	defer writer.Close()
 	manifest := objectArchiveManifest{Version: 1, Prefix: store.prefix, Objects: []objectArchiveEntry{}}
-	pages := s3.NewListObjectsV2Paginator(store.client, &s3.ListObjectsV2Input{Bucket: aws.String(store.bucket), Prefix: aws.String(objectPrefix(store.prefix))})
 	total := int64(0)
-	for pages.HasMorePages() {
-		page, err := pages.NextPage(ctx)
+	err = store.objects.WalkObjectsContext(ctx, "", func(object storagecore.ObjectInfo) error {
+		if len(manifest.Objects) >= 100000 {
+			return fmt.Errorf("object backup exceeds 100000 objects")
+		}
+		size := object.Size
+		if size < 0 || (maxBytes > 0 && size > maxBytes-total) {
+			return fmt.Errorf("object backup exceeds its size limit")
+		}
+		key := objectPrefix(store.prefix) + object.Key
+		source, err := store.objects.OpenObjectContext(ctx, object.Key, storagecore.OpenObjectOptions{IfMatch: object.ETag})
 		if err != nil {
-			return fmt.Errorf("list source objects failed")
+			return fmt.Errorf("read source object failed")
 		}
-		for _, object := range page.Contents {
-			if len(manifest.Objects) >= 100000 {
-				return fmt.Errorf("object backup exceeds 100000 objects")
-			}
-			size := aws.ToInt64(object.Size)
-			if size < 0 || (maxBytes > 0 && size > maxBytes-total) {
-				return fmt.Errorf("object backup exceeds its size limit")
-			}
-			key := aws.ToString(object.Key)
-			if !strings.HasPrefix(key, objectPrefix(store.prefix)) {
-				return fmt.Errorf("object is outside the configured storage prefix")
-			}
-			source, err := store.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(store.bucket), Key: object.Key, IfMatch: object.ETag})
-			if err != nil {
-				return fmt.Errorf("read source object failed")
-			}
-			if aws.ToInt64(source.ContentLength) != size {
-				source.Body.Close()
-				return fmt.Errorf("source object changed during backup")
-			}
-			member := fmt.Sprintf("objects/%08d", len(manifest.Objects))
-			if err = writer.WriteHeader(&tar.Header{Name: member, Mode: 0600, Size: size, Typeflag: tar.TypeReg}); err != nil {
-				source.Body.Close()
-				return err
-			}
-			hash := sha256.New()
-			n, copyErr := io.Copy(io.MultiWriter(writer, hash), io.LimitReader(source.Body, size+1))
-			closeErr := source.Body.Close()
-			if copyErr != nil || closeErr != nil || n != size {
-				return fmt.Errorf("copy source object failed")
-			}
-			modified := time.Time{}
-			if source.LastModified != nil {
-				modified = *source.LastModified
-			}
-			manifest.Objects = append(manifest.Objects, objectArchiveEntry{Artifact: member, ContentType: aws.ToString(source.ContentType), ContentEncoding: aws.ToString(source.ContentEncoding), ContentDisposition: aws.ToString(source.ContentDisposition), CacheControl: aws.ToString(source.CacheControl), Metadata: source.Metadata, ObjectInfo: ObjectInfo{Key: key, Size: size, ETag: aws.ToString(source.ETag), Version: aws.ToString(source.VersionId), ModifiedAt: modified, Checksum: hex.EncodeToString(hash.Sum(nil))}})
-			total += size
+		if source.Info.Size != size {
+			source.Close()
+			return fmt.Errorf("source object changed during backup")
 		}
+		member := fmt.Sprintf("objects/%08d", len(manifest.Objects))
+		if err = writer.WriteHeader(&tar.Header{Name: member, Mode: 0600, Size: size, Typeflag: tar.TypeReg}); err != nil {
+			source.Close()
+			return err
+		}
+		hash := sha256.New()
+		n, copyErr := io.Copy(io.MultiWriter(writer, hash), io.LimitReader(source, size+1))
+		closeErr := source.Close()
+		if copyErr != nil || closeErr != nil || n != size {
+			return fmt.Errorf("copy source object failed")
+		}
+		manifest.Objects = append(manifest.Objects, objectArchiveEntry{Artifact: member, ContentType: source.Info.Metadata.ContentType, ContentEncoding: source.Info.Metadata.ContentEncoding, ContentDisposition: source.Info.Metadata.ContentDisposition, CacheControl: source.Info.Metadata.CacheControl, Metadata: source.Info.Metadata.Values, ObjectInfo: ObjectInfo{Key: key, Size: size, ETag: source.Info.ETag, Version: source.Info.Version, ModifiedAt: source.Info.ModifiedAt, Checksum: hex.EncodeToString(hash.Sum(nil))}})
+		total += size
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	metadata, err := json.Marshal(manifest)
 	if err != nil {
@@ -246,11 +239,8 @@ func RestoreObjectArchive(ctx context.Context, name, artifact string) error {
 	if err != nil {
 		return err
 	}
-	store := configuredObjectArchiveStore(name)
-	if store.bucket == "" {
-		return fmt.Errorf("restore bucket is required")
-	}
-	if _, err = parseEnvBool(storageEnvScope(name).Key("USE_PATH_STYLE")); err != nil {
+	store, err := configuredObjectArchiveStore(ctx, name)
+	if err != nil {
 		return err
 	}
 	file, err := os.Open(artifact)
@@ -270,7 +260,7 @@ func RestoreObjectArchive(ctx context.Context, name, artifact string) error {
 			return fmt.Errorf("object archive changed during restore")
 		}
 		relative := strings.TrimPrefix(object.Key, objectPrefix(manifest.Prefix))
-		key := objectPrefix(store.prefix) + relative
+		key := relative
 		if relative == "" && store.prefix == "" {
 			if object.Size == 0 {
 				continue
@@ -293,19 +283,19 @@ func RestoreObjectArchive(ctx context.Context, name, artifact string) error {
 			os.Remove(temporary.Name())
 			return err
 		}
-		_, putErr := store.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(store.bucket), Key: aws.String(key), Body: temporary, ContentLength: aws.Int64(object.Size), ContentType: optionalEndpoint(object.ContentType), ContentEncoding: optionalEndpoint(object.ContentEncoding), ContentDisposition: optionalEndpoint(object.ContentDisposition), CacheControl: optionalEndpoint(object.CacheControl), Metadata: object.Metadata})
+		_, putErr := store.objects.PutObjectContext(ctx, key, temporary, storagecore.PutObjectOptions{Size: object.Size, Metadata: storagecore.ObjectMetadata{ContentType: object.ContentType, ContentEncoding: object.ContentEncoding, ContentDisposition: object.ContentDisposition, CacheControl: object.CacheControl, Values: object.Metadata}})
 		temporary.Close()
 		os.Remove(temporary.Name())
 		if putErr != nil {
 			return fmt.Errorf("restore object upload failed")
 		}
-		restored, err := store.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(store.bucket), Key: aws.String(key)})
+		restored, err := store.objects.OpenObjectContext(ctx, key, storagecore.OpenObjectOptions{})
 		if err != nil {
 			return fmt.Errorf("read restored object failed")
 		}
 		verified := sha256.New()
-		copied, readErr := io.Copy(verified, restored.Body)
-		closeErr := restored.Body.Close()
+		copied, readErr := io.Copy(verified, restored)
+		closeErr := restored.Close()
 		if readErr != nil || closeErr != nil || copied != object.Size || hex.EncodeToString(verified.Sum(nil)) != object.Checksum {
 			return fmt.Errorf("restored object checksum did not match")
 		}
@@ -316,21 +306,9 @@ func RestoreObjectArchive(ctx context.Context, name, artifact string) error {
 
 // PrepareObjectRestore creates a missing target bucket only when the caller explicitly requests target preparation.
 func PrepareObjectRestore(ctx context.Context, name string) error {
-	store := configuredObjectArchiveStore(name)
-	if store.bucket == "" {
-		return fmt.Errorf("restore bucket is required")
-	}
-	if _, err := store.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(store.bucket)}); err == nil {
-		return nil
-	} else {
-		var api smithy.APIError
-		if !errors.As(err, &api) || (api.ErrorCode() != "NotFound" && api.ErrorCode() != "NoSuchBucket") {
-			return fmt.Errorf("cannot inspect target object bucket")
-		}
-	}
-	_, err := store.client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(store.bucket)})
+	cfg, err := configuredObjectArchiveConfig(name)
 	if err != nil {
-		return fmt.Errorf("cannot prepare target object bucket")
+		return err
 	}
-	return nil
+	return s3storage.PrepareBucketContext(ctx, cfg)
 }
