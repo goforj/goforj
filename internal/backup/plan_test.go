@@ -46,7 +46,9 @@ func TestBuildPlanDiscoversNamedDriverEnvironmentKeys(t *testing.T) {
 	}
 }
 
-func TestBuildPlanClassifiesS3StorageAsObjectManifest(t *testing.T) {
+// TestBuildPlanClassifiesS3StorageAsBackupable preserves S3 support for Apps using environment discovery.
+func TestBuildPlanClassifiesS3StorageAsBackupable(t *testing.T) {
+	t.Chdir(t.TempDir())
 	t.Setenv("STORAGE_DRIVER", "s3")
 	t.Setenv("STORAGE_BUCKET", "uploads")
 	t.Setenv("STORAGE_REGION", "us-east-1")
@@ -54,7 +56,7 @@ func TestBuildPlanClassifiesS3StorageAsObjectManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Storage) != 1 || plan.Storage[0].Driver != "s3" || plan.Storage[0].Status != "external-managed" {
+	if len(plan.Storage) != 1 || plan.Storage[0].Driver != "s3" || plan.Storage[0].Status != "backupable" {
 		t.Fatalf("unexpected S3 storage plan: %#v", plan.Storage)
 	}
 }
@@ -68,5 +70,21 @@ func TestPlanValidateAllowsStorageOnlyBackups(t *testing.T) {
 	incomplete := Plan{Storage: []StoragePlanResource{{Name: "default"}}}
 	if err := incomplete.Validate(); err == nil {
 		t.Fatal("incomplete storage plan validated successfully")
+	}
+}
+
+// TestFallbackSelectionRejectsUnsupportedStorage keeps external drivers out of selected capture.
+func TestFallbackSelectionRejectsUnsupportedStorage(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("STORAGE_DRIVER", "unsupported")
+	plan, err := BuildPlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Storage) != 1 || plan.Storage[0].Status != "external-managed" {
+		t.Fatalf("unexpected unsupported storage plan: %#v", plan.Storage)
+	}
+	if _, err := selectBackupPlan(plan, &CreateOptions{Resources: []string{"storage.default"}, CopyObjects: true}); err == nil {
+		t.Fatal("selected an unsupported fallback storage driver")
 	}
 }
