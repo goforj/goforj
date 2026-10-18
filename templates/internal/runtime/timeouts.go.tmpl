@@ -31,7 +31,7 @@ func NewTimeouts() *Timeouts {
 	queueTimeout := inheritedTimeout(env.GetDuration("QUEUE_SHUTDOWN_TIMEOUT", "10s"), appTimeout)
 {{- end }}
 	schedulerSubprocessTimeout := inheritedTimeout(env.GetDuration("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", ""), appTimeout)
-	schedulerCommandTimeout := validTimeout(env.GetDuration("SCHEDULER_COMMAND_TIMEOUT", "10m"), 10*time.Minute)
+	schedulerCommandTimeout := env.GetDuration("SCHEDULER_COMMAND_TIMEOUT", "10m")
 	return &Timeouts{
 		shutdownTimeout:            appTimeout,
 {{- if .ProjectComponents.Jobs }}
@@ -47,9 +47,9 @@ func (s *Timeouts) ShutdownTimeout() time.Duration {
 	return validTimeout(s.shutdownTimeout, 30*time.Second)
 }
 
-// ShutdownTimeoutFor returns the remaining app shutdown budget within ctx.
+// ShutdownTimeoutFor bounds cleanup by a live execution deadline or grants app grace after execution expires.
 func (s *Timeouts) ShutdownTimeoutFor(ctx context.Context) time.Duration {
-	return timeoutWithinContext(ctx, s.ShutdownTimeout())
+	return shutdownTimeoutWithinContext(ctx, s.ShutdownTimeout())
 }
 
 {{- if .ProjectComponents.Jobs }}
@@ -58,9 +58,9 @@ func (s *Timeouts) QueueShutdownTimeout() time.Duration {
 	return minTimeout(s.queueShutdownTimeout, s.ShutdownTimeout())
 }
 
-// QueueShutdownTimeoutFor returns the remaining queue shutdown budget within ctx.
+// QueueShutdownTimeoutFor bounds cleanup by a live execution deadline or grants queue grace after execution expires.
 func (s *Timeouts) QueueShutdownTimeoutFor(ctx context.Context) time.Duration {
-	return timeoutWithinContext(ctx, s.QueueShutdownTimeout())
+	return shutdownTimeoutWithinContext(ctx, s.QueueShutdownTimeout())
 }
 {{- end }}
 
@@ -69,19 +69,23 @@ func (s *Timeouts) SchedulerSubprocessShutdownTimeout() time.Duration {
 	return minTimeout(s.schedulerSubprocessTimeout, s.ShutdownTimeout())
 }
 
-// SchedulerSubprocessShutdownTimeoutFor returns the remaining subprocess shutdown budget within ctx.
+// SchedulerSubprocessShutdownTimeoutFor bounds cleanup by a live execution deadline or grants subprocess grace after execution expires.
 func (s *Timeouts) SchedulerSubprocessShutdownTimeoutFor(ctx context.Context) time.Duration {
-	return timeoutWithinContext(ctx, s.SchedulerSubprocessShutdownTimeout())
+	return shutdownTimeoutWithinContext(ctx, s.SchedulerSubprocessShutdownTimeout())
 }
 
-// SchedulerCommandTimeout returns the maximum healthy execution time for a scheduler command.
+// SchedulerCommandTimeout returns the execution limit; non-positive values disable the command timeout.
 func (s *Timeouts) SchedulerCommandTimeout() time.Duration {
-	return validTimeout(s.schedulerCommandTimeout, 10*time.Minute)
+	return s.schedulerCommandTimeout
 }
 
 // SchedulerCommandTimeoutFor returns the command execution budget constrained by ctx.
 func (s *Timeouts) SchedulerCommandTimeoutFor(ctx context.Context) time.Duration {
-	return timeoutWithinContext(ctx, s.SchedulerCommandTimeout())
+	timeout := s.SchedulerCommandTimeout()
+	if timeout <= 0 {
+		return timeout
+	}
+	return timeoutWithinContext(ctx, timeout)
 }
 
 // Settings returns the startup timeout policy in environment-variable order.
@@ -164,4 +168,13 @@ func timeoutWithinContext(ctx context.Context, timeout time.Duration) time.Durat
 		return 0
 	}
 	return minTimeout(timeout, remaining)
+}
+
+// shutdownTimeoutWithinContext gives cleanup its configured grace after execution expires, while preserving a live parent deadline.
+func shutdownTimeoutWithinContext(ctx context.Context, timeout time.Duration) time.Duration {
+	remaining := timeoutWithinContext(ctx, timeout)
+	if remaining <= 0 {
+		return timeout
+	}
+	return remaining
 }

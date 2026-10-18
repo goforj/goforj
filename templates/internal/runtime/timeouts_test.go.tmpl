@@ -39,7 +39,7 @@ func TestNewTimeoutsInheritsInvalidAndNonPositiveChildValues(t *testing.T) {
 	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "0s")
 {{- end }}
 	t.Setenv("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", "not-a-duration")
-	t.Setenv("SCHEDULER_COMMAND_TIMEOUT", "-1s")
+	t.Setenv("SCHEDULER_COMMAND_TIMEOUT", "not-a-duration")
 
 	timeouts := NewTimeouts()
 {{- if .ProjectComponents.Jobs }}
@@ -183,8 +183,23 @@ func TestTimeoutsRespectParentDeadline(t *testing.T) {
 
 	expired, stopExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer stopExpired()
-	if got := timeouts.SchedulerSubprocessShutdownTimeoutFor(expired); got != 0 {
-		t.Fatalf("expired parent timeout = %s, want 0", got)
+	for name, got := range map[string]time.Duration{
+		"app": timeouts.ShutdownTimeoutFor(expired),
+{{- if .ProjectComponents.Jobs }}
+		"queue": timeouts.QueueShutdownTimeoutFor(expired),
+{{- end }}
+		"subprocess": timeouts.SchedulerSubprocessShutdownTimeoutFor(expired),
+	} {
+		want := 20 * time.Second
+		if name == "app" {
+			want = 30 * time.Second
+		}
+		if got != want {
+			t.Fatalf("%s cleanup grace = %s, want %s", name, got, want)
+		}
+	}
+	if got := timeouts.SchedulerCommandTimeoutFor(expired); got != 0 {
+		t.Fatalf("expired command budget = %s, want 0", got)
 	}
 }
 
@@ -193,5 +208,38 @@ func assertBoundedTimeout(t *testing.T, name string, got, maximum time.Duration)
 	t.Helper()
 	if got <= 0 || got > maximum || got < maximum-20*time.Millisecond {
 		t.Fatalf("%s timeout = %s, want a positive value no more than %s", name, got, maximum)
+	}
+}
+
+// TestSchedulerCommandTimeoutAllowsExplicitOptOut preserves non-positive settings without overriding parent cancellation.
+func TestSchedulerCommandTimeoutAllowsExplicitOptOut(t *testing.T) {
+	for _, value := range []string{"0s", "-1s"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("SCHEDULER_COMMAND_TIMEOUT", value)
+			timeouts := NewTimeouts()
+			want, err := time.ParseDuration(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			for _, parent := range []context.Context{nil, context.Background(), ctx} {
+				if got := timeouts.SchedulerCommandTimeoutFor(parent); got != want {
+					t.Fatalf("command timeout = %s, want explicit opt-out %s", got, want)
+				}
+			}
+			if got := timeouts.SchedulerCommandTimeout(); got != want {
+				t.Fatalf("configured timeout = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
+// TestShutdownTimeoutContextFallbacks covers cleanup without an enclosing execution deadline.
+func TestShutdownTimeoutContextFallbacks(t *testing.T) {
+	for _, ctx := range []context.Context{nil, context.Background()} {
+		if got := shutdownTimeoutWithinContext(ctx, time.Second); got != time.Second {
+			t.Fatalf("cleanup grace = %s, want 1s", got)
+		}
 	}
 }

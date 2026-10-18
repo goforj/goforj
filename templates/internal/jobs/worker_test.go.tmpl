@@ -1,0 +1,52 @@
+package jobs
+
+import (
+	"context"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/goforj/queue"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/queues"
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// TestWorkerClosesQueuesAfterExecutionDeadline verifies execution expiry still closes the worker backend.
+func TestWorkerClosesQueuesAfterExecutionDeadline(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "false")
+	t.Setenv("QUEUE_DRIVER", "workerpool")
+	t.Setenv("QUEUE_WORKERS", "1")
+	// Keep named queues local even when the application's environment selects external services.
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "QUEUE_") && strings.HasSuffix(key, "_DRIVER") {
+			t.Setenv(key, "workerpool")
+		}
+	}
+	manager, err := queues.NewManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for _, instance := range manager.Instances() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			_ = instance.Queue.Shutdown(ctx)
+			cancel()
+		}
+	})
+	worker := NewWorker(logger.NewAppLogger(), &LighthouseRuntime{}, runtime.NewTimeouts(), manager)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if err := worker.StartWithContext(ctx); err != nil {
+		t.Fatalf("worker cleanup after execution expiry: %v", err)
+	}
+	for _, instance := range manager.Instances() {
+		_, err := instance.Queue.Dispatch(queue.NewJob("cleanup:probe").OnQueue("default"))
+		if !errors.Is(err, queue.ErrQueuerShuttingDown) {
+			t.Fatalf("queue %s remains open after worker exit: %v", instance.Name, err)
+		}
+	}
+}

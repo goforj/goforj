@@ -141,6 +141,7 @@ func TestRuntimeTimeoutTemplatesRenderFormattedGo(t *testing.T) {
 		"internal/runtime/timeouts.go.tmpl",
 		"internal/runtime/timeouts_test.go.tmpl",
 		"internal/schedules/scheduler.go.tmpl",
+		"internal/jobs/worker_test.go.tmpl",
 		"wire/app.go.tmpl",
 		"wire/app_test.go.tmpl",
 	} {

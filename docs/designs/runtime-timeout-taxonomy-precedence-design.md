@@ -2,7 +2,7 @@
 
 ## Status
 
-- Design status: implemented
+- Design status: timeout resolution and component caps implemented; shared shutdown coordination remains follow-up work
 - Planning date: 2026-07-31
 - Implemented: 2026-08-01
 - Scope: App runtime shutdown, queues, scheduler commands, subprocesses, development supervision, and health probes
@@ -29,7 +29,13 @@ This allows contradictory budgets: a scheduler-owned subprocess may plan to spen
 | supervisor grace | Time an external owner waits before force-kill | When it signals the process tree | Must exceed the advertised App budget plus margin |
 | probe timeout | Time a health/readiness caller or dependency check waits | Per probe request/check | Independent operational budget |
 
-## Precedence
+## Implemented Cleanup Behavior
+
+Execution deadlines and cleanup grace have separate lifetimes. A live parent deadline caps cleanup. Once execution has already expired, cleanup receives its configured, bounded grace period so lifecycle hooks and queue resources are still released. An expired execution context must never bypass cleanup. Explicit non-positive `SCHEDULER_COMMAND_TIMEOUT` values continue to disable the command execution limit; parent cancellation still applies.
+
+The current implementation caps configured component budgets at the App budget. It does not yet establish one shared shutdown deadline across component teardown and subsequent lifecycle hooks. The coordination rules below describe that follow-up target.
+
+## Target Precedence
 
 The effective deadline is always the earliest applicable deadline already in the context or configuration:
 

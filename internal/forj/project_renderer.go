@@ -1080,6 +1080,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/jobs/lighthouse_queue.go.tmpl",
 				"internal/jobs/runtime.go.tmpl",
 				"internal/jobs/worker.go.tmpl",
+				"internal/jobs/worker_test.go.tmpl",
 				"internal/jobs/worker_logger.go.tmpl",
 				"internal/jobs/worker_cmd.go.tmpl",
 				"internal/observability/queue_observer.go.tmpl",

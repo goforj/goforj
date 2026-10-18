@@ -136,3 +136,33 @@ func TestAppShutdownAggregatesErrors(t *testing.T) {
 		t.Fatalf("expected error to include %v, got %v", errB, err)
 	}
 }
+
+// TestAppCleanupRunsAfterExecutionDeadline verifies expired commands still release lifecycle resources with a bounded cleanup context.
+func TestAppCleanupRunsAfterExecutionDeadline(t *testing.T) {
+	manager := runtime.NewLifecycle(runtime.NewTimeouts())
+	called := false
+	manager.On(runtime.Shutdown, func(ctx context.Context) error {
+		called = true
+		if err := ctx.Err(); err != nil {
+			t.Errorf("cleanup context already expired: %v", err)
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) > time.Second {
+			t.Error("cleanup context must have a bounded grace period")
+		}
+		return nil
+	})
+	app := App{logger: logger.NewAppLogger(), lifecycle: manager}
+	if err := app.Startup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	app.shutdownAfterRun(ctx, "worker", nil, "cli", time.Second)
+	if !called {
+		t.Fatal("shutdown hook was skipped after execution expired")
+	}
+	if got := timeoutWithinParent(ctx, time.Second); got != time.Second {
+		t.Fatalf("cleanup grace = %s, want 1s", got)
+	}
+}
