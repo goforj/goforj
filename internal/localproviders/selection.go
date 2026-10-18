@@ -11,6 +11,13 @@ import (
 
 // resourceSetting follows named-to-root inheritance and App overlays for one resource family.
 func resourceSetting(values map[string]string, key, suffix, app string, definition project.ResourceDefinition) string {
+	if definition.Key == project.ResourceDatabase {
+		_, value := databaseSettingInScope(values, key, suffix, app)
+		if suffix == "DRIVER" && value == "" {
+			return definition.DefaultDriver
+		}
+		return value
+	}
 	base := strings.TrimPrefix(key, app)
 	for _, prefix := range []string{strings.TrimSuffix(base, "DRIVER"), definition.EnvironmentPrefix + "_"} {
 		value := values[prefix+suffix]
@@ -286,7 +293,7 @@ func (s *Session) validateSelectedDatabaseDSNs(values, selections map[string]str
 				continue
 			}
 			source, dsn := databaseSettingInScope(values, resource.Key, "DSN", app)
-			if dsn == "" {
+			if strings.TrimSpace(dsn) == "" {
 				continue
 			}
 			owner := strings.TrimSuffix(source, "DSN") + "DRIVER"

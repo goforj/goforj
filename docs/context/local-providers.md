@@ -69,6 +69,10 @@ One ignored, owner-only file, `.env.local-providers.backup`, records the changed
 
 Restoration changes only assignments touched by the switch. Later edits to unrelated settings survive. If a controlled setting changed after the switch, restoration stops and identifies the conflicting key without displaying its value. Review that edit before restoring. Successful restoration clears the private values from the backup.
 
+Before publishing, the command reparses the proposed `.env` and checks every resolved value against the reviewed configuration. If a preserved reference such as `DB_REPORTS_DRIVER=${DB_DRIVER}` would change an excluded resource, or another dependent setting would change unexpectedly, the command stops without writing. Replace the affected reference with a literal value and retry. The same check protects restoration. Stable references remain untouched.
+
+Whitespace-only database settings follow the existing runtime rules: a nonempty named value blocks root inheritance, and a selected DSN is trimmed afterward. A whitespace-only DSN therefore keeps using its configured SQLite path.
+
 Writes preserve unrelated settings and comments, reject symlinks and tracked private files, check for concurrent edits, and roll back failed replacements. Git inspection failures stop the operation. Other runtime dotenv layers and process-environment overrides keep their existing precedence and are identified in the preview without revealing their values.
 
 ## Data and runtime behavior

@@ -152,19 +152,40 @@ func (s *Session) Restore() error {
 
 // publish updates only changed assignments so existing comments and untouched resource values survive.
 func (s *Session) publish(values map[string]string, next state) error {
-	changed := changedKeys(s.Current, values)
-	replacements := map[string]string{}
-	for key := range changed {
-		if value, ok := values[key]; ok {
-			replacements[key] = value
-		}
+	env, err := s.reviewedDocument(values)
+	if err != nil {
+		return err
 	}
 	data, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return err
 	}
-	updates := map[string][]byte{stateName: append(data, '\n'), ".env": s.env.replace(func(key string) bool { return changed[key] }, replacements)}
+	updates := map[string][]byte{stateName: append(data, '\n'), ".env": env}
 	return s.write(updates)
+}
+
+// reviewedDocument verifies that interpolation in preserved assignments cannot change the reviewed configuration.
+func (s *Session) reviewedDocument(values map[string]string) ([]byte, error) {
+	changed := changedKeys(s.Current, values)
+	replacements := map[string]string{}
+	expected := clone(s.env.values)
+	for key := range changed {
+		if value, ok := values[key]; ok {
+			replacements[key] = value
+			expected[key] = value
+		} else {
+			delete(expected, key)
+		}
+	}
+	raw := s.env.replace(func(key string) bool { return changed[key] }, replacements)
+	actual, err := parseDocument(raw)
+	if err != nil {
+		return nil, fmt.Errorf("check proposed .env: %w", err)
+	}
+	for _, key := range keys(changedKeys(expected, actual.values)) {
+		return nil, fmt.Errorf("%s resolves differently in the proposed .env; replace dependent dotenv references with literal values before switching or restoring drivers", key)
+	}
+	return raw, nil
 }
 
 // read captures mutation targets for optimistic concurrency checks.
