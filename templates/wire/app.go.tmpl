@@ -228,7 +228,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer func() {
-		a.shutdownAfterRun(command, args, origin, shutdownTimeout)
+		a.shutdownAfterRun(ctx, command, args, origin, shutdownTimeout)
 		a.inspects.Finish(ctx, "", nil)
 	}()
 	if err := parseCtx.Run(); err != nil {
@@ -240,7 +240,8 @@ func (a *App) Run(ctx context.Context, args []string) error {
 }
 
 // shutdownAfterRun centralizes deferred shutdown so command completion and inspect finalization stay ordered.
-func (a *App) shutdownAfterRun(command string, args []string, origin string, timeout time.Duration) {
+func (a *App) shutdownAfterRun(parent context.Context, command string, args []string, origin string, timeout time.Duration) {
+	timeout = timeoutWithinParent(parent, timeout)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	if err := a.Shutdown(shutdownCtx); err != nil {
@@ -335,6 +336,7 @@ func NewApplication(
 ) App {
 	lifecycleManager := runtime.NewLifecycle(appTimeouts)
 
+	logTimeoutWarnings(appLogger, appTimeouts)
 	attachInspectLogSink(appLogger, inspectManager)
 {{- if .Components.Storage }}
 	logStorageWarnings(appLogger, storage)
@@ -375,6 +377,18 @@ func NewApplication(
 		{{- if .Components.Jobs }}
 		queues: queues,
 		{{- end }}
+	}
+}
+
+// logTimeoutWarnings makes a configuration cap visible before graceful shutdown is needed.
+func logTimeoutWarnings(appLogger *logger.AppLogger, appTimeouts *runtime.Timeouts) {
+	for _, setting := range appTimeouts.CappedSettings() {
+		appLogger.Warn().
+			Str("timeout_setting", setting.Name).
+			Str("configured_timeout", setting.Configured.String()).
+			Str("effective_timeout", setting.Effective.String()).
+			Str("parent_timeout", appTimeouts.ShutdownTimeout().String()).
+			Msg("Shutdown timeout capped by app shutdown budget")
 	}
 }
 
@@ -485,6 +499,25 @@ func (a *App) shutdownTimeoutForOrigin(origin string) time.Duration {
 		return a.appTimeouts.SchedulerSubprocessShutdownTimeout()
 	}
 	return a.appShutdownTimeout()
+}
+
+// timeoutWithinParent preserves live command deadlines but grants cleanup its own grace after execution expires.
+func timeoutWithinParent(parent context.Context, timeout time.Duration) time.Duration {
+	if parent == nil {
+		return timeout
+	}
+	deadline, ok := parent.Deadline()
+	if !ok {
+		return timeout
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return timeout
+	}
+	if remaining < timeout {
+		return remaining
+	}
+	return timeout
 }
 
 // appShutdownTimeout keeps the public shutdown policy behind the app timeout configuration.

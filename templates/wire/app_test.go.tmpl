@@ -8,8 +8,66 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
+	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/runtime"
 )
+
+// TestLogTimeoutWarningsReportsEachCappedSetting verifies startup logs retain both configured and effective values.
+func TestLogTimeoutWarningsReportsEachCappedSetting(t *testing.T) {
+	t.Setenv("APP_SHUTDOWN_TIMEOUT", "30s")
+{{- if .ProjectComponents.Jobs }}
+	t.Setenv("QUEUE_SHUTDOWN_TIMEOUT", "90s")
+{{- end }}
+	t.Setenv("SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT", "90s")
+
+	appLogger := logger.NewAppLogger()
+	entries := make([]logger.LogEntry, 0, 2)
+	appLogger.AddSink(func(entry logger.LogEntry) {
+		entries = append(entries, entry)
+	})
+	logTimeoutWarnings(appLogger, runtime.NewTimeouts())
+
+	want := map[string]bool{"SCHEDULER_SUBPROCESS_SHUTDOWN_TIMEOUT": true}
+{{- if .ProjectComponents.Jobs }}
+	want["QUEUE_SHUTDOWN_TIMEOUT"] = true
+{{- end }}
+	if len(entries) != len(want) {
+		t.Fatalf("timeout warning entries = %#v, want %d", entries, len(want))
+	}
+	for _, entry := range entries {
+		setting, ok := entry.Fields["timeout_setting"].(string)
+		if !ok || !want[setting] {
+			t.Fatalf("timeout warning setting = %#v, want one of %#v", entry.Fields["timeout_setting"], want)
+		}
+		if entry.Message != "Shutdown timeout capped by app shutdown budget" || entry.Fields["configured_timeout"] != "1m30s" || entry.Fields["effective_timeout"] != "30s" || entry.Fields["parent_timeout"] != "30s" {
+			t.Fatalf("timeout warning = %#v", entry)
+		}
+	}
+}
+
+// TestTimeoutWithinParentPreservesAnEarlierDeadline verifies cleanup cannot extend its command's deadline.
+func TestTimeoutWithinParentPreservesAnEarlierDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	got := timeoutWithinParent(ctx, 30*time.Second)
+	if got <= 0 || got > 40*time.Millisecond || got < 20*time.Millisecond {
+		t.Fatalf("bounded timeout = %s, want remaining parent deadline", got)
+	}
+
+	if got, want := timeoutWithinParent(context.Background(), 30*time.Second), 30*time.Second; got != want {
+		t.Fatalf("deadline-free timeout = %s, want %s", got, want)
+	}
+	if got := timeoutWithinParent(nil, 30*time.Second); got != 30*time.Second {
+		t.Fatalf("nil parent timeout = %s, want 30s", got)
+	}
+
+	expired, stop := context.WithCancel(context.Background())
+	stop()
+	if got, want := timeoutWithinParent(expired, 30*time.Second), 30*time.Second; got != want {
+		t.Fatalf("deadline-free canceled timeout = %s, want %s", got, want)
+	}
+}
 
 func TestAppStartupIsIdempotent(t *testing.T) {
 	var calls atomic.Int64
@@ -76,5 +134,35 @@ func TestAppShutdownAggregatesErrors(t *testing.T) {
 	}
 	if !errors.Is(err, errB) {
 		t.Fatalf("expected error to include %v, got %v", errB, err)
+	}
+}
+
+// TestAppCleanupRunsAfterExecutionDeadline verifies expired commands still release lifecycle resources with a bounded cleanup context.
+func TestAppCleanupRunsAfterExecutionDeadline(t *testing.T) {
+	manager := runtime.NewLifecycle(runtime.NewTimeouts())
+	called := false
+	manager.On(runtime.Shutdown, func(ctx context.Context) error {
+		called = true
+		if err := ctx.Err(); err != nil {
+			t.Errorf("cleanup context already expired: %v", err)
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) > time.Second {
+			t.Error("cleanup context must have a bounded grace period")
+		}
+		return nil
+	})
+	app := App{logger: logger.NewAppLogger(), lifecycle: manager}
+	if err := app.Startup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	app.shutdownAfterRun(ctx, "worker", nil, "cli", time.Second)
+	if !called {
+		t.Fatal("shutdown hook was skipped after execution expired")
+	}
+	if got := timeoutWithinParent(ctx, time.Second); got != time.Second {
+		t.Fatalf("cleanup grace = %s, want 1s", got)
 	}
 }
