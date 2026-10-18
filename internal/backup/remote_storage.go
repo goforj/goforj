@@ -47,12 +47,25 @@ func (l StorageObjectLister) ListObjects(ctx context.Context, prefix string) ([]
 
 // ConfiguredObjectStorage opens a configured S3-compatible App disk.
 func ConfiguredObjectStorage(name string) (ObjectStorage, error) {
-	scope := storageEnvScope(name)
-	usePathStyle, err := parseEnvBool(scope.Key("USE_PATH_STYLE"))
+	cfg, err := configuredObjectStorageConfig(name)
 	if err != nil {
 		return ObjectStorage{}, err
 	}
-	cfg := s3storage.Config{
+	disk, err := storage.Build(cfg)
+	if err != nil {
+		return ObjectStorage{}, fmt.Errorf("open S3 storage %s: %w", name, err)
+	}
+	return ObjectStorage{Disk: disk, Prefix: cfg.Prefix}, nil
+}
+
+// configuredObjectStorageConfig shares the App disk configuration between buffered and streaming access.
+func configuredObjectStorageConfig(name string) (s3storage.Config, error) {
+	scope := storageEnvScope(name)
+	usePathStyle, err := parseEnvBool(scope.Key("USE_PATH_STYLE"))
+	if err != nil {
+		return s3storage.Config{}, err
+	}
+	return s3storage.Config{
 		Bucket:          scope.Get("BUCKET", ""),
 		Endpoint:        scope.Get("ENDPOINT", ""),
 		Region:          scope.Get("REGION", ""),
@@ -60,12 +73,7 @@ func ConfiguredObjectStorage(name string) (ObjectStorage, error) {
 		SecretAccessKey: scope.Get("SECRET_ACCESS_KEY", ""),
 		UsePathStyle:    usePathStyle,
 		Prefix:          scope.Get("PREFIX", ""),
-	}
-	disk, err := storage.Build(cfg)
-	if err != nil {
-		return ObjectStorage{}, fmt.Errorf("open S3 storage %s: %w", name, err)
-	}
-	return ObjectStorage{Disk: disk, Prefix: cfg.Prefix}, nil
+	}, nil
 }
 
 // ConfiguredBackupRepository opens the configured S3 backup repository when one is enabled.

@@ -140,3 +140,22 @@ func writeStorageArchive(t *testing.T, entries []storageArchiveTestEntry) string
 	}
 	return artifact
 }
+
+// TestSafeExtractPathRelativeRoot preserves prefix scoping for normal relative App storage roots.
+func TestSafeExtractPathRelativeRoot(t *testing.T) {
+	t.Chdir(t.TempDir())
+	root := filepath.Join("storage", "app", "private")
+	expected, err := filepath.Abs(filepath.Join(root, "scope", "note.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := safeExtractPath(root, "scope/note.txt")
+	if err != nil || actual != expected {
+		t.Fatalf("path = %q, error = %v; want %q", actual, err, expected)
+	}
+	for _, name := range []string{"", "../outside", "../../secret", expected} {
+		if _, err := safeExtractPath(root, name); err == nil {
+			t.Errorf("accepted invalid scoped path %q", name)
+		}
+	}
+}

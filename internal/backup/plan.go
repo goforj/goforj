@@ -62,7 +62,7 @@ func buildPlanFromContract(contract ResourceContract) (Plan, error) {
 		case "storage":
 			plan.Storage = append(plan.Storage, StoragePlanResource{
 				Name: resource.Name, Driver: resource.Driver,
-				Root: storageRootValue(resource.Name), Prefix: storageEnvValue(resource.Name, "PREFIX"),
+				Root: storageRootValue(resource.Name), Prefix: storageEnvScope(resource.Name).Get("PREFIX", ""),
 				Status: storageStatus(resource.Driver),
 			})
 		}
@@ -144,7 +144,7 @@ func storageStatus(driver string) string {
 	return "external-managed"
 }
 
-// discoverStorageResources resolves local disks from the generated storage environment contract.
+// discoverStorageResources resolves configured disks when the App resource contract is unavailable.
 func discoverStorageResources() []StoragePlanResource {
 	names := []string{"default"}
 	storageScope := env.WithPrefix("STORAGE")
@@ -177,11 +177,7 @@ func discoverStorageResources() []StoragePlanResource {
 			rootFallback = filepath.Join("storage", "app", "private")
 		}
 		root := scope.Get("ROOT", rootFallback)
-		status := "external-managed"
-		if strings.EqualFold(driver, "local") {
-			status = "backupable"
-		}
-		resources = append(resources, StoragePlanResource{Name: name, Driver: strings.ToLower(driver), Root: root, Prefix: scope.Get("PREFIX", ""), Status: status})
+		resources = append(resources, StoragePlanResource{Name: name, Driver: strings.ToLower(driver), Root: root, Prefix: scope.Get("PREFIX", ""), Status: storageStatus(driver)})
 	}
 	return resources
 }
