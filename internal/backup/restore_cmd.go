@@ -83,12 +83,8 @@ func (c *RestoreCmd) Run() error {
 		if c.Confirm != "restore-production" {
 			return fmt.Errorf("target preparation requires --confirm restore-production")
 		}
-		for _, resource := range manifest.Resources {
-			if resource.Strategy == "object-archive" && (c.Resource == "" || c.Resource == resource.ID || c.Resource == resource.Name) {
-				if err := PrepareObjectRestore(context.Background(), resource.Name); err != nil {
-					return err
-				}
-			}
+		if err := prepareObjectRestoreTargets(context.Background(), manifest, c.Resource); err != nil {
+			return err
 		}
 	}
 	if err := NewService().Restore(context.Background(), c.From, c.Resource, c.Confirm); err != nil {
@@ -127,4 +123,33 @@ func resolveBackupSource(ctx context.Context, from string) (backupSource, error)
 		return backupSource{}, err
 	}
 	return backupSource{path: destination, cleanup: func() { _ = os.RemoveAll(destination) }}, nil
+}
+
+// prepareObjectRestoreTargets validates every selected bucket against the current App before provisioning any.
+func prepareObjectRestoreTargets(ctx context.Context, manifest Manifest, resourceName string) error {
+	plan, err := BuildPlan()
+	if err != nil {
+		return err
+	}
+	resourceName = normalizeResourceName(resourceName)
+	var targets []string
+	for _, resource := range manifest.Resources {
+		if resource.Strategy != "object-archive" || (resourceName != "" && resourceName != resource.ID && resourceName != resource.Name) {
+			continue
+		}
+		target := findStoragePlan(plan.Storage, resource.Name)
+		if target == nil {
+			return fmt.Errorf("restore %s: storage configuration not found", resource.ID)
+		}
+		if resource.Kind != "storage" || resource.Driver != "s3" || target.Driver != "s3" {
+			return fmt.Errorf("restore %s requires a matching S3 storage target", resource.ID)
+		}
+		targets = append(targets, resource.Name)
+	}
+	for _, name := range targets {
+		if err := PrepareObjectRestore(ctx, name); err != nil {
+			return err
+		}
+	}
+	return nil
 }

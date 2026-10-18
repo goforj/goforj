@@ -117,3 +117,37 @@ func TestNativeStrategyNormalizesDrivers(t *testing.T) {
 		t.Fatal("expected unsupported driver error")
 	}
 }
+
+// TestManifestVersionsProtectNewArchiveSemantics keeps old readers from accepting archives they would misrestore.
+func TestManifestVersionsProtectNewArchiveSemantics(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resource Resource
+		version  int
+	}{
+		{"legacy", Resource{Strategy: "local-archive"}, 1},
+		{"unprefixed selection", Resource{Strategy: "local-archive", Scoped: true}, 2},
+		{"scoped selection", Resource{Strategy: "local-archive", Scoped: true, Prefix: "tenant"}, 2},
+		{"object contents", Resource{Strategy: "object-archive"}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.resource.ID = "storage.default"
+			tc.resource.Artifact = "storage/default.tar.zst"
+			dir := t.TempDir()
+			if err := WriteManifest(dir, Manifest{Version: 1, Resources: []Resource{tc.resource}}); err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := ReadManifest(dir)
+			if err != nil || manifest.Version != tc.version {
+				t.Fatalf("version = %d, error = %v; want %d", manifest.Version, err, tc.version)
+			}
+		})
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(`{"version":3,"resources":[{"artifact":"data"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadManifest(dir); err == nil {
+		t.Fatal("accepted future manifest version")
+	}
+}

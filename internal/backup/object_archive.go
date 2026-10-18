@@ -17,6 +17,20 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// objectArchiveReader lets cancellation stop local decompression and temporary-file writes.
+type objectArchiveReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+// Read checks cancellation between chunks, including reads served from a decoder buffer.
+func (r objectArchiveReader) Read(data []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(data)
+}
+
 // objectArchiveEntry maps an opaque tar member to its original bucket-relative key.
 type objectArchiveEntry struct {
 	ContentType        string            `json:"content_type,omitempty"`
@@ -108,6 +122,9 @@ func BackupObjectArchive(ctx context.Context, name, artifact string, maxBytes in
 	defer writer.Close()
 	manifest := objectArchiveManifest{Version: 1, Prefix: store.prefix, Objects: []objectArchiveEntry{}}
 	total := int64(0)
+	if maxBytes == 0 || maxBytes > storageArchiveMaxExpandedBytes {
+		maxBytes = storageArchiveMaxExpandedBytes
+	}
 	err = store.objects.WalkObjectsContext(ctx, "", func(object storagecore.ObjectInfo) error {
 		if len(manifest.Objects) >= 100000 {
 			return fmt.Errorf("object backup exceeds 100000 objects")
@@ -170,28 +187,32 @@ func BackupObjectArchive(ctx context.Context, name, artifact string, maxBytes in
 }
 
 // inspectObjectArchive validates every object before a restore can write to the target bucket.
-func inspectObjectArchive(artifact string) (objectArchiveManifest, error) {
+func inspectObjectArchive(ctx context.Context, artifact string, maxBytes int64) (objectArchiveManifest, error) {
+	if err := ctx.Err(); err != nil {
+		return objectArchiveManifest{}, err
+	}
 	file, err := os.Open(artifact)
 	if err != nil {
 		return objectArchiveManifest{}, err
 	}
 	defer file.Close()
-	decoder, err := zstd.NewReader(file, zstd.WithDecoderMaxMemory(64<<20), zstd.WithDecoderConcurrency(1))
+	decoder, err := zstd.NewReader(objectArchiveReader{ctx: ctx, reader: file}, zstd.WithDecoderMaxMemory(64<<20), zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		return objectArchiveManifest{}, err
 	}
 	defer decoder.Close()
-	reader := tar.NewReader(decoder)
+	reader := tar.NewReader(objectArchiveReader{ctx: ctx, reader: decoder})
 	actual := map[string]ObjectInfo{}
 	var manifest objectArchiveManifest
 	seenManifest := false
+	var expandedBytes int64
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return manifest, fmt.Errorf("invalid object archive")
+			return manifest, fmt.Errorf("invalid object archive: %w", err)
 		}
 		if header.Typeflag != tar.TypeReg || header.Size < 0 {
 			return manifest, fmt.Errorf("invalid object archive member")
@@ -209,9 +230,16 @@ func inspectObjectArchive(artifact string) (objectArchiveManifest, error) {
 		if seenManifest || len(actual) >= 100000 || header.Name != fmt.Sprintf("objects/%08d", len(actual)) {
 			return manifest, fmt.Errorf("invalid or duplicate object archive member")
 		}
+		if header.Size > maxBytes-expandedBytes {
+			return manifest, fmt.Errorf("object archive exceeds %d expanded bytes", maxBytes)
+		}
+		expandedBytes += header.Size
 		hash := sha256.New()
 		n, err := io.Copy(hash, reader)
-		if err != nil || n != header.Size {
+		if err != nil {
+			return manifest, fmt.Errorf("read object archive member: %w", err)
+		}
+		if n != header.Size {
 			return manifest, fmt.Errorf("truncated object archive member")
 		}
 		actual[header.Name] = ObjectInfo{Size: n, Checksum: hex.EncodeToString(hash.Sum(nil))}
@@ -231,11 +259,14 @@ func inspectObjectArchive(artifact string) (objectArchiveManifest, error) {
 }
 
 // VerifyObjectArchive checks embedded metadata and every retained object checksum.
-func VerifyObjectArchive(artifact string) error { _, err := inspectObjectArchive(artifact); return err }
+func VerifyObjectArchive(artifact string) error {
+	_, err := inspectObjectArchive(context.Background(), artifact, storageArchiveMaxExpandedBytes)
+	return err
+}
 
 // RestoreObjectArchive writes verified independent object copies into the selected target resource prefix.
 func RestoreObjectArchive(ctx context.Context, name, artifact string) error {
-	manifest, err := inspectObjectArchive(artifact)
+	manifest, err := inspectObjectArchive(ctx, artifact, storageArchiveMaxExpandedBytes)
 	if err != nil {
 		return err
 	}
@@ -248,15 +279,18 @@ func RestoreObjectArchive(ctx context.Context, name, artifact string) error {
 		return err
 	}
 	defer file.Close()
-	decoder, err := zstd.NewReader(file, zstd.WithDecoderMaxMemory(64<<20), zstd.WithDecoderConcurrency(1))
+	decoder, err := zstd.NewReader(objectArchiveReader{ctx: ctx, reader: file}, zstd.WithDecoderMaxMemory(64<<20), zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		return err
 	}
 	defer decoder.Close()
-	reader := tar.NewReader(decoder)
+	reader := tar.NewReader(objectArchiveReader{ctx: ctx, reader: decoder})
 	for _, object := range manifest.Objects {
 		header, err := reader.Next()
-		if err != nil || header.Name != object.Artifact {
+		if err != nil {
+			return fmt.Errorf("read object archive: %w", err)
+		}
+		if header.Name != object.Artifact {
 			return fmt.Errorf("object archive changed during restore")
 		}
 		relative := strings.TrimPrefix(object.Key, objectPrefix(manifest.Prefix))
@@ -276,6 +310,9 @@ func RestoreObjectArchive(ctx context.Context, name, artifact string) error {
 		if copyErr != nil || n != object.Size {
 			temporary.Close()
 			os.Remove(temporary.Name())
+			if copyErr != nil {
+				return fmt.Errorf("read object archive: %w", copyErr)
+			}
 			return fmt.Errorf("object archive changed during restore")
 		}
 		if _, err = temporary.Seek(0, io.SeekStart); err != nil {

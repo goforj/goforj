@@ -1111,7 +1111,10 @@ and continues to refuse object-content restoration.
 
 `--max-bytes` bounds the selected set's artifact size and each object-copy source
 budget. Object-content archives have a 100,000-object and 64 MiB metadata limit.
-A failed copy removes its incomplete object artifact. Native database artifacts
+Object capture and verification also enforce a 64 GiB expanded object-data cap,
+matching the local archive safety bound. Restore observes cancellation during
+inspection, decompression, and temporary-file copying. A failed copy removes its
+incomplete object artifact. Native database artifacts
 retain the source logical database name for isolated recovery planning; manifests
 still exclude credentials and DSNs. Unselected resources are omitted entirely.
 
@@ -1131,3 +1134,12 @@ Object content capture uses the optional streaming object capability in
 metadata-preserving streaming writes, and explicit bucket preparation belong to
 that library. The backup package owns archive layout, checksums, selection, and
 restore orchestration. Existing buffered storage methods remain unchanged.
+
+Scoped local archives and object-content archives use native manifest version 2.
+The new reader continues accepting version 1 backups. Older CLIs reject version 2
+instead of silently restoring a scoped archive at the wrong path or treating S3
+contents as local files. Upgrade restore operators and manifest consumers before
+producing these new archive formats; no existing version 1 archive migration is
+required. Legacy single-resource local and object-inventory captures retain
+version 1. Selected local resource roots may be absolute or relative to the App's
+working directory, and their configured prefixes remain confined to that root.
