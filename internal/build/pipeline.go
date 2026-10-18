@@ -29,11 +29,10 @@ type Step struct {
 
 // Pipeline coordinates source generation, indexing, and the caller's final build or launch step.
 type Pipeline struct {
-	stackEnvironment map[string]string
-	logger           *logger.AppLogger
-	apiIndex         apiindex.Preparer
-	prepareAssets    func(root string, assets []appassets.Asset) (string, error)
-	prepareWire      func(root string) (string, error)
+	logger        *logger.AppLogger
+	apiIndex      apiindex.Preparer
+	prepareAssets func(root string, assets []appassets.Asset) (string, error)
+	prepareWire   func(root string) (string, error)
 }
 
 const buildProgressMarker = "__FORJ_BUILD_PROGRESS__"
@@ -499,8 +498,6 @@ func (p Pipeline) generateProjectFiles(root string) (string, error) {
 	if config != nil {
 		selection = generate.GenerationSelectionFromComponents(project.ProjectComponents(config))
 	}
-	selection.Environment = p.stackEnvironment
-	selection.ReplaceResourceEnvironment = p.stackEnvironment != nil
 	result, err := generate.GenerateProjectFiles(root, selection)
 	if err != nil {
 		return "", fmt.Errorf("generate project files: %w", err)

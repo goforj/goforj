@@ -1,4 +1,4 @@
-package stacks
+package localproviders
 
 import (
 	"errors"
@@ -10,14 +10,14 @@ import (
 
 // TestCommitRechecksLaterDestinations preserves edits that arrive while earlier files are being published.
 func TestCommitRechecksLaterDestinations(t *testing.T) {
-	for _, name := range []string{".env", ".env.stack.services.local"} {
+	for _, name := range []string{".env", ".env.local-providers.backup"} {
 		for _, change := range []string{"edit", "create", "remove", "permissions", "symlink"} {
 			t.Run(name+"/"+change, func(t *testing.T) {
 				root := t.TempDir()
 				if change != "create" {
 					put(t, root, name, "DB_PASSWORD=original\n")
 				}
-				earlier, err := readFile(root, ".env.stack.services")
+				earlier, err := readFile(root, ".env.local-providers.fixture")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -70,7 +70,7 @@ func TestCommitRechecksLaterDestinations(t *testing.T) {
 						t.Fatalf("lost concurrent content: %q, %v", data, err)
 					}
 				}
-				leftovers, err := filepath.Glob(filepath.Join(root, ".env.stack-tmp-*.local"))
+				leftovers, err := filepath.Glob(filepath.Join(root, ".env.local-providers.tmp-*"))
 				if err != nil || len(leftovers) != 0 {
 					t.Fatalf("temporary files remain: %v, %v", leftovers, err)
 				}
@@ -83,9 +83,9 @@ func TestCommitRechecksLaterDestinations(t *testing.T) {
 func TestRollbackPreservesEditsToPublishedFiles(t *testing.T) {
 	root := t.TempDir()
 	ignore, _ := readFile(root, ".gitignore")
-	private, _ := readFile(root, ".env.stack.services.local")
+	private, _ := readFile(root, ".env.local-providers.backup")
 	active, _ := readFile(root, ".env")
-	ignore.after = []byte(".env.stack.*.local\n.env.stack-tmp-*.local\n")
+	ignore.after = []byte(".env.local-providers.*\n.env.local-providers.tmp-*\n")
 	private.after = []byte("DB_PASSWORD=wizard\n")
 	active.after = []byte("DB_DRIVER=mysql\n")
 	err := commit(root, []file{ignore, private, active}, func(from, to string) error {
@@ -110,10 +110,10 @@ func TestRollbackPreservesEditsToPublishedFiles(t *testing.T) {
 // TestPrivatePublicationConflictKeepsIgnoreRules protects a private file created by another writer after ignore publication.
 func TestPrivatePublicationConflictKeepsIgnoreRules(t *testing.T) {
 	root := t.TempDir()
-	runStackGit(t, root, "init", "-q")
+	runLocalGit(t, root, "init", "-q")
 	ignore, _ := readFile(root, ".gitignore")
-	private, _ := readFile(root, ".env.stack.services.local")
-	ignore.after = []byte(".env.stack.*.local\n.env.stack-tmp-*.local\n")
+	private, _ := readFile(root, ".env.local-providers.backup")
+	ignore.after = []byte(".env.local-providers.*\n.env.local-providers.tmp-*\n")
 	private.after = []byte("DB_PASSWORD=wizard\n")
 	err := commit(root, []file{ignore, private}, func(from, to string) error {
 		if err := os.Rename(from, to); err != nil {
@@ -131,5 +131,5 @@ func TestPrivatePublicationConflictKeepsIgnoreRules(t *testing.T) {
 	if err != nil || string(data) != "DB_PASSWORD=concurrent\n" {
 		t.Fatal("concurrent private file was not preserved")
 	}
-	runStackGit(t, root, "check-ignore", "-q", private.name)
+	runLocalGit(t, root, "check-ignore", "-q", private.name)
 }

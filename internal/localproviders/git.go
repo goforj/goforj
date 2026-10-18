@@ -1,4 +1,4 @@
-package stacks
+package localproviders
 
 import (
 	"fmt"
@@ -53,7 +53,7 @@ func inspectPrivateFileIndex(root, name string, external, alternate bool) error 
 		return fmt.Errorf("cannot verify Git tracking for %s: %w", name, err)
 	}
 	if len(tracked) != 0 {
-		return fmt.Errorf("%s is tracked by Git; remove it from the index before storing private stack settings", name)
+		return fmt.Errorf("%s is tracked by Git; remove it from the index before storing private local-provider settings", name)
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-package stacks
+package localproviders
 
 import (
 	"fmt"
@@ -38,6 +38,18 @@ func resources(root string, config *project.Config, values map[string]string) []
 	byKey := map[string]Resource{}
 	components := project.ProjectComponents(config)
 	names := generate.ResourceNames(root, values)
+	// Framework-owned resources must enter App inventories before the first switch.
+	for _, definition := range project.ResourceCatalog() {
+		for _, named := range definition.NamedResources {
+			if named.RequiredComponent != "" && !components.Enabled(named.RequiredComponent) {
+				continue
+			}
+			if !slices.Contains(names[definition.Key], named.Name) {
+				names[definition.Key] = append(names[definition.Key], named.Name)
+			}
+		}
+	}
+
 	for _, definition := range project.ResourceCatalog() {
 		if !definition.AppliesTo(components) {
 			continue
@@ -135,9 +147,9 @@ func resourceAppliesTo(key string, components project.Components) bool {
 	return false
 }
 
-// managedKey limits stack ownership to resource settings and Compose selection.
+// managedKey limits local-provider ownership to resource settings and Compose selection.
 func managedKey(config *project.Config, key string) bool {
-	if key == "COMPOSE_PROFILES" || key == SQLiteDSNsKey {
+	if key == "COMPOSE_PROFILES" {
 		return true
 	}
 	base := resourceKey(config, key)
@@ -154,7 +166,7 @@ func rootResourceKey(key string) bool {
 	return false
 }
 
-// managedValues excludes application identity and unrelated secrets from stack snapshots.
+// managedValues excludes application identity and unrelated secrets from recovery snapshots.
 func managedValues(config *project.Config, values map[string]string) map[string]string {
 	out := map[string]string{}
 	for key, value := range values {
@@ -163,11 +175,6 @@ func managedValues(config *project.Config, values map[string]string) map[string]
 		}
 	}
 	return out
-}
-
-// SetDriver selects a driver and retains the compiled support needed to switch back later.
-func (s *Session) SetDriver(values map[string]string, resource Resource, driver string) error {
-	return s.setDriver(values, resource, driver, values)
 }
 
 // setDriver uses the pre-edit configuration when a preset changes several resources with shared inheritance.
@@ -369,10 +376,6 @@ func (s *Session) preserveSQLiteScopes(values, previous map[string]string, key, 
 
 // prepareSQLiteTarget retains existing SQLite files, including legacy and inherited paths, before a driver edit can change their interpretation.
 func (s *Session) prepareSQLiteTarget(values, previous map[string]string, key, driver string) error {
-	retained, err := sqliteDSNs(values)
-	if err != nil {
-		return err
-	}
 	preserve, err := s.preserveSQLiteScopes(values, previous, key, driver)
 	if err != nil || preserve {
 		return err
@@ -383,29 +386,17 @@ func (s *Session) prepareSQLiteTarget(values, previous map[string]string, key, d
 		old = "sqlite"
 	}
 	dsn := s.databaseValue(previous, key, "DSN")
-	if old == "sqlite" {
-		if dsn != "" {
-			retained[key] = dsn
-			if driver == "sqlite" {
-				values[prefix+"DSN"] = dsn
-			}
-		} else {
-			delete(retained, key)
-		}
-		storeSQLiteDSNs(values, retained)
+	if old == "sqlite" && dsn != "" && driver == "sqlite" {
+		values[prefix+"DSN"] = dsn
 	}
 	if old == "sqlite" && dsn == "" && strings.TrimSpace(values[prefix+"SQLITE_DATABASE"]) == "" {
 		app := s.databaseScope(key)
 		values[prefix+"SQLITE_DATABASE"] = sqlitePathInScope(previous, key, app)
 	}
 	if driver == "sqlite" && old != "sqlite" {
-		if retained[key] != "" {
-			values[prefix+"DSN"] = retained[key]
-			return nil
-		}
 		values[prefix+"DSN"] = ""
 		if strings.TrimSpace(values[prefix+"SQLITE_DATABASE"]) == "" {
-			values[prefix+"SQLITE_DATABASE"] = "./_data/stacks/portable/" + strings.ToLower(strings.TrimSuffix(prefix, "_")) + ".db"
+			values[prefix+"SQLITE_DATABASE"] = "./_data/local/" + strings.ToLower(strings.TrimSuffix(prefix, "_")) + ".db"
 		}
 		if s.databaseValue(values, key, "DSN") != "" {
 			// An inherited SQLite DSN must not override this newly selected resource's distinct path.
@@ -417,6 +408,11 @@ func (s *Session) prepareSQLiteTarget(values, previous map[string]string, key, d
 
 // Portable suggests local providers for every discovered resource without enabling disabled components.
 func (s *Session) Portable() (map[string]string, error) {
+	return s.PortableFor(nil)
+}
+
+// PortableFor switches all resources except explicitly excluded keys and their inherited dependents.
+func (s *Session) PortableFor(excluded map[string]bool) (map[string]string, error) {
 	values := clone(s.Current)
 	ordered := slices.Clone(s.Resources)
 	// Parent settings settle first so converted children only pin DSNs that remain inherited in the final preset.
@@ -424,6 +420,9 @@ func (s *Session) Portable() (map[string]string, error) {
 		return s.portableOrder(a) - s.portableOrder(b)
 	})
 	for _, resource := range ordered {
+		if excluded[resource.Key] {
+			continue
+		}
 		if resource.Definition.DefaultDriver == "" {
 			return nil, fmt.Errorf("%s has no portable driver supported by every shared resource; use distinct App or resource names", resource.Key)
 		}
@@ -431,7 +430,12 @@ func (s *Session) Portable() (map[string]string, error) {
 			return nil, err
 		}
 	}
-	values["COMPOSE_PROFILES"] = ""
+	if err := s.preserveExcluded(values, excluded); err != nil {
+		return nil, err
+	}
+	if _, present := s.Current["COMPOSE_PROFILES"]; present {
+		values["COMPOSE_PROFILES"] = s.localComposeProfiles(values)
+	}
 	return values, nil
 }
 
@@ -453,12 +457,9 @@ func (s *Session) portableOrder(resource Resource) int {
 
 // Validate rejects unknown drivers and settings outside the project resource boundary.
 func (s *Session) Validate(values map[string]string) error {
-	if _, err := sqliteDSNs(values); err != nil {
-		return err
-	}
 	for key := range values {
 		if !envfile.IsValidKey(key) || !managedKey(s.config, key) {
-			return fmt.Errorf("%s is not a stack resource setting", key)
+			return fmt.Errorf("%s is not a resource setting", key)
 		}
 	}
 	for key, value := range values {
@@ -526,59 +527,4 @@ func validateResourceContract(values map[string]string, key string, definition p
 		return fmt.Errorf("%s must include %s for %s", supportedKey, driver, key)
 	}
 	return nil
-}
-
-// shareable retains explicit provider choices and SQLite paths selected through runtime inheritance while keeping service connection settings private.
-func (s *Session) shareable(values map[string]string) map[string]string {
-	result := map[string]string{}
-	databases := map[string]bool{}
-	for key, value := range values {
-		if strings.HasSuffix(key, "_DRIVER") || strings.HasSuffix(key, "_SUPPORTED_DRIVERS") || key == "COMPOSE_PROFILES" {
-			result[key] = value
-		}
-		if strings.HasSuffix(key, "_DRIVER") && len(s.databaseScopes(key)) > 0 {
-			databases[key] = true
-		}
-	}
-	for _, resource := range resources(s.Root, s.config, values) {
-		if len(s.databaseScopes(resource.Key)) > 0 {
-			databases[resource.Key] = true
-		}
-	}
-	privateNames := map[string]bool{}
-	for key := range databases {
-		for _, app := range s.databaseScopes(key) {
-			_, selected := databaseSettingInScope(values, key, "DRIVER", app)
-			driver := project.CanonicalResourceDriver(project.ResourceDatabase, selected)
-			prefix := strings.TrimSuffix(key, "DRIVER")
-			if driver != "" && driver != "sqlite" {
-				privateNames[prefix+"DATABASE"] = true
-				if source, _ := databaseSettingInScope(values, key, "DATABASE", app); source != "" {
-					privateNames[source] = true
-				}
-				continue
-			}
-			source, path := databaseSettingInScope(values, key, "SQLITE_DATABASE", app)
-			if path != "" {
-				result[source] = path
-			}
-			_, dsn := databaseSettingInScope(values, key, "DSN", app)
-			if path != "" || dsn != "" {
-				// A generic name bypassed by an overlapping SQLite scope stays private; explicit SQLITE_DATABASE paths remain shareable.
-				privateNames[prefix+"DATABASE"] = true
-			}
-			for _, suffix := range []string{"DATABASE", "SQLITE_DATABASE"} {
-				if value, ok := values[prefix+suffix]; ok {
-					result[prefix+suffix] = value
-				}
-			}
-			if value, ok := values[prefix+"DSN"]; ok && value == "" {
-				result[prefix+"DSN"] = ""
-			}
-		}
-	}
-	for key := range privateNames {
-		delete(result, key)
-	}
-	return result
 }

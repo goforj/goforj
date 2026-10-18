@@ -1,4 +1,4 @@
-package stacks
+package localproviders
 
 import (
 	"fmt"
@@ -41,14 +41,14 @@ func TestOverridesMatchesRuntimeAncestorDiscovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := s.Activate("", portable, false); err != nil {
+			if err := s.Apply(portable); err != nil {
 				t.Fatal(err)
 			}
 			executable, err := os.Executable()
 			if err != nil {
 				t.Fatal(err)
 			}
-			command := exec.Command(executable, "-test.run=^TestStackRuntimeLayerProbe$")
+			command := exec.Command(executable, "-test.run=^TestResourceRuntimeLayerProbe$")
 			command.Dir = root
 			for _, entry := range os.Environ() {
 				key, _, _ := strings.Cut(entry, "=")
@@ -56,7 +56,7 @@ func TestOverridesMatchesRuntimeAncestorDiscovery(t *testing.T) {
 					command.Env = append(command.Env, entry)
 				}
 			}
-			command.Env = append(command.Env, "FORJ_STACK_LAYER_PROBE=1")
+			command.Env = append(command.Env, "FORJ_LOCAL_PROVIDERS_LAYER_PROBE=1")
 			output, err := command.CombinedOutput()
 			if err != nil || !strings.Contains(string(output), "runtime driver=postgres") {
 				t.Fatalf("runtime did not apply the advertised override: %v\n%s", err, output)
@@ -65,9 +65,9 @@ func TestOverridesMatchesRuntimeAncestorDiscovery(t *testing.T) {
 	}
 }
 
-// TestStackRuntimeLayerProbe exercises the pinned runtime loader without leaking its global state into other tests.
-func TestStackRuntimeLayerProbe(t *testing.T) {
-	if os.Getenv("FORJ_STACK_LAYER_PROBE") != "1" {
+// TestResourceRuntimeLayerProbe exercises the pinned runtime loader without leaking its global state into other tests.
+func TestResourceRuntimeLayerProbe(t *testing.T) {
+	if os.Getenv("FORJ_LOCAL_PROVIDERS_LAYER_PROBE") != "1" {
 		return
 	}
 	if err := env.Load(); err != nil {
@@ -125,7 +125,7 @@ func TestNearestRuntimeLayerHonorsSearchBoundaries(t *testing.T) {
 	if _, err := nearestRuntimeLayer(child, ".env.host"); err == nil {
 		t.Fatal("accepted a non-regular runtime layer")
 	}
-	f, err := nearestRuntimeLayer(string(filepath.Separator), ".env.stack-review-missing")
+	f, err := nearestRuntimeLayer(string(filepath.Separator), ".env.local-providers-review-missing")
 	if err != nil || f.exists {
 		t.Fatalf("filesystem root did not terminate search: %+v, %v", f, err)
 	}
