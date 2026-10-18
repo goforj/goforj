@@ -76,9 +76,9 @@ require (
 	github.com/goforj/crypt v1.2.0 // indirect
 	github.com/goforj/env/v2 v2.6.1 // indirect
 	github.com/goforj/godump v1.9.1 // indirect
-	github.com/goforj/storage v0.5.0 // indirect
-	github.com/goforj/storage/driver/s3storage v0.5.0 // indirect
-	github.com/goforj/storage/storagecore v0.5.0 // indirect
+	github.com/goforj/storage v0.5.1-0.20261018063152-b403d13f1e70 // indirect
+	github.com/goforj/storage/driver/s3storage v0.5.1-0.20261018063152-b403d13f1e70 // indirect
+	github.com/goforj/storage/storagecore v0.5.1-0.20261018062947-24ec77d658d3 // indirect
 	github.com/goforj/str/v2 v2.0.1 // indirect
 	github.com/goftp/file-driver v0.0.0-20180502053751-5d604a0fc0c9 // indirect
 	github.com/google/renameio/v2 v2.0.0 // indirect

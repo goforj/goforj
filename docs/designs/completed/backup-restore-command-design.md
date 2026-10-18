@@ -1125,3 +1125,9 @@ treated as a missing bucket. Dry-run mode performs no target provisioning.
 These interfaces support Ship orchestration while keeping driver-specific backup
 and restore behavior in the framework. They do not make database and storage
 captures an atomic application-wide snapshot.
+
+Object content capture uses the optional streaming object capability in
+`github.com/goforj/storage`. Provider clients, paginated listing, conditional reads,
+metadata-preserving streaming writes, and explicit bucket preparation belong to
+that library. The backup package owns archive layout, checksums, selection, and
+restore orchestration. Existing buffered storage methods remain unchanged.
