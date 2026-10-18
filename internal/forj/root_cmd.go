@@ -28,6 +28,7 @@ type RootCmd struct {
 	AtlasEvalCmd              atlas.EvalCmd                   `cmd:""`
 	MakeAppCmd                makeapp.Cmd                     `cmd:""`
 	ProjectDescribeCmd        ProjectDescribeCmd              `cmd:""`
+	LocalProvidersCmd         LocalProvidersCmd               `cmd:""`
 	ProjectRenameModuleCmd    ProjectRenameModuleCmd          `cmd:""`
 	DevCmd                    DevCmd                          `cmd:""`
 	DevStatusCmd              DevStatusCmd                    `cmd:""`

@@ -1743,7 +1743,7 @@ func TestDevEnvFilesChangedDetectsCreateUpdateAndDelete(t *testing.T) {
 	}
 
 	envPath := filepath.Join(dir, ".env")
-	for _, generated := range []string{".env.example", ".env.testing"} {
+	for _, generated := range []string{".env.example", ".env.testing", ".env.local-providers.backup", ".env.local-providers.lock", ".env.local-providers.tmp-fixture"} {
 		if err := os.WriteFile(filepath.Join(dir, generated), []byte("GENERATED=1\n"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", generated, err)
 		}
