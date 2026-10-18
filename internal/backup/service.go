@@ -145,14 +145,21 @@ func (s *Service) create(ctx context.Context, root string, resourceName string, 
 		}
 		artifactName := storage.Name + ".local.tar.zst"
 		artifact := filepath.Join(dir, "storage", artifactName)
-		if err := ArchiveDirectory(storage.Root, artifact); err != nil {
+		storageRoot := storage.Root
+		if options != nil && storage.Prefix != "" {
+			storageRoot, err = safeExtractPath(storage.Root, storage.Prefix)
+			if err != nil {
+				return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, err)
+			}
+		}
+		if err := ArchiveDirectory(storageRoot, artifact); err != nil {
 			return CreatedBackup{}, fmt.Errorf("backup %s: %w", selector, err)
 		}
 		fingerprint, err := Checksum(artifact)
 		if err != nil {
 			return CreatedBackup{}, err
 		}
-		manifest.Resources = append(manifest.Resources, Resource{ID: selector, Kind: "storage", Name: storage.Name, Driver: storage.Driver, Strategy: "local-archive", Artifact: filepath.ToSlash(filepath.Join("storage", artifactName)), Checksum: fingerprint.Checksum, Size: fingerprint.Size})
+		manifest.Resources = append(manifest.Resources, Resource{Scoped: options != nil, Prefix: storage.Prefix, ID: selector, Kind: "storage", Name: storage.Name, Driver: storage.Driver, Strategy: "local-archive", Artifact: filepath.ToSlash(filepath.Join("storage", artifactName)), Checksum: fingerprint.Checksum, Size: fingerprint.Size})
 	}
 	if len(manifest.Resources) == 0 {
 		return CreatedBackup{}, fmt.Errorf("backup resource %q was not found", resourceName)
@@ -243,7 +250,14 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 				restored = true
 				continue
 			}
-			if err := RestoreDirectoryArchive(artifact, storage.Root); err != nil {
+			storageRoot := storage.Root
+			if resource.Scoped && storage.Prefix != "" {
+				storageRoot, err = safeExtractPath(storage.Root, storage.Prefix)
+				if err != nil {
+					return err
+				}
+			}
+			if err := RestoreDirectoryArchive(artifact, storageRoot); err != nil {
 				return fmt.Errorf("restore %s: %w", resource.ID, err)
 			}
 			restored = true
