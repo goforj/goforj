@@ -62,7 +62,7 @@ func buildPlanFromContract(contract ResourceContract) (Plan, error) {
 		case "storage":
 			plan.Storage = append(plan.Storage, StoragePlanResource{
 				Name: resource.Name, Driver: resource.Driver,
-				Root: storageRootValue(resource.Name), Prefix: storageEnvValue(resource.Name, "PREFIX"),
+				Root: storageRootValue(resource.Name), Prefix: storageEnvScope(resource.Name).Get("PREFIX", ""),
 				Status: storageStatus(resource.Driver),
 			})
 		}

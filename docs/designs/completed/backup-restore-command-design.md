@@ -1143,3 +1143,17 @@ producing these new archive formats; no existing version 1 archive migration is
 required. Legacy single-resource local and object-inventory captures retain
 version 1. Selected local resource roots may be absolute or relative to the App's
 working directory, and their configured prefixes remain confined to that root.
+
+Local prefix handling follows `storagecore.NormalizePath`, matching App storage
+for slash-delimited, whitespace-padded, and backslash-separated prefixes. Capture
+and restore resolve prefixes through an `os.Root` anchored at the configured disk
+root. Escaping symlinks are rejected, and subsequent file access uses the opened
+directory handle so pathname changes cannot redirect the operation outside it.
+
+Object-content archives currently support individual objects up to 5,000,000,000
+bytes, a conservative bound for the streaming storage API's single-PUT restore
+transport. Capture rejects larger source objects before opening their contents.
+Verification and restore preflight reject oversized archived members before
+spooling or uploading anything. Multipart restoration is not implemented. The
+64 GiB expanded-data budget still applies across all objects in an archive.
+See the [S3 upload limits](https://docs.aws.amazon.com/AmazonS3/latest/userguide/upload-objects.html).
