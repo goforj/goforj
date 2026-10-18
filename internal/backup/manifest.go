@@ -48,9 +48,7 @@ func WriteManifest(dir string, manifest Manifest) error {
 	if strings.TrimSpace(dir) == "" {
 		return fmt.Errorf("backup directory is required")
 	}
-	if manifest.Version == 0 {
-		manifest.Version = 1
-	}
+	manifest.Version = backupManifestVersion(manifest)
 	if manifest.CreatedAt.IsZero() {
 		manifest.CreatedAt = time.Now().UTC()
 	}
@@ -96,7 +94,7 @@ func ReadManifest(dir string) (Manifest, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("decode backup manifest: %w", err)
 	}
-	if manifest.Version != 1 {
+	if manifest.Version != 1 && manifest.Version != 2 {
 		return Manifest{}, fmt.Errorf("unsupported backup manifest version %d", manifest.Version)
 	}
 	if len(manifest.Resources) == 0 {
@@ -127,4 +125,18 @@ func safeArtifactPath(dir string, artifact string) (string, error) {
 		return "", fmt.Errorf("artifact path escapes backup directory")
 	}
 	return path, nil
+}
+
+// backupManifestVersion prevents older readers from silently misinterpreting new archive semantics.
+func backupManifestVersion(manifest Manifest) int {
+	version := manifest.Version
+	if version == 0 {
+		version = 1
+	}
+	for _, resource := range manifest.Resources {
+		if version < 2 && (resource.Strategy == "object-archive" || resource.Scoped) {
+			version = 2
+		}
+	}
+	return version
 }

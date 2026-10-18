@@ -228,6 +228,10 @@ func safeExtractPath(root string, name string) (string, error) {
 	if strings.TrimSpace(name) == "" || filepath.IsAbs(name) {
 		return "", fmt.Errorf("invalid storage archive path %q", name)
 	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
 	path, err := filepath.Abs(filepath.Join(root, filepath.FromSlash(name)))
 	if err != nil {
 		return "", err

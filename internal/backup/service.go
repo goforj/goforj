@@ -176,6 +176,7 @@ func (s *Service) create(ctx context.Context, root string, resourceName string, 
 			total += resource.Size
 		}
 	}
+	manifest.Version = backupManifestVersion(manifest)
 	if err := WriteManifest(dir, manifest); err != nil {
 		return CreatedBackup{}, err
 	}
@@ -187,6 +188,11 @@ func (s *Service) create(ctx context.Context, root string, resourceName string, 
 
 // Verify checks every artifact referenced by a backup manifest.
 func (s *Service) Verify(dir string) (Manifest, error) {
+	return s.verify(context.Background(), dir)
+}
+
+// verify propagates restore cancellation through object archive validation.
+func (s *Service) verify(ctx context.Context, dir string) (Manifest, error) {
 	manifest, err := ReadManifest(dir)
 	if err != nil {
 		return Manifest{}, err
@@ -200,7 +206,7 @@ func (s *Service) Verify(dir string) (Manifest, error) {
 			return Manifest{}, fmt.Errorf("verify %s: %w", resource.ID, err)
 		}
 		if resource.Strategy == "object-archive" {
-			if err := VerifyObjectArchive(artifact); err != nil {
+			if _, err := inspectObjectArchive(ctx, artifact, storageArchiveMaxExpandedBytes); err != nil {
 				return Manifest{}, fmt.Errorf("verify %s: %w", resource.ID, err)
 			}
 		}
@@ -217,7 +223,7 @@ func (s *Service) Restore(ctx context.Context, dir string, resourceName string, 
 	if err := s.Hooks.Run(ctx, HookBeforeRestore); err != nil {
 		return fmt.Errorf("before restore hook: %w", err)
 	}
-	manifest, err := s.Verify(dir)
+	manifest, err := s.verify(ctx, dir)
 	if err != nil {
 		return err
 	}

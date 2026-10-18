@@ -39,7 +39,7 @@ printf '%s\n' '{"version":1,"app":"app","resources":[{"id":"db.default","kind":"
 		t.Setenv(prefix+"_DRIVER", "sqlite")
 		t.Setenv(prefix+"_DSN", file)
 	}
-	storage := filepath.Join(root, "uploads")
+	storage := filepath.Join("storage", "uploads")
 	os.MkdirAll(filepath.Join(storage, "scope"), 0700)
 	os.WriteFile(filepath.Join(storage, "scope", "note.txt"), []byte("retained upload"), 0600)
 	t.Setenv("STORAGE_PRIVATE_DRIVER", "local")
@@ -49,6 +49,9 @@ printf '%s\n' '{"version":1,"app":"app","resources":[{"id":"db.default","kind":"
 	backup, err := service.CreateSelected(context.Background(), filepath.Join(root, "backups"), CreateOptions{Resources: []string{"db.reporting", "storage.private"}, MaxBytes: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if backup.Manifest.Version != 2 {
+		t.Fatalf("scoped backup version = %d, want 2", backup.Manifest.Version)
 	}
 	if len(backup.Manifest.Resources) != 2 {
 		t.Fatal("selection lost or included a resource")
@@ -62,7 +65,7 @@ printf '%s\n' '{"version":1,"app":"app","resources":[{"id":"db.default","kind":"
 		}
 	}
 	targetDB := filepath.Join(root, "restored.sqlite")
-	targetStorage := filepath.Join(root, "restored-uploads")
+	targetStorage := filepath.Join("storage", "restored-uploads")
 	t.Setenv("DB_REPORTING_DSN", targetDB)
 	t.Setenv("STORAGE_PRIVATE_ROOT", targetStorage)
 	t.Setenv("STORAGE_PRIVATE_PREFIX", "restored-scope")
