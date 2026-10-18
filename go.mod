@@ -23,10 +23,10 @@ require (
 	github.com/goforj/execx v1.1.4
 	github.com/goforj/httpx/v2 v2.0.1
 	github.com/goforj/queue v0.2.1
-	github.com/goforj/storage v0.5.2-0.20261018070033-d7c4338e0d01
-	github.com/goforj/storage/driver/localstorage v0.5.1
-	github.com/goforj/storage/driver/s3storage v0.5.2-0.20261018070033-d7c4338e0d01
-	github.com/goforj/storage/storagecore v0.5.2-0.20261018064156-39419460440b
+	github.com/goforj/storage v0.6.0
+	github.com/goforj/storage/driver/localstorage v0.6.0
+	github.com/goforj/storage/driver/s3storage v0.6.0
+	github.com/goforj/storage/storagecore v0.6.0
 	github.com/goforj/str/v2 v2.0.1
 	github.com/goforj/web v0.6.4
 	github.com/goforj/wire v1.2.0

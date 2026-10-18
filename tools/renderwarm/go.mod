@@ -26,7 +26,7 @@ require (
 	github.com/goforj/null/v6 v6.0.2
 	github.com/goforj/queue v0.2.1
 	github.com/goforj/scheduler/v2 v2.1.4
-	github.com/goforj/storage v0.5.2-0.20261018070033-d7c4338e0d01
+	github.com/goforj/storage v0.6.0
 	github.com/goforj/str v1.3.0
 	github.com/goforj/str/v2 v2.0.1
 	github.com/goforj/web v0.6.4
@@ -89,7 +89,7 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/goforj/godump v1.9.1 // indirect
-	github.com/goforj/storage/storagecore v0.5.2-0.20261018064156-39419460440b // indirect
+	github.com/goforj/storage/storagecore v0.6.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/icholy/digest v1.2.0 // indirect
 	github.com/imroc/req/v3 v3.61.0 // indirect

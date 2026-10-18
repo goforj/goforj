@@ -76,14 +76,14 @@ require (
 	golang.org/x/net v0.61.0
 	go.opentelemetry.io/otel/sdk v1.45.0
 	go.opentelemetry.io/otel/sdk/metric v1.45.0
-	github.com/goforj/storage v0.5.2-0.20261018070033-d7c4338e0d01
-	github.com/goforj/storage/driver/ftpstorage v0.5.1
-	github.com/goforj/storage/driver/gcsstorage v0.5.1
-	github.com/goforj/storage/driver/localstorage v0.5.1
-	github.com/goforj/storage/driver/memorystorage v0.5.1
-	github.com/goforj/storage/driver/redisstorage v0.5.1
-	github.com/goforj/storage/driver/s3storage v0.5.2-0.20261018070033-d7c4338e0d01
-	github.com/goforj/storage/driver/sftpstorage v0.5.1
+	github.com/goforj/storage v0.6.0
+	github.com/goforj/storage/driver/ftpstorage v0.6.0
+	github.com/goforj/storage/driver/gcsstorage v0.6.0
+	github.com/goforj/storage/driver/localstorage v0.6.0
+	github.com/goforj/storage/driver/memorystorage v0.6.0
+	github.com/goforj/storage/driver/redisstorage v0.6.0
+	github.com/goforj/storage/driver/s3storage v0.6.0
+	github.com/goforj/storage/driver/sftpstorage v0.6.0
 	github.com/goforj/str/v2 v2.0.1
 )
 `
