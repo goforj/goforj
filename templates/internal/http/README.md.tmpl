@@ -139,16 +139,17 @@ Use `build:api-index --strict`, or `--api-index-strict` with `build` and `run`, 
 
 ### Upgrading older projects
 
-After installing a CLI version that includes the OpenAPI rename, run these commands from your project root:
+After installing a CLI version that includes the OpenAPI rename, run this from your project root for a targeted upgrade:
 
 ```sh
-forj render
-forj build
+forj render --only openapi
 ```
 
-The renderer automatically replaces the framework-owned `swagger.go` and `swagger_test.go` files with `openapi.go` and `openapi_test.go`, refreshes the server wiring, and installs the canonical `/openapi` routes. No manual file renames are needed. Repeated renders are safe.
+This refreshes only `internal/http/openapi.go` and `internal/http/openapi_test.go`, changes the documentation route call in `internal/http/server.go`, and removes the old generated `swagger.go` and `swagger_test.go` files. Other server code and comments are preserved. It does not run a full render, update dependencies, regenerate Wire, or modify environment files. Repeating the command is safe.
 
-Existing `API_SWAGGER_ENABLED` and `SWAGGER_ENABLED` settings remain effective, including disabled documentation. The renderer preserves those owner assignments rather than overriding them with a new default. Existing `/swagger`, `/swagger/`, and `/swagger/doc.json` bookmarks keep working as compatibility aliases. Application-owned source and deployment configuration are not rewritten; new settings should use `API_OPENAPI_ENABLED`.
+The command requires an existing HTTP App and a recognizable documentation route registration. Unsupported server wiring is reported before files are changed. Rebuild your App binaries after reviewing the diff. A normal `forj render` also includes this migration when a complete framework refresh is wanted.
+
+Existing `API_SWAGGER_ENABLED` and `SWAGGER_ENABLED` settings remain effective, including disabled documentation. Existing `/swagger`, `/swagger/`, and `/swagger/doc.json` bookmarks keep working as compatibility aliases. New settings should use `API_OPENAPI_ENABLED`.
 
 ## Bind Address
 

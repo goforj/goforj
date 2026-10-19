@@ -205,9 +205,11 @@ If sibling repos are not being picked up, inspect `render.module_replaces` first
 
 ## OpenAPI terminology upgrade
 
-Older projects pick up the OpenAPI rename by running `forj render` with an updated CLI, followed by `forj build`. Rendering automatically replaces the old framework-owned HTTP filenames and refreshes the server wiring. Repeated renders do not require manual cleanup.
+Use `forj render --only openapi` with an updated CLI to migrate an existing HTTP project without a full render. It refreshes only the two OpenAPI Go files, patches the recognized documentation route call in `internal/http/server.go`, and removes the legacy generated filenames. It does not update modules, run Wire, or reconcile environment and project configuration. Unsupported server wiring is rejected before publication. Rebuild App binaries after reviewing the resulting diff.
 
-Keep existing `API_SWAGGER_ENABLED` or `SWAGGER_ENABLED` deployment settings until their owners deliberately migrate them. Both remain compatibility fallbacks for `API_OPENAPI_ENABLED`, and `/swagger` URLs remain aliases. Do not blindly replace text in App-owned source, environment profiles, or external deployment configuration. The full-render regression test in `project_renderer_openapi_migration_test.go` covers both legacy settings, owner preservation, and repeated upgrades.
+A normal `forj render` still performs the same migration as part of a complete refresh. Keep existing `API_SWAGGER_ENABLED` or `SWAGGER_ENABLED` deployment settings until their owners deliberately migrate them. Both remain compatibility fallbacks for `API_OPENAPI_ENABLED`, and `/swagger` URLs remain aliases. Do not blindly replace text in App-owned source or external deployment configuration.
+
+The tests in `project_renderer_openapi_test.go` assert the targeted command's exact file boundary and failure behavior. `project_renderer_openapi_migration_test.go` exercises the full-render upgrade path. Both verify repeatability and preservation of owner files and settings.
 
 ## `module_replaces`
 
