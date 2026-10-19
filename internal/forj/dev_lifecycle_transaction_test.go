@@ -355,10 +355,10 @@ func TestDevStartupTransactionSummarizesPersistentResources(t *testing.T) {
 
 // TestDevReadySummaryAnnouncementIsPersistentTUIOnly verifies restarts do not replay resource URLs in the transcript.
 func TestDevReadySummaryAnnouncementIsPersistentTUIOnly(t *testing.T) {
-	if shouldPrintDevReadySummary(&devBubbleWriter{}, true) {
+	if shouldPrintDevReadySummary(&devBubbleWriter{}, true, false) {
 		t.Fatal("persistent TUI unexpectedly requested a repeated resource announcement")
 	}
-	if !shouldPrintDevReadySummary(io.Discard, true) {
+	if !shouldPrintDevReadySummary(io.Discard, true, false) {
 		t.Fatal("plain output did not preserve repeated readiness behavior")
 	}
 }
@@ -458,5 +458,19 @@ func TestDevWatcherStartupTrackerTreatsCustomLaunchAsReady(t *testing.T) {
 	tracker.noteTrigger("desktop")
 	if err := tracker.wait(context.Background()); err != nil {
 		t.Fatalf("wait custom startup: %v", err)
+	}
+}
+
+// TestDevReadySummaryEmbeddedPresentation keeps resource URLs out of hosted logs without changing console users.
+func TestDevReadySummaryEmbeddedPresentation(t *testing.T) {
+	for _, alreadyAnnounced := range []bool{false, true} {
+		for _, output := range []io.Writer{io.Discard, &devBubbleWriter{}} {
+			if shouldPrintDevReadySummary(output, alreadyAnnounced, true) {
+				t.Fatal("embedded output requested a resource summary")
+			}
+		}
+	}
+	if !shouldPrintDevReadySummary(io.Discard, false, false) {
+		t.Fatal("ordinary first-start summary was suppressed")
 	}
 }
