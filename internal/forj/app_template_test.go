@@ -859,7 +859,7 @@ func TestCommandMetadataLivesInSignatures(t *testing.T) {
 		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "routes_list_cmd.go.tmpl"): {
 			`name:"route:list" help:"List HTTP routes"`,
 		},
-		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "swagger.go.tmpl"): {
+		filepath.Join(filepath.Dir(currentFile), "..", "..", "templates", "internal", "http", "openapi.go.tmpl"): {
 			`func defaultOpenAPISpecPathForApp() string`,
 			`func isSafeOpenAPIAppName(name string) bool`,
 			`filepath.Join("build", app, "openapi.json")`,
@@ -902,24 +902,24 @@ func TestRouteListTemplateOmitsAppHeading(t *testing.T) {
 	}
 }
 
-// TestSwaggerTemplatesRenderPinnedAndAppScoped guards the generated UI and serving contract at the renderer boundary.
-func TestSwaggerTemplatesRenderPinnedAndAppScoped(t *testing.T) {
+// TestOpenAPITemplatesRenderPinnedAndAppScoped guards the generated UI and serving contract at the renderer boundary.
+func TestOpenAPITemplatesRenderPinnedAndAppScoped(t *testing.T) {
 	root := t.TempDir()
 	renderer := &ProjectRenderer{
 		stats:     &renderStats{},
 		workspace: currentProjectRenderWorkspace(t),
 	}
 	config := &project.Config{
-		GoModuleName: "example.com/swaggerfixture",
+		GoModuleName: "example.com/openapifixture",
 		Render: project.RenderConfig{
 			Components: project.Components{WebAPI: true},
 		},
 	}
 	files := map[string][]string{
-		"swagger.go": {
+		"openapi.go": {
 			`const scalarAPIReferenceURL = "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.62.5"`,
 			`Scalar.createApiReference('#app'`,
-			`url: '/swagger/doc.json'`,
+			`url: '/openapi/doc.json'`,
 			`func defaultOpenAPISpecPathForApp() string`,
 			`func isSafeOpenAPIAppName(name string) bool`,
 			`filepath.Join("build", app, "openapi.json")`,
@@ -927,12 +927,12 @@ func TestSwaggerTemplatesRenderPinnedAndAppScoped(t *testing.T) {
 			`func apiIndexBuildCommandForApp() string`,
 			`return "forj " + app + " build:api-index"`,
 		},
-		"swagger_test.go": {
-			`func TestSwaggerUIAndSpecRoutes(`,
-			`func TestSwaggerSpecUsesAppDefaultPath(`,
-			`func TestSwaggerSpecPreservesPathOverride(`,
-			`func TestSwaggerSpecMissingDoesNotFallBack(`,
-			`func TestSwaggerSpecRejectsUnsafeImplicitAppPath(`,
+		"openapi_test.go": {
+			`func TestOpenAPIUIAndSpecRoutes(`,
+			`func TestOpenAPISpecUsesAppDefaultPath(`,
+			`func TestOpenAPISpecPreservesPathOverride(`,
+			`func TestOpenAPISpecMissingDoesNotFallBack(`,
+			`func TestOpenAPISpecRejectsUnsafeImplicitAppPath(`,
 			`/wrong-default`,
 		},
 	}

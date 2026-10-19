@@ -199,7 +199,7 @@ func isFrameworkTestingKey(key string) bool {
 }
 
 var frameworkContractKeys = map[string]bool{
-	"API_HTTP_HOST": true, "API_HTTP_PORT": true, "API_JWT_SECRET_KEY": true, "API_SWAGGER_ENABLED": true,
+	"API_HTTP_HOST": true, "API_HTTP_PORT": true, "API_JWT_SECRET_KEY": true, "API_OPENAPI_ENABLED": true, "API_SWAGGER_ENABLED": true,
 	"APP_DEBUG": true, "APP_DIAG_TOKEN": true, "APP_ENV": true, "APP_KEY": true, "APP_LOG_FORMAT": true,
 	"APP_MAINTENANCE_DRIVER": true, "APP_MAINTENANCE_ENABLED": true, "APP_MAINTENANCE_STORE": true,
 	"APP_LOG_TIME": true, "APP_NAME": true, "APP_URL": true, "AUTH_BOOTSTRAP_EMAIL": true,

@@ -31,7 +31,7 @@ Examples:
 - render-time module replace support
 - dev TUI output policy
 - demo app command behavior
-- project-local swagger wiring tied to local build artifacts
+- project-local openapi wiring tied to local build artifacts
 
 ## Gray Areas
 

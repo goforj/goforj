@@ -104,7 +104,7 @@ func (s *Server) frameworkRouteGroups() []web.RouteGroup {
 	groups := make([]web.RouteGroup, 0, 3)
 	groups = append(groups, s.healthRoutes()...)
 	groups = append(groups, s.maintenanceRoutes()...)
-	groups = append(groups, s.swaggerRoutes()...)
+	groups = append(groups, s.openapiRoutes()...)
 {{- if .ProjectComponents.Metrics }}
 	groups = append(groups, s.metricsRoutes()...)
 {{- end }}

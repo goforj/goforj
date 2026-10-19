@@ -2664,8 +2664,8 @@ func collectDevToolLinks(config *project.Config, env map[string]string) []devToo
 	if lighthouseURL := resolveLighthouseUIURL(env); lighthouseURL != "" {
 		tools = append(tools, devToolLink{Label: "Lighthouse", URL: lighthouseURL})
 	}
-	if swaggerURL := resolveSwaggerUIURL(env); swaggerURL != "" {
-		tools = append(tools, devToolLink{Label: "Swagger", URL: swaggerURL})
+	if openapiURL := resolveOpenAPIUIURL(env); openapiURL != "" {
+		tools = append(tools, devToolLink{Label: "OpenAPI", URL: openapiURL})
 	}
 
 	components := config.Render.Components
@@ -2706,9 +2706,12 @@ func resolveAPIURL(env map[string]string) string {
 	return "http://localhost:3000"
 }
 
-// resolveSwaggerUIURL centralizes resolve swagger uiurl lookup for the surrounding workflow.
-func resolveSwaggerUIURL(env map[string]string) string {
-	enabled := str.Of(envValue(env, "API_SWAGGER_ENABLED")).Trim().ToLower().String()
+// resolveOpenAPIUIURL advertises the canonical documentation URL while honoring legacy opt-outs.
+func resolveOpenAPIUIURL(env map[string]string) string {
+	enabled := str.Of(envValue(env, "API_OPENAPI_ENABLED")).Trim().ToLower().String()
+	if enabled == "" {
+		enabled = str.Of(envValue(env, "API_SWAGGER_ENABLED")).Trim().ToLower().String()
+	}
 	if enabled == "" {
 		enabled = str.Of(envValue(env, "SWAGGER_ENABLED")).Trim().ToLower().String()
 	}
@@ -2720,7 +2723,7 @@ func resolveSwaggerUIURL(env map[string]string) string {
 	if apiURL == "" {
 		return ""
 	}
-	return strings.TrimRight(apiURL, "/") + "/swagger"
+	return strings.TrimRight(apiURL, "/") + "/openapi"
 }
 
 // resolveLighthouseUIURL centralizes resolve lighthouse uiurl lookup for the surrounding workflow.

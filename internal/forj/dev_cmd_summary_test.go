@@ -140,7 +140,7 @@ func TestCollectDevToolLinks(t *testing.T) {
 	env := map[string]string{
 		"APP_URL":               "http://127.0.0.1:8080",
 		"LIGHTHOUSE_URL":        "ws://127.0.0.1:7777/lighthouse/ws/agent",
-		"API_SWAGGER_ENABLED":   "true",
+		"API_OPENAPI_ENABLED":   "true",
 		"MAILPIT_HTTP_PORT":     "18025",
 		"OBSERVABILITY_VM_PORT": "18428",
 		"GRAFANA_PORT":          "13001",
@@ -156,7 +156,7 @@ func TestCollectDevToolLinks(t *testing.T) {
 	wantURLs := map[string]string{
 		"App":             "http://127.0.0.1:8080",
 		"Lighthouse":      "http://127.0.0.1:7777/lighthouse",
-		"Swagger":         "http://127.0.0.1:8080/swagger",
+		"OpenAPI":         "http://127.0.0.1:8080/openapi",
 		"Mailpit":         "http://localhost:18025",
 		"VictoriaMetrics": "http://localhost:18428",
 		"Grafana":         "http://localhost:13001",
@@ -198,5 +198,34 @@ func TestBuildDevReadySummaryLines(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("summary missing %q\n%s", want, joined)
 		}
+	}
+}
+
+// TestResolveOpenAPIUIURLEnvironmentPrecedence verifies canonical documentation links honor both historical opt-outs.
+func TestResolveOpenAPIUIURLEnvironmentPrecedence(t *testing.T) {
+	for _, test := range []struct {
+		name, canonical, previous, legacy string
+		enabled                           bool
+	}{
+		{name: "default", enabled: true},
+		{name: "canonical disables", canonical: "false", previous: "true", legacy: "true"},
+		{name: "canonical enables", canonical: "true", previous: "false", legacy: "false", enabled: true},
+		{name: "previous disables", previous: "false", legacy: "true"},
+		{name: "previous enables", previous: "true", legacy: "false", enabled: true},
+		{name: "legacy disables", legacy: "false"},
+		{name: "zero disables", canonical: "0"},
+		{name: "off disables", canonical: "off"},
+		{name: "blank inherits", canonical: " ", previous: "false"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env := map[string]string{"APP_URL": "https://app.example", "API_OPENAPI_ENABLED": test.canonical, "API_SWAGGER_ENABLED": test.previous, "SWAGGER_ENABLED": test.legacy}
+			want := ""
+			if test.enabled {
+				want = "https://app.example/openapi"
+			}
+			if got := resolveOpenAPIUIURL(env); got != want {
+				t.Fatalf("OpenAPI URL = %q, want %q", got, want)
+			}
+		})
 	}
 }
