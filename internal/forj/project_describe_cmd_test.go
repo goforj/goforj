@@ -95,7 +95,7 @@ func TestProjectDescribeCmdReportsDeterministicStaticTopology(t *testing.T) {
 	if !reflect.DeepEqual(first.Apps, wantApps) {
 		t.Fatalf("apps = %#v, want %#v", first.Apps, wantApps)
 	}
-	if !reflect.DeepEqual(first.GoForj.CLICapabilities, []string{projectDescribeCapability, projectDescribeServiceRequirementsCapability}) || len(first.GoForj.GeneratedProject.Capabilities) != 0 {
+	if !reflect.DeepEqual(first.GoForj.CLICapabilities, []string{projectDescribeCapability, projectDescribeServiceRequirementsCapability, devStartupProgressCapability}) || len(first.GoForj.GeneratedProject.Capabilities) != 0 {
 		t.Fatalf("capabilities = %#v", first.GoForj)
 	}
 	if len(first.ServiceRequirements) != 0 {

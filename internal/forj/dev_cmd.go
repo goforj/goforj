@@ -72,6 +72,8 @@ type devWatchSession struct {
 	reconcile             bool
 	reconcileFrontendDeps bool
 	readyAnnounced        bool
+	startupProgress       *devStartupProgress
+	startupStartedAt      time.Time
 }
 
 type activeDevLifecycleTransaction struct {
@@ -135,8 +137,27 @@ func loadDevEnvironment(reload bool, inheritedEnv processEnvironment) error {
 }
 
 // Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
-func (c *DevCmd) Run() error {
+func (c *DevCmd) Run() (resultErr error) {
+	progress, err := openDevStartupProgress(os.Getenv("FORJ_DEV_EVENTS_FILE"), os.Getenv("FORJ_DEV_EVENTS_SESSION"))
+	if err != nil {
+		return err
+	}
+	// Subcommands must not inherit the outer session's diagnostic destination.
+	os.Unsetenv("FORJ_DEV_EVENTS_FILE")
+	os.Unsetenv("FORJ_DEV_EVENTS_SESSION")
+	defer progress.close()
+	startupStarted := time.Now()
+	progress.emit("startup", "Development startup", "started", 0)
+	defer func() {
+		status := "cancelled"
+		if resultErr != nil {
+			status = "failed"
+		}
+		progress.emit("startup", "Development startup", status, time.Since(startupStarted).Milliseconds())
+	}()
 	inheritedEnv := inheritedLauncherEnvironment()
+	delete(inheritedEnv, "FORJ_DEV_EVENTS_FILE")
+	delete(inheritedEnv, "FORJ_DEV_EVENTS_SESSION")
 	config, err := loadDevProjectConfig(console.Default())
 	if err != nil {
 		return err
@@ -229,7 +250,7 @@ func (c *DevCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	if err := runDevInitialLifecycle(config, os.Stdout, os.Stderr); err != nil {
+	if err := runDevInitialLifecycle(config, os.Stdout, os.Stderr, progress); err != nil {
 		return err
 	}
 	outputSession = buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
@@ -239,18 +260,20 @@ func (c *DevCmd) Run() error {
 	runtimeState.refreshWriters()
 
 	session := &devWatchSession{
-		config:        config,
-		inheritedEnv:  inheritedEnv,
-		baseWatches:   baseWatches,
-		streamer:      currentStreamer,
-		restartCh:     restartCh,
-		buildCh:       buildCh,
-		renderCh:      renderCh,
-		commandCh:     commandCh,
-		stopCh:        runCtx.Done(),
-		outWriter:     outWriter,
-		errWriter:     errWriter,
-		reloadRuntime: runtimeState.Sync,
+		config:           config,
+		inheritedEnv:     inheritedEnv,
+		baseWatches:      baseWatches,
+		streamer:         currentStreamer,
+		restartCh:        restartCh,
+		buildCh:          buildCh,
+		renderCh:         renderCh,
+		commandCh:        commandCh,
+		stopCh:           runCtx.Done(),
+		outWriter:        outWriter,
+		errWriter:        errWriter,
+		reloadRuntime:    runtimeState.Sync,
+		startupProgress:  progress,
+		startupStartedAt: startupStarted,
 	}
 
 	if err := c.runWatchersLoop(session); err != nil {
@@ -307,13 +330,14 @@ type devInitialTaskPlan struct {
 }
 
 // runDevInitialLifecycle builds structured projects once when every configured setup task has a known safe phase.
-func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
+func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWriter io.Writer, observers ...*devStartupProgress) error {
+	progress := firstDevStartupProgress(observers)
 	plan := planDevInitialTasks(config)
 	if plan.fastPath {
-		if err := runDevTasks(plan.preBuild); err != nil {
+		if err := runDevTasks(plan.preBuild, progress); err != nil {
 			return err
 		}
-		if _, err := runDevInitialSPABuilds(config, outWriter, errWriter); err != nil {
+		if _, err := runDevInitialSPABuildsWithProgress(config, outWriter, errWriter, progress); err != nil {
 			return err
 		}
 		if err := runDevPhaseOutput(devAppPhaseLabel(config, "Preparing"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
@@ -322,16 +346,16 @@ func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWrit
 				return err
 			}
 			return runDevAppSetup(config, phaseOut, phaseErr)
-		}); err != nil {
+		}, progress); err != nil {
 			return err
 		}
-		if err := runDevTasks(plan.postMigrate); err != nil {
+		if err := runDevTasks(plan.postMigrate, progress); err != nil {
 			return err
 		}
 		if len(plan.postMigrate) > 0 {
 			if err := runDevPhaseOutput(devAppPhaseLabel(config, "Finalizing"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
 				return runDevBuild(config, phaseOut, phaseErr)
-			}); err != nil {
+			}, progress); err != nil {
 				return fmt.Errorf("post-setup forj build failed: %w", err)
 			}
 		}
@@ -341,21 +365,21 @@ func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWrit
 	if err := runDevPhaseOutput(devAppPhaseLabel(config, "Building"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
 		writeDevAppBuildLine(phaseOut, activeDevAppsForConfig(config))
 		return runDevInitialBuild(config, phaseOut, phaseErr)
-	}); err != nil {
+	}, progress); err != nil {
 		return err
 	}
-	rebuildAfterSetup, err := runPreDevSetup(config, outWriter, errWriter)
+	rebuildAfterSetup, err := runPreDevSetup(config, outWriter, errWriter, progress)
 	if err != nil {
 		return err
 	}
-	spaBuilt, err := runDevInitialSPABuilds(config, outWriter, errWriter)
+	spaBuilt, err := runDevInitialSPABuildsWithProgress(config, outWriter, errWriter, progress)
 	if err != nil {
 		return err
 	}
 	if spaBuilt || rebuildAfterSetup {
 		if err := runDevPhaseOutput(devAppPhaseLabel(config, "Finalizing"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
 			return runDevBuild(config, phaseOut, phaseErr)
-		}); err != nil {
+		}, progress); err != nil {
 			return fmt.Errorf("post-setup forj build failed: %w", err)
 		}
 	}
@@ -372,7 +396,9 @@ func devAppPhaseLabel(config *project.Config, action string) string {
 }
 
 // runDevPhaseOutput gives framework-owned startup work the same bounded ownership as configured tasks.
-func runDevPhaseOutput(name string, outWriter io.Writer, errWriter io.Writer, run func(io.Writer, io.Writer) error) error {
+func runDevPhaseOutput(name string, outWriter io.Writer, errWriter io.Writer, run func(io.Writer, io.Writer) error, observers ...*devStartupProgress) (resultErr error) {
+	finishProgress := firstDevStartupProgress(observers).phase("app.prepare", name)
+	defer func() { finishProgress(resultErr == nil) }()
 	block := newDevTaskOutputBlock(name, outWriter, errWriter, nil)
 	block.successLabel = devPhaseSuccessLabel(name)
 	if err := block.start(); err != nil {
@@ -670,7 +696,7 @@ func postgresCreateDatabasesScript(names []string) string {
 }
 
 // runDevTasks centralizes run dev tasks behavior so callers follow the same contract.
-func runDevTasks(tasks []project.DevTask) error {
+func runDevTasks(tasks []project.DevTask, observers ...*devStartupProgress) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -681,7 +707,7 @@ func runDevTasks(tasks []project.DevTask) error {
 	defer devNull.Close()
 	for _, task := range tasks {
 		outputTail := newDevTaskOutputTail(40)
-		res, _, err := runDevTask(task, devNull, outputTail, true)
+		res, _, err := runDevTask(task, devNull, outputTail, true, firstDevStartupProgress(observers))
 		if err != nil {
 			clearPreDevTaskProgressLine()
 			return devTaskFailureError(task.Name, fmt.Sprintf("failed: %v", err), outputTail.String())
@@ -897,7 +923,9 @@ func devTaskOutputBoundary(value string) string {
 }
 
 // runDevTask keeps loader handoff, live output ownership, and completion boundaries consistent across setup and teardown.
-func runDevTask(task project.DevTask, stdin io.Reader, outputTail *devTaskOutputTail, trailingBlank bool) (execx.Result, bool, error) {
+func runDevTask(task project.DevTask, stdin io.Reader, outputTail *devTaskOutputTail, trailingBlank bool, observers ...*devStartupProgress) (taskResult execx.Result, taskOutput bool, taskErr error) {
+	finishProgress := firstDevStartupProgress(observers).phase("task", task.Name)
+	defer func() { finishProgress(taskErr == nil && taskResult.OK()) }()
 	loader := console.NewLoader(task.Name)
 	if err := loader.Start(); err != nil {
 		return execx.Result{}, false, err
@@ -1016,7 +1044,8 @@ func (t *devTaskOutputTail) normalizeLine(line string) string {
 }
 
 // runPreDevSetup orders configured tasks around migration and reports when generated source requires another build.
-func runPreDevSetup(config *project.Config, outWriter io.Writer, errWriter io.Writer) (bool, error) {
+func runPreDevSetup(config *project.Config, outWriter io.Writer, errWriter io.Writer, observers ...*devStartupProgress) (bool, error) {
+	progress := firstDevStartupProgress(observers)
 	preTasks := effectiveDevPreTasks(config)
 	postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
 	rebuildAfterSetup := false
@@ -1036,15 +1065,15 @@ func runPreDevSetup(config *project.Config, outWriter io.Writer, errWriter io.Wr
 			preTasks = append(preTasks, task)
 		}
 	}
-	if err := runDevTasks(preTasks); err != nil {
+	if err := runDevTasks(preTasks, progress); err != nil {
 		return false, err
 	}
 	if err := runDevPhaseOutput(devAppPhaseLabel(config, "Preparing"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
 		return runDevAppSetup(config, phaseOut, phaseErr)
-	}); err != nil {
+	}, progress); err != nil {
 		return false, err
 	}
-	if err := runDevTasks(postMigrateTasks); err != nil {
+	if err := runDevTasks(postMigrateTasks, progress); err != nil {
 		return false, err
 	}
 	return rebuildAfterSetup, nil
@@ -1643,6 +1672,10 @@ watcherLoop:
 			printDevReadySummary(session.outWriter, session.config, snapshotProcessEnv())
 			session.readyAnnounced = true
 		}
+		if startupErr == nil && reconciliationSucceeded {
+			session.startupProgress.emit("startup", "Development startup", "completed", time.Since(session.startupStartedAt).Milliseconds())
+		}
+
 		for {
 			select {
 			case <-session.stopCh:

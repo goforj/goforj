@@ -168,7 +168,7 @@ func newProjectDescribeReport(config *project.Config, discovery projectlayout.Di
 		},
 		GoForj: ProjectDescribeGoForj{
 			Version:         cliVersion,
-			CLICapabilities: []string{projectDescribeCapability, projectDescribeServiceRequirementsCapability},
+			CLICapabilities: []string{projectDescribeCapability, projectDescribeServiceRequirementsCapability, devStartupProgressCapability},
 			GeneratedProject: ProjectDescribeGeneratedProject{
 				Generation:   config.Render.GoForjVersion,
 				Capabilities: []string{},
