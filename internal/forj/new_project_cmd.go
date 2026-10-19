@@ -2452,8 +2452,35 @@ func packageJSONHasNpmDev(root string) bool {
 	return exists
 }
 
-// NewProjectCmd owns the interactive project creation flow.
+// NewProjectCmd owns interactive and schema-driven project creation.
 type NewProjectCmd struct {
+	// Schema emits the versioned creation contract without starting the wizard.
+	Schema bool `name:"schema" help:"Print the versioned JSON creation schema"`
+	// NoInteraction selects argument-driven creation instead of the terminal wizard.
+	NoInteraction bool `name:"no-interaction" help:"Create using explicit options without a terminal wizard"`
+	// Name is the new project's display name.
+	Name string `name:"name" help:"Project display name"`
+	// Module is the new project's Go module path.
+	Module string `name:"module" help:"Go module path"`
+	// Path is the new or empty destination directory.
+	Path string `name:"path" help:"New project directory"`
+	// Components lists catalog keys; an empty value selects no optional components.
+	Components string `name:"components" default:"@default" help:"Comma-separated component keys"`
+	// StarterKit selects a catalog frontend scaffold.
+	StarterKit string `name:"starter-kit" default:"none" help:"Frontend starter kit"`
+	// ComponentLibrary includes the starter kit component examples.
+	ComponentLibrary bool `name:"component-library" default:"true" help:"Include starter component examples"`
+	// HelpFormat selects the generated CLI help formatter.
+	HelpFormat string `name:"help-format" default:"framework" help:"Generated CLI help format"`
+	// Atlas selects a noninteractive agent-support preset.
+	Atlas string `name:"atlas" default:"recommended" help:"Agent support preset: recommended, minimal, custom, skip"`
+	// AtlasAgents selects explicit catalog agents for the custom preset.
+	AtlasAgents string `name:"atlas-agents" default:"@default" help:"Comma-separated agent keys for custom Atlas support"`
+	// AtlasSurfaces selects explicit integration surfaces for the custom preset.
+	AtlasSurfaces string `name:"atlas-surfaces" default:"@default" help:"Comma-separated integration keys for custom Atlas support"`
+	// Demo adds the framework demo profile.
+	Demo bool `name:"demo" help:"Include the framework demo application"`
+
 	// AllowNonEmpty lets advanced users intentionally initialize inside a directory that already has files.
 	AllowNonEmpty bool `name:"allow-non-empty" help:"Allow creating a project in a non-empty directory"`
 
@@ -2474,8 +2501,18 @@ func (*NewProjectCmd) Signature() string {
 	return `name:"new" help:"New project command"`
 }
 
-// Run starts the project wizard and renders the selected project into the target directory.
+// Run selects schema discovery, argument-driven creation, or the interactive project wizard.
 func (c *NewProjectCmd) Run() error {
+	if c.Schema {
+		return writeProjectCreationSchema()
+	}
+	if c.NoInteraction {
+		m, err := c.noninteractiveModel()
+		if err != nil {
+			return err
+		}
+		return c.createProject(m)
+	}
 	printNewProjectBanner()
 
 	resultModel, err := tea.NewProgram(initialModelWithOptions(newProjectModelOptions{
@@ -2534,8 +2571,17 @@ func (c *NewProjectCmd) createProject(m model) error {
 	if err := ensureNewProjectConfigCanBeWritten(configPath); err != nil {
 		return err
 	}
-	if writeErr := os.WriteFile(configPath, buf.Bytes(), 0644); writeErr != nil {
-		return fmt.Errorf("failed to write .goforj.yml: %w", writeErr)
+	configFile, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return fmt.Errorf("create .goforj.yml without replacing existing files: %w", err)
+	}
+	_, writeErr := configFile.Write(buf.Bytes())
+	closeErr := configFile.Close()
+	if writeErr != nil {
+		return fmt.Errorf("write .goforj.yml: %w", writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close .goforj.yml: %w", closeErr)
 	}
 
 	// project renderer

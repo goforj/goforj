@@ -140,6 +140,8 @@ Then prioritize:
 
 Read:
 
+- [Project creation contract](project-creation-contract.md) for graphical or noninteractive `forj new` clients
+
 - [../designs/completed/starter-kits-design.md](../designs/completed/starter-kits-design.md)
 - [Generated App Extension Points](generated-app-extension-points.md)
 - [Auth](auth.md)
