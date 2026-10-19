@@ -203,6 +203,12 @@ At a high level:
 
 If sibling repos are not being picked up, inspect `render.module_replaces` first.
 
+## OpenAPI terminology upgrade
+
+Older projects pick up the OpenAPI rename by running `forj render` with an updated CLI, followed by `forj build`. Rendering automatically replaces the old framework-owned HTTP filenames and refreshes the server wiring. Repeated renders do not require manual cleanup.
+
+Keep existing `API_SWAGGER_ENABLED` or `SWAGGER_ENABLED` deployment settings until their owners deliberately migrate them. Both remain compatibility fallbacks for `API_OPENAPI_ENABLED`, and `/swagger` URLs remain aliases. Do not blindly replace text in App-owned source, environment profiles, or external deployment configuration. The full-render regression test in `project_renderer_openapi_migration_test.go` covers both legacy settings, owner preservation, and repeated upgrades.
+
 ## `module_replaces`
 
 Use `render.module_replaces` when the rendered app needs local sibling repos before a release is tagged.
