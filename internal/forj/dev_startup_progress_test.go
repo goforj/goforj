@@ -65,6 +65,7 @@ func TestDevStartupProgressReportsConfigurationFailure(t *testing.T) {
 	}
 	t.Setenv("FORJ_DEV_EVENTS_FILE", path)
 	t.Setenv("FORJ_DEV_EVENTS_SESSION", "session")
+	t.Setenv("FORJ_DEV_PRESENTATION", "embedded")
 	if err := (&DevCmd{}).Run(); err == nil {
 		t.Fatal("malformed project accepted")
 	}
@@ -83,7 +84,7 @@ func TestDevStartupProgressReportsConfigurationFailure(t *testing.T) {
 	if event.Phase != "startup" || event.Status != "failed" {
 		t.Fatalf("configuration failure missing: %#v", event)
 	}
-	if os.Getenv("FORJ_DEV_EVENTS_FILE") != "" || os.Getenv("FORJ_DEV_EVENTS_SESSION") != "" {
+	if os.Getenv("FORJ_DEV_EVENTS_FILE") != "" || os.Getenv("FORJ_DEV_EVENTS_SESSION") != "" || os.Getenv("FORJ_DEV_PRESENTATION") != "" {
 		t.Fatal("diagnostic selectors leaked into child environment")
 	}
 }
