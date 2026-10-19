@@ -72,6 +72,7 @@ type devWatchSession struct {
 	reconcile             bool
 	reconcileFrontendDeps bool
 	readyAnnounced        bool
+	embeddedOutput        bool
 	startupProgress       *devStartupProgress
 	startupStartedAt      time.Time
 }
@@ -138,6 +139,8 @@ func loadDevEnvironment(reload bool, inheritedEnv processEnvironment) error {
 
 // Run executes the dev workflow (pre tasks, watchers, and shutdown handling).
 func (c *DevCmd) Run() (resultErr error) {
+	embeddedOutput := os.Getenv("FORJ_DEV_PRESENTATION") == "embedded"
+	os.Unsetenv("FORJ_DEV_PRESENTATION")
 	progress, err := openDevStartupProgress(os.Getenv("FORJ_DEV_EVENTS_FILE"), os.Getenv("FORJ_DEV_EVENTS_SESSION"))
 	if err != nil {
 		return err
@@ -158,6 +161,7 @@ func (c *DevCmd) Run() (resultErr error) {
 	inheritedEnv := inheritedLauncherEnvironment()
 	delete(inheritedEnv, "FORJ_DEV_EVENTS_FILE")
 	delete(inheritedEnv, "FORJ_DEV_EVENTS_SESSION")
+	delete(inheritedEnv, "FORJ_DEV_PRESENTATION")
 	config, err := loadDevProjectConfig(console.Default())
 	if err != nil {
 		return err
@@ -273,6 +277,7 @@ func (c *DevCmd) Run() (resultErr error) {
 		errWriter:        errWriter,
 		reloadRuntime:    runtimeState.Sync,
 		startupProgress:  progress,
+		embeddedOutput:   embeddedOutput,
 		startupStartedAt: startupStarted,
 	}
 
@@ -1668,7 +1673,7 @@ watcherLoop:
 		} else if activeTransaction != nil {
 			completeActiveDevLifecycleTransaction(session.outWriter, &activeTransaction)
 			session.readyAnnounced = true
-		} else if shouldPrintDevReadySummary(session.outWriter, session.readyAnnounced) {
+		} else if shouldPrintDevReadySummary(session.outWriter, session.readyAnnounced, session.embeddedOutput) {
 			printDevReadySummary(session.outWriter, session.config, snapshotProcessEnv())
 			session.readyAnnounced = true
 		}
@@ -1878,9 +1883,9 @@ func beginActiveDevRestartTransaction(out io.Writer, config *project.Config, wat
 	return &activeDevLifecycleTransaction{transaction: transaction, startedAt: time.Now()}, nil
 }
 
-// shouldPrintDevReadySummary keeps plain streams backward compatible while the persistent TUI announces resources once.
-func shouldPrintDevReadySummary(out io.Writer, alreadyAnnounced bool) bool {
-	return !alreadyAnnounced || asDevLifecycleTransactionController(out) == nil
+// shouldPrintDevReadySummary leaves resource navigation to an opted-in host while preserving ordinary CLI output.
+func shouldPrintDevReadySummary(out io.Writer, alreadyAnnounced, embedded bool) bool {
+	return !embedded && (!alreadyAnnounced || asDevLifecycleTransactionController(out) == nil)
 }
 
 // completeActiveDevLifecycleTransaction closes the matching TUI boundary without leaking state into the next generation.
