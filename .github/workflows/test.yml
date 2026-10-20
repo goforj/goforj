@@ -319,6 +319,26 @@ jobs:
       - name: build goforj binary
         run: go build -o "$RUNNER_TEMP/forj" ./cmd/forj
 
+      - name: verify native MySQL and MariaDB version compatibility
+        if: matrix.name == 'rendered mysql'
+        env:
+          GOFORJ_NATIVE_MYSQL_READINESS: "1"
+          GOWORK: "off"
+        run: |
+          set -euo pipefail
+          go test -race -tags=integration_mysql_readiness ./internal/forj \
+            -run '^TestNativeMySQLAuthenticatedReadiness$' -parallel=3 \
+            -count=1 -timeout=10m -v | tee mysql-authenticated-readiness.log
+
+      - name: retain native database compatibility results
+        if: always() && matrix.name == 'rendered mysql'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mysql-authenticated-readiness-${{ github.run_id }}
+          path: mysql-authenticated-readiness.log
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: run integration shard
         env:
           FORJ_INTEGRATION_FORJ_PATH: ${{ runner.temp }}/forj

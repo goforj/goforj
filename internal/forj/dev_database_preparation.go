@@ -84,10 +84,12 @@ func prepareDevDatabase(ctx context.Context, driver string, names []string, run 
 	ctx, cancel := context.WithTimeout(ctx, devDatabaseTimeout)
 	defer cancel()
 	var probe []string
+	var probeInput string
 	var script string
 	switch driver {
 	case "mysql":
-		probe = []string{"mariadb-admin", "ping", "--protocol=socket", "--connect-timeout=1"}
+		probe = []string{"sh", "-s"}
+		probeInput = devMySQLReadinessScript
 		script = devMySQLPreparationScript
 	case "postgres":
 		probe = []string{"pg_isready", "-h", "postgres", "-p", "5432", "-t", "1"}
@@ -95,7 +97,7 @@ func prepareDevDatabase(ctx context.Context, driver string, names []string, run 
 	default:
 		return execx.Result{}, fmt.Errorf("unsupported development database driver %q", driver)
 	}
-	if err := waitDevDatabase(ctx, driver, probe, run); err != nil {
+	if err := waitDevDatabase(ctx, driver, probe, probeInput, run); err != nil {
 		return execx.Result{}, err
 	}
 	result, err := run(ctx, driver, append([]string{"sh", "-s", "--"}, names...), script)
@@ -112,13 +114,13 @@ func prepareDevDatabase(ctx context.Context, driver string, names []string, run 
 }
 
 // waitDevDatabase retains the last native diagnostic while Go owns retries and cancellation.
-func waitDevDatabase(ctx context.Context, driver string, arguments []string, run devDatabaseCommandRunner) error {
+func waitDevDatabase(ctx context.Context, driver string, arguments []string, input string, run devDatabaseCommandRunner) error {
 	last := execx.Result{ExitCode: -1}
 	for {
 		if ctx.Err() != nil {
 			return fmt.Errorf("wait for %s database: %w (last probe: %s)", driver, ctx.Err(), devDatabaseFailure(last))
 		}
-		result, err := run(ctx, driver, arguments, "")
+		result, err := run(ctx, driver, arguments, input)
 		last = result
 		if ctx.Err() != nil {
 			continue
