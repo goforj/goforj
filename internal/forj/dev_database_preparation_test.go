@@ -39,7 +39,11 @@ func TestDevDatabasePreparationUsesNativeArguments(t *testing.T) {
 						t.Fatalf("Postgres probe uses shell/input: %q %q", args, input)
 					}
 				} else {
-					if !reflect.DeepEqual(args, []string{"sh", "-s", "--", "billing", "db"}) || !strings.Contains(input, "$MARIADB_ROOT_PASSWORD") && driver == "mysql" || !strings.Contains(input, "$POSTGRES_PASSWORD") && driver == "postgres" {
+					expectedScript := devMySQLPreparationScript
+					if driver == "postgres" {
+						expectedScript = devPostgresPreparationScript
+					}
+					if !reflect.DeepEqual(args, []string{"sh", "-s", "--", "billing", "db"}) || input != expectedScript {
 						t.Fatalf("prepare args=%q input=%q", args, input)
 					}
 					if strings.Contains(input, "sleep") || strings.Contains(input, "until ") {
