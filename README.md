@@ -5,17 +5,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/actions/workflow/status/goforj/goforj/test.yml?branch=main&amp;event=push&amp;label=test%20suite&amp;logo=githubactions&amp;style=flat-square" alt="Test suite"></a>
-  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=test&amp;label=unit&amp;logo=githubactions&amp;style=flat-square" alt="Unit tests"></a>
-  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=integration&amp;label=integration&amp;logo=githubactions&amp;style=flat-square" alt="Integration tests"></a>
-  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=watcher%20churn%20%28race%29&amp;label=race&amp;logo=githubactions&amp;style=flat-square" alt="Race tests"></a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=lighthouse-integration&amp;label=lighthouse&amp;logo=githubactions&amp;style=flat-square" alt="Lighthouse integration tests"></a>
-  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=backup%20and%20restore%20integration&amp;label=backup%20%26%20restore&amp;logo=githubactions&amp;style=flat-square" alt="Backup and restore integration tests"></a>
-  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=generator-integration&amp;label=generator&amp;logo=githubactions&amp;style=flat-square" alt="Generator integration tests"></a>
-  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=uptime%20gopher%20%28demo%29&amp;label=demo%20monitoring&amp;logo=githubactions&amp;style=flat-square" alt="Demo monitoring tests"></a>
+  <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/actions/workflow/status/goforj/goforj/test.yml?branch=main&amp;event=push&amp;label=CI&amp;logo=githubactions&amp;logoColor=white&amp;style=flat-square&amp;labelColor=17141f" alt="CI status"></a>
+  <a href="https://github.com/goforj/goforj/blob/main/.github/workflows/test.yml#L47"><img src="https://img.shields.io/badge/tests-unit%20%2B%20integration-ff8052?style=flat-square&amp;labelColor=17141f" alt="tests: unit + integration"></a>
+  <a href="https://github.com/goforj/goforj/blob/main/.github/workflows/test.yml#L119"><img src="https://img.shields.io/badge/runtime-race%20%2B%20containers-ff8052?style=flat-square&amp;labelColor=17141f" alt="runtime: race + containers"></a>
+  <a href="https://github.com/goforj/goforj/blob/main/.github/workflows/test.yml#L266"><img src="https://img.shields.io/badge/apps-generation%20%2B%20Lighthouse-ff8052?style=flat-square&amp;labelColor=17141f" alt="apps: generation + Lighthouse"></a>
+  <a href="https://github.com/goforj/goforj/blob/main/.github/workflows/test.yml#L83"><img src="https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-ff8052?style=flat-square&amp;labelColor=17141f" alt="platforms: Linux | macOS | Windows"></a>
 </p>
 
 # GoForj
