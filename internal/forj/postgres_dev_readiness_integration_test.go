@@ -36,10 +36,10 @@ func TestPostgresCreateDatabasesScriptAuthenticates(t *testing.T) {
 	defer started.Stop()
 
 	// The generated Compose service resolves as postgres; loopback exercises the same TCP password exchange inside this isolated container.
-	script := strings.ReplaceAll(postgresCreateDatabasesScript([]string{"app", "reporting"}), `"postgres"`, `"127.0.0.1"`)
+	script := strings.ReplaceAll(devPostgresPreparationScript, `"postgres"`, `"127.0.0.1"`)
 	if err := testkit.WaitForContainerExecSuccess(
 		started.Container,
-		[]string{"sh", "-lc", script},
+		[]string{"sh", "-c", script, "forj-database-setup", "app", "reporting"},
 		20*time.Second,
 	); err != nil {
 		t.Fatalf("run authenticated Postgres pre-dev script: %v\n%s", err, script)

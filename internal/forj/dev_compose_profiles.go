@@ -212,14 +212,13 @@ func composeServiceDisabled(name string) bool {
 
 // generatedDevTaskComposeService preserves custom tasks while identifying the built-in container bootstrap commands.
 func generatedDevTaskComposeService(task project.DevTask) string {
+	if service := legacyDevDatabaseTaskService(task); service != "" {
+		return service
+	}
 	if !isConventionalDevBootstrapTask(task) {
 		return ""
 	}
 	switch normalizeDevComposeExecutable(task.Cmd) {
-	case generatedMySQLDevWaitCommand:
-		return "mysql"
-	case generatedPostgresDevWaitCommand:
-		return "postgres"
 	case "docker-compose up -d --force-recreate grafana-seed", "docker-compose run --rm --no-deps grafana-seed":
 		return "grafana-seed"
 	default:

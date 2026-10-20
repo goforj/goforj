@@ -284,6 +284,10 @@ GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./cmd/forj/main.go test:r
 
 ## Common Failure Modes
 
+The CLI owns readiness and preparation for selected local MySQL/Postgres services. New projects keep Compose startup and owner hooks in `dev.pre`, without a generated wait script. Readiness retries, cancellation, and the 30-second per-service deadline live in Go; execx passes direct probe arguments and readable embedded setup scripts through stdin. MySQL uses the container-local Unix socket, avoiding a dependency on TCP certificate trust. Preparation still runs with `dev.auto_migrate: false`; that option controls migrations only. Exact older generated readiness tasks become built-in preparation at the same position in the hook sequence, without rewriting the project or repeating preparation. Customized hooks retain their order and commands.
+
+A changed Dockerfile does not prove an existing Compose image was rebuilt. Compare the actual container client version when an older project behaves differently from a fresh project.
+
 - `module_replaces` points at the wrong path
 - `~` used in replace path
 - local sibling repo change was made but the rendered app is still on published dependency versions
