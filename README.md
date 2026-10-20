@@ -18,12 +18,35 @@
   <a href="https://github.com/goforj/goforj/actions/workflows/test.yml?query=branch%3Amain+event%3Apush"><img src="https://img.shields.io/github/check-runs/goforj/goforj/main?nameFilter=uptime%20gopher%20%28demo%29&amp;label=demo%20monitoring&amp;logo=githubactions&amp;style=flat-square" alt="Demo monitoring tests"></a>
 </p>
 
-<p align="center">
-<strong>This project is currently unreleased and under heavy active private development.</strong>
-</p>
+# GoForj
 
-<p align="center">
-If you are interested in being a part of our private beta, please reach out to us by opening an issue or contacting us at chris@milestech.co
-</p>
+GoForj is a composable application stack for Go. Build HTTP APIs, background workers, scheduled jobs, command-line tools, and web apps with explicit dependency injection and local-first drivers.
 
-For existing projects, see the [upgrade notes](UPGRADING.md).
+The `forj` CLI creates the project structure and wires the components you select. Application code stays in your repository. HTTP, queues, events, cache, storage, mail, and other [first-party libraries](https://goforj.dev/libraries/) can also be used independently.
+
+## Install
+
+Requires Go 1.26 or newer. Make sure Go's binary directory is on your `PATH`.
+
+```sh
+go install github.com/goforj/goforj/cmd/forj@latest
+forj --help
+```
+
+The help output confirms that the CLI is installed. To create a project, run the interactive wizard:
+
+```sh
+forj new
+```
+
+Follow the [Quickstart](https://goforj.dev/getting-started/quickstart) to choose components, start the app, make a request, and run its tests.
+
+## Explore
+
+- [Project structure](https://goforj.dev/getting-started/project-structure): where application code, configuration, and wiring belong.
+- [Runnable scenarios](https://goforj.dev/scenarios/): examples for routes, jobs, events, storage, and observability.
+- [Standalone libraries](https://goforj.dev/libraries/): adopt individual Go packages without the framework.
+- [Performance](https://goforj.dev/performance): measured latency, throughput, and allocation costs with reproducible workloads.
+- [Releases](https://github.com/goforj/goforj/releases) and [upgrade notes](UPGRADING.md): released changes and migration guidance.
+
+GoForj is pre-1.0 and under active development. Review release notes before upgrading an existing project.
