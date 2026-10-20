@@ -216,7 +216,7 @@ printf '%s\n' "$@" >> "$DATABASE_TEST_OUTPUT"
 cat >> "$DATABASE_TEST_OUTPUT"
 `
 				for _, name := range []string{"mariadb", "psql"} {
-					if err := os.WriteFile(filepath.Join(root, name), []byte("#!"+shell+"\n"+body), 0700); err != nil {
+					if err := os.WriteFile(filepath.Join(root, name), []byte("#!/bin/sh\n"+body), 0700); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -403,5 +403,38 @@ func TestLegacyDatabasePositionPreparesOnlyItsService(t *testing.T) {
 	}
 	if !reflect.DeepEqual(calls, []string{"mysql", "postgres"}) {
 		t.Fatalf("final preparations=%q", calls)
+	}
+}
+
+// TestDevPreTaskFailuresStopLaterHooks keeps native preparation and owner task failures from being swallowed.
+func TestDevPreTaskFailuresStopLaterHooks(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("shell unavailable")
+	}
+	for _, kind := range []string{"owner", "database"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			t.Setenv("DB_DRIVER", "mysql")
+			t.Setenv("DB_DATABASE", "db")
+			t.Setenv("COMPOSE_PROFILES", "mysql")
+			config := &project.Config{Render: project.RenderConfig{Components: project.Components{Docker: true, DatabaseMySQL: true}}}
+			preparation := newDevDatabasePreparation(t.Context(), config)
+			failure := errors.New("native preparation failed")
+			preparation.run = func(context.Context, string, []string, string) (execx.Result, error) { return execx.Result{}, failure }
+			task := project.DevTask{Name: "Owner task", Cmd: "exit 19"}
+			if kind == "database" {
+				task = project.DevTask{Name: "Waiting for Database to be ready", Cmd: legacyMySQLDevWaitCommand}
+			}
+			path := filepath.Join(root, "unexpected.log")
+			tasks := []project.DevTask{task, {Name: "Later hook", Cmd: appendDevLifecycleTestLine(path, "unexpected")}}
+			err := runDevPreTasks(preparation, tasks, io.Discard, io.Discard)
+			if err == nil || kind == "database" && !errors.Is(err, failure) {
+				t.Fatalf("error=%v", err)
+			}
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("later hook ran: %v", err)
+			}
+		})
 	}
 }
