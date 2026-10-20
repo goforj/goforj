@@ -36,6 +36,12 @@ func effectiveDevPreTasksWithLegacy(config *project.Config, useLegacy bool) []pr
 	filtered := make([]project.DevTask, 0, len(tasks)+1)
 	hasComposeTask := false
 	for _, task := range tasks {
+		if strings.TrimSpace(task.Name) == "Waiting for Database to be ready" {
+			command := normalizeDevComposeExecutable(task.Cmd)
+			if command == legacyGeneratedMySQLDevWaitCommand || command == strings.ReplaceAll(legacyGeneratedMySQLDevWaitCommand, "mariadb", "mysql") {
+				task.Cmd = generatedMySQLDevWaitCommand
+			}
+		}
 		if service := generatedDevTaskComposeService(task); service != "" && composeServiceDisabled(service) {
 			continue
 		}

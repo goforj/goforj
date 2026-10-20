@@ -690,9 +690,14 @@ func validateDevDatabaseName(name string) error {
 	return nil
 }
 
-// mysqlCreateDatabasesScript creates every needed MySQL database after the service is ready.
+// mysqlWaitForReadyScript bounds container-local readiness and reports the final native failure.
+func mysqlWaitForReadyScript() string {
+	return `attempt=0; until mariadb-admin ping --protocol=socket --connect-timeout=1 --silent; do attempt=$((attempt + 1)); if [ "$attempt" -ge 60 ]; then echo "MySQL did not become ready after 60 attempts" >&2; mariadb-admin ping --protocol=socket --connect-timeout=1; exit 1; fi; sleep .5; done`
+}
+
+// mysqlCreateDatabasesScript bootstraps through authenticated local sockets so container TLS trust cannot block development.
 func mysqlCreateDatabasesScript(names []string) string {
-	return `while ! mariadb-admin ping -h "mysql" --silent; do sleep .5; done; for db in ` + strings.Join(names, " ") + `; do mariadb -h "mysql" -uroot -p"$MARIADB_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \` + "`" + `$db\` + "`" + `; GRANT ALL PRIVILEGES ON \` + "`" + `$db\` + "`" + `.* TO '$MARIADB_USER'@'%';"; done; mariadb -h "mysql" -uroot -p"$MARIADB_ROOT_PASSWORD" -e "FLUSH PRIVILEGES;"`
+	return `set -e; ` + mysqlWaitForReadyScript() + `; for db in ` + strings.Join(names, " ") + `; do mariadb --protocol=socket -uroot -p"$MARIADB_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \` + "`" + `$db\` + "`" + `; GRANT ALL PRIVILEGES ON \` + "`" + `$db\` + "`" + `.* TO '$MARIADB_USER'@'%';"; done; mariadb --protocol=socket -uroot -p"$MARIADB_ROOT_PASSWORD" -e "FLUSH PRIVILEGES;"`
 }
 
 // postgresCreateDatabasesScript creates every needed Postgres database after the service is ready.

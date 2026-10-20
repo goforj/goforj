@@ -3,7 +3,12 @@ package forj
 import "github.com/goforj/goforj/project"
 
 const (
-	generatedMySQLDevWaitCommand = "docker-compose exec -T mysql sh -c 'while ! mariadb-admin ping -h \"mysql\" --silent; do sleep .5; done; mariadb -h \"mysql\" -uroot -p\"$MARIADB_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS \\`$MARIADB_DATABASE\\`;\"'"
+	legacyGeneratedMySQLDevWaitCommand = "docker-compose exec -T mysql sh -c 'while ! mariadb-admin ping -h \"mysql\" --silent; do sleep .5; done; mariadb -h \"mysql\" -uroot -p\"$MARIADB_ROOT_PASSWORD\" -e \"CREATE DATABASE IF NOT EXISTS \\`$MARIADB_DATABASE\\`;\"'"
+)
+
+// generatedMySQLDevWaitCommand uses the container-local socket without relying on TCP certificate trust.
+var generatedMySQLDevWaitCommand = "docker-compose exec -T mysql sh -c " + shellSingleQuote(
+	"set -e; "+mysqlWaitForReadyScript()+`; mariadb --protocol=socket -uroot -p"$MARIADB_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \`+"`"+`$MARIADB_DATABASE\`+"`"+`;"`,
 )
 
 // generatedPostgresDevWaitCommand wraps the shared authenticated creation script for the initial Compose lifecycle.

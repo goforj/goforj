@@ -284,6 +284,8 @@ GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go run ./cmd/forj/main.go test:r
 
 ## Common Failure Modes
 
+Local MySQL development preparation runs inside the MariaDB container through its Unix socket, with authenticated SQL and at most 60 readiness attempts. It must not depend on container TCP certificate trust. The CLI upgrades only exact older generated MySQL wait commands in memory, preserving customized tasks and project files. Both the generated pre-task and internal database preparation must use this shared readiness behavior. A changed Dockerfile does not prove an existing Compose image was rebuilt; compare the actual container client version when an older project behaves differently from a fresh project.
+
 - `module_replaces` points at the wrong path
 - `~` used in replace path
 - local sibling repo change was made but the rendered app is still on published dependency versions
