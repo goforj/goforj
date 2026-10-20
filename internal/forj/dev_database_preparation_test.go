@@ -17,8 +17,8 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestPrepareDevDatabaseUsesNativeArguments checks the same runner contract for both supported database services.
-func TestPrepareDevDatabaseUsesNativeArguments(t *testing.T) {
+// TestDevDatabasePreparationUsesNativeArguments checks the same runner contract for both supported database services.
+func TestDevDatabasePreparationUsesNativeArguments(t *testing.T) {
 	for _, driver := range []string{"mysql", "postgres"} {
 		t.Run(driver, func(t *testing.T) {
 			calls := 0
@@ -57,8 +57,8 @@ func TestPrepareDevDatabaseUsesNativeArguments(t *testing.T) {
 	}
 }
 
-// TestWaitDevDatabaseRetriesThenSucceeds verifies transient native failures remain retryable.
-func TestWaitDevDatabaseRetriesThenSucceeds(t *testing.T) {
+// TestDevDatabaseReadinessRetriesThenSucceeds verifies transient native failures remain retryable.
+func TestDevDatabaseReadinessRetriesThenSucceeds(t *testing.T) {
 	calls := 0
 	run := func(context.Context, string, []string, string) (execx.Result, error) {
 		calls++
@@ -75,8 +75,8 @@ func TestWaitDevDatabaseRetriesThenSucceeds(t *testing.T) {
 	}
 }
 
-// TestPrepareDevDatabaseReportsFailures covers cancellation, native errors, unsupported services, and failed SQL.
-func TestPrepareDevDatabaseReportsFailures(t *testing.T) {
+// TestDevDatabasePreparationReportsFailures covers cancellation, native errors, unsupported services, and failed SQL.
+func TestDevDatabasePreparationReportsFailures(t *testing.T) {
 	t.Run("deadline retains diagnostic", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 		defer cancel()
@@ -182,8 +182,8 @@ func TestDevDatabasePreparationIndependentFromMigrations(t *testing.T) {
 	}
 }
 
-// TestLegacyDevDatabaseTaskIdentities protects all known generated commands while excluding owner customization.
-func TestLegacyDevDatabaseTaskIdentities(t *testing.T) {
+// TestDevLegacyDatabaseTaskIdentities protects all known generated commands while excluding owner customization.
+func TestDevLegacyDatabaseTaskIdentities(t *testing.T) {
 	for _, test := range []struct{ command, service string }{
 		{legacyMySQLDevWaitCommand, "mysql"}, {legacySocketMySQLDevWaitCommand, "mysql"}, {legacyPostgresDevWaitCommand, "postgres"},
 		{strings.ReplaceAll(legacyMySQLDevWaitCommand, "mariadb", "mysql"), "mysql"},
@@ -211,21 +211,26 @@ func TestDevDatabaseScriptsAuthenticateAndFailFast(t *testing.T) {
 		for _, mode := range []string{"success", "authentication"} {
 			t.Run(driver+mode, func(t *testing.T) {
 				root := t.TempDir()
-				body := `if [ "$DATABASE_TEST_MODE" = authentication ]; then echo 'authentication rejected' >&2; exit 9; fi
-printf '%s\n' "$@" >> "$DATABASE_TEST_OUTPUT"
-cat >> "$DATABASE_TEST_OUTPUT"
+				clients := `record_database_client() {
+    if [ "$DATABASE_TEST_MODE" = authentication ]; then
+        printf '%s\n' 'authentication rejected' >&2
+        return 9
+    fi
+    printf '%s\n' "$@" >> "$DATABASE_TEST_OUTPUT"
+    while IFS= read -r line; do
+        printf '%s\n' "$line" >> "$DATABASE_TEST_OUTPUT"
+    done
+    return 0
+}
+mariadb() { record_database_client "$@"; }
+psql() { record_database_client "$@"; }
 `
-				for _, name := range []string{"mariadb", "psql"} {
-					if err := os.WriteFile(filepath.Join(root, name), []byte("#!/bin/sh\n"+body), 0700); err != nil {
-						t.Fatal(err)
-					}
-				}
 				script := devMySQLPreparationScript
 				if driver == "postgres" {
 					script = devPostgresPreparationScript
 				}
-				command := exec.CommandContext(t.Context(), shell, "-c", script, "database-setup", "billing", "db")
-				command.Env = append(os.Environ(), "PATH="+root+string(os.PathListSeparator)+os.Getenv("PATH"), "DATABASE_TEST_MODE="+mode, "DATABASE_TEST_OUTPUT="+filepath.Join(root, "queries"), "MARIADB_ROOT_PASSWORD=fake", "MARIADB_USER=app", "POSTGRES_PASSWORD=fake", "POSTGRES_USER=postgres")
+				command := exec.CommandContext(t.Context(), shell, "-c", clients+script, "database-setup", "billing", "db")
+				command.Env = append(os.Environ(), "DATABASE_TEST_MODE="+mode, "DATABASE_TEST_OUTPUT="+filepath.Join(root, "queries"), "MARIADB_ROOT_PASSWORD=fake", "MARIADB_USER=app", "POSTGRES_PASSWORD=fake", "POSTGRES_USER=postgres")
 				output, err := command.CombinedOutput()
 				if mode == "authentication" {
 					if err == nil || !strings.Contains(string(output), "authentication rejected") {
@@ -284,8 +289,8 @@ func TestDevDatabasePreparationWithoutLegacyHook(t *testing.T) {
 	}
 }
 
-// TestLegacyDevDatabaseHookKeepsOwnerOrdering preserves hooks that depended on the historical readiness position.
-func TestLegacyDevDatabaseHookKeepsOwnerOrdering(t *testing.T) {
+// TestDevLegacyDatabaseHookKeepsOwnerOrdering preserves hooks that depended on the historical readiness position.
+func TestDevLegacyDatabaseHookKeepsOwnerOrdering(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("shell unavailable")
 	}
@@ -372,8 +377,8 @@ func TestDevDatabasePreparationPreservesFailures(t *testing.T) {
 	}
 }
 
-// TestLegacyDatabasePositionPreparesOnlyItsService preserves later owner hooks that start another selected service.
-func TestLegacyDatabasePositionPreparesOnlyItsService(t *testing.T) {
+// TestDevLegacyDatabasePositionPreparesOnlyItsService preserves later owner hooks that start another selected service.
+func TestDevLegacyDatabasePositionPreparesOnlyItsService(t *testing.T) {
 	withConventionalApp(t, "reporting")
 	t.Setenv("DB_DRIVER", "mysql")
 	t.Setenv("DB_DATABASE", "db")
