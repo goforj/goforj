@@ -31,11 +31,12 @@ func TestDevDatabasePreparationUsesNativeArguments(t *testing.T) {
 					t.Fatal("command has no bounded context")
 				}
 				if calls == 1 {
-					if input != "" || args[0] == "sh" {
-						t.Fatalf("probe uses shell/input: %q %q", args, input)
-					}
-					if driver == "mysql" && !strings.Contains(strings.Join(args, " "), "--protocol=socket") {
-						t.Fatal("probe omitted local socket")
+					if driver == "mysql" {
+						if !reflect.DeepEqual(args, []string{"sh", "-s"}) || input != devMySQLReadinessScript {
+							t.Fatalf("MySQL readiness did not use its fixed stdin script: %q", args)
+						}
+					} else if input != "" || args[0] == "sh" {
+						t.Fatalf("Postgres probe uses shell/input: %q %q", args, input)
 					}
 				} else {
 					if !reflect.DeepEqual(args, []string{"sh", "-s", "--", "billing", "db"}) || !strings.Contains(input, "$MARIADB_ROOT_PASSWORD") && driver == "mysql" || !strings.Contains(input, "$POSTGRES_PASSWORD") && driver == "postgres" {
@@ -67,7 +68,7 @@ func TestDevDatabaseReadinessRetriesThenSucceeds(t *testing.T) {
 		}
 		return execx.Result{}, nil
 	}
-	if err := waitDevDatabase(t.Context(), "mysql", nil, run); err != nil {
+	if err := waitDevDatabase(t.Context(), "mysql", nil, "", run); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
@@ -126,7 +127,7 @@ func TestDevDatabasePreparationReportsFailures(t *testing.T) {
 			defer cancel()
 			failure := errors.New("SQL transport failed")
 			run := func(_ context.Context, _ string, _ []string, input string) (execx.Result, error) {
-				if input == "" {
+				if input == devMySQLReadinessScript {
 					return execx.Result{}, nil
 				}
 				if mode == "sql cancellation" {
@@ -441,5 +442,112 @@ func TestDevPreTaskFailuresStopLaterHooks(t *testing.T) {
 				t.Fatalf("later hook ran: %v", err)
 			}
 		})
+	}
+}
+
+// TestDevMySQLReadinessAuthenticatesAndRejectsInitialization executes the exact probe against controlled client responses.
+func TestDevMySQLReadinessAuthenticatesAndRejectsInitialization(t *testing.T) {
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("POSIX shell unavailable")
+	}
+	for _, mode := range []string{"authentication", "temporary", "ready", "unexpected"} {
+		t.Run(mode, func(t *testing.T) {
+			result, err := runDevMySQLReadinessFixture(t.Context(), shell, mode, devMySQLReadinessScript)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "ready" {
+				if !result.OK() {
+					t.Fatalf("authenticated permanent server rejected: %s", result.Stderr)
+				}
+				return
+			}
+			if result.OK() {
+				t.Fatalf("%s server admitted", mode)
+			}
+			if mode == "authentication" && !strings.Contains(result.Stderr, "authentication rejected") {
+				t.Fatalf("authentication diagnostic lost: %s", result.Stderr)
+			}
+		})
+	}
+}
+
+// runDevMySQLReadinessFixture checks authenticated client arguments without exposing a password through argv.
+func runDevMySQLReadinessFixture(ctx context.Context, shell, mode, script string) (execx.Result, error) {
+	client := `mariadb() {
+    [ "$MYSQL_PWD" = "$MARIADB_ROOT_PASSWORD" ] || return 91
+    [ "$#" = 7 ] || return 92
+    [ "$1" = --protocol=socket ] || return 93
+    [ "$2" = --connect-timeout=1 ] || return 94
+    [ "$3" = -uroot ] || return 95
+    [ "$4" = --batch ] || return 96
+    [ "$5" = --skip-column-names ] || return 97
+    [ "$6" = -e ] || return 98
+    [ "$7" = 'SELECT @@skip_networking' ] || return 99
+    case "$DATABASE_TEST_MODE" in
+        authentication) printf '%s\n' 'authentication rejected' >&2; return 9 ;;
+        temporary) printf '%s\n' 1 ;;
+        ready) printf '%s\n' 0 ;;
+        unexpected) printf '%s\n' unavailable ;;
+    esac
+}
+`
+	command := exec.CommandContext(ctx, shell, "-c", client+script)
+	command.Env = append(os.Environ(), "DATABASE_TEST_MODE="+mode, "MARIADB_ROOT_PASSWORD=fake-readiness-password")
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err := command.Run()
+	result := execx.Result{Stdout: stdout.String(), Stderr: stderr.String()}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		result.ExitCode = exit.ExitCode()
+		return result, nil
+	}
+	return result, err
+}
+
+// TestDevMySQLPreparationWaitsForAuthenticatedPermanentServer proves readiness failures cannot run provisioning early or twice.
+func TestDevMySQLPreparationWaitsForAuthenticatedPermanentServer(t *testing.T) {
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("POSIX shell unavailable")
+	}
+	probes, provisions := 0, 0
+	run := func(ctx context.Context, _ string, _ []string, input string) (execx.Result, error) {
+		if input == devMySQLReadinessScript {
+			mode := []string{"authentication", "temporary", "ready"}[probes]
+			probes++
+			return runDevMySQLReadinessFixture(ctx, shell, mode, input)
+		}
+		provisions++
+		if probes != 3 || input != devMySQLPreparationScript {
+			t.Fatalf("provisioning preceded authenticated readiness: probes=%d", probes)
+		}
+		return execx.Result{}, nil
+	}
+	if _, err := prepareDevDatabase(t.Context(), "mysql", []string{"db"}, run); err != nil {
+		t.Fatal(err)
+	}
+	if probes != 3 || provisions != 1 {
+		t.Fatalf("probes=%d provisions=%d", probes, provisions)
+	}
+}
+
+// TestDevMySQLPreparationCancellationDuringAuthentication preserves cancellation and forbids provisioning after a rejected probe.
+func TestDevMySQLPreparationCancellationDuringAuthentication(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	calls := 0
+	_, err := prepareDevDatabase(ctx, "mysql", []string{"db"}, func(_ context.Context, _ string, _ []string, input string) (execx.Result, error) {
+		calls++
+		if input != devMySQLReadinessScript {
+			t.Fatal("provisioned after authentication rejection")
+		}
+		cancel()
+		return execx.Result{ExitCode: 9, Stderr: "authentication rejected"}, nil
+	})
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "authentication rejected") || calls != 1 {
+		t.Fatalf("error=%v calls=%d", err, calls)
 	}
 }
