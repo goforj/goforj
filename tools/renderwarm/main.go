@@ -48,6 +48,7 @@ import (
 	_ "github.com/testcontainers/testcontainers-go/wait"
 	_ "github.com/vmihailenco/msgpack/v5"
 	_ "golang.org/x/crypto/bcrypt"
+	_ "golang.org/x/mod/modfile"
 	_ "golang.org/x/net/icmp"
 	_ "golang.org/x/net/ipv4"
 	_ "golang.org/x/net/ipv6"
