@@ -107,8 +107,8 @@ func TestDisabledDatabaseProfilesSkipContainerBootstrap(t *testing.T) {
 			t.Setenv("DB_DRIVER", driver)
 			t.Setenv("DB_DATABASE", "app")
 			components := project.Components{Docker: true, DatabaseMySQL: driver == "mysql", DatabasePostgres: driver == "postgres"}
-			resourcePlan, servicePlan := resolveNewProjectServiceTestPlans(t, components, project.LocalServiceIntent{}, false)
-			planned := planNewProjectServiceTasks(resourcePlan, servicePlan, components)
+			_, servicePlan := resolveNewProjectServiceTestPlans(t, components, project.LocalServiceIntent{}, false)
+			planned := planNewProjectServiceTasks(servicePlan, components)
 			config := &project.Config{Render: project.RenderConfig{Components: components}, Dev: project.DevConfig{Pre: planned.Pre}}
 			writeDatabaseProfileFixture(t, "docker-compose.yml", "services:\n  "+driver+":\n    profiles: ["+driver+"]\n    image: database\n")
 			writeDatabaseProfileFixture(t, ".env", "COMPOSE_PROFILES="+driver+"\n")
@@ -121,7 +121,7 @@ func TestDisabledDatabaseProfilesSkipContainerBootstrap(t *testing.T) {
 			config.Dev.Pre[0].Cmd = "docker-compose up -d"
 			for _, databaseName := range []string{"app", "", "external-name"} {
 				t.Setenv("DB_DATABASE", databaseName)
-				if err := ensureDevDatabaseExistsWithWriters(config, io.Discard, io.Discard); err != nil {
+				if err := newDevDatabasePreparation(t.Context(), config).prepare(io.Discard, io.Discard); err != nil {
 					t.Fatalf("disabled database attempted container provisioning for %q: %v", databaseName, err)
 				}
 			}
@@ -191,12 +191,12 @@ func TestGeneratedDevTaskComposeServicePreservesCustomTasks(t *testing.T) {
 		task project.DevTask
 		want string
 	}{
-		{task: project.DevTask{Name: "Waiting for Database to be ready", Cmd: generatedMySQLDevWaitCommand}, want: "mysql"},
-		{task: project.DevTask{Name: "Waiting for Database to be ready", Cmd: strings.Replace(generatedPostgresDevWaitCommand, "docker-compose", "docker compose", 1)}, want: "postgres"},
+		{task: project.DevTask{Name: "Waiting for Database to be ready", Cmd: legacySocketMySQLDevWaitCommand}, want: "mysql"},
+		{task: project.DevTask{Name: "Waiting for Database to be ready", Cmd: strings.Replace(legacyPostgresDevWaitCommand, "docker-compose", "docker compose", 1)}, want: "postgres"},
 		{task: project.DevTask{Name: "Seed Grafana Dashboards", Cmd: "docker-compose run --rm --no-deps grafana-seed"}, want: "grafana-seed"},
 		{task: project.DevTask{Name: "Seed Grafana Dashboards", Cmd: "docker-compose up -d --force-recreate grafana-seed"}, want: "grafana-seed"},
 		{task: project.DevTask{Name: "Waiting for Database to be ready", Cmd: "./scripts/wait-for-db"}},
-		{task: project.DevTask{Name: "Owner database task", Cmd: generatedMySQLDevWaitCommand}},
+		{task: project.DevTask{Name: "Owner database task", Cmd: legacySocketMySQLDevWaitCommand}},
 		{task: project.DevTask{Name: "Run Docker Compose", Cmd: "docker-compose up -d"}},
 	} {
 		if got := generatedDevTaskComposeService(test.task); got != test.want {

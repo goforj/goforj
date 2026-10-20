@@ -366,7 +366,7 @@ func (m *model) finalizeConfig() error {
 		DownOnExit:        true,
 		WirePaths:         []string{project.DefaultApp().WireDir},
 	}
-	serviceTasks := planNewProjectServiceTasks(preparation.plan, preparation.servicePlan, *components)
+	serviceTasks := planNewProjectServiceTasks(preparation.servicePlan, *components)
 	m.config.Dev.Pre = append(m.config.Dev.Pre, serviceTasks.Pre...)
 	m.config.Dev.Down = append(m.config.Dev.Down, serviceTasks.Down...)
 
