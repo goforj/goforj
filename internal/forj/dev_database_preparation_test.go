@@ -304,7 +304,7 @@ func TestDevLegacyDatabaseHookKeepsOwnerOrdering(t *testing.T) {
 	config := &project.Config{Render: project.RenderConfig{Components: project.Components{Docker: true, DatabaseMySQL: true}}}
 	preparation := newDevDatabasePreparation(t.Context(), config)
 	preparation.run = func(_ context.Context, _ string, _ []string, input string) (execx.Result, error) {
-		if input != "" {
+		if input == devMySQLPreparationScript {
 			file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 			if err != nil {
 				t.Fatal(err)
@@ -393,7 +393,7 @@ func TestDevLegacyDatabasePositionPreparesOnlyItsService(t *testing.T) {
 	preparation := newDevDatabasePreparation(t.Context(), config)
 	calls := []string{}
 	preparation.run = func(_ context.Context, service string, _ []string, input string) (execx.Result, error) {
-		if input != "" {
+		if input == devMySQLPreparationScript || input == devPostgresPreparationScript {
 			calls = append(calls, service)
 		}
 		return execx.Result{}, nil
