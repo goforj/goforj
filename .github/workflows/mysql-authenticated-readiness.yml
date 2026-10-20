@@ -5,6 +5,7 @@ permissions:
 
 on:
   workflow_dispatch:
+  # Register feature-branch dispatches without starting containers during pull requests.
   pull_request:
     paths:
       - internal/forj/dev_database_preparation.go
@@ -20,6 +21,7 @@ concurrency:
 
 jobs:
   native-mysql-readiness:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
