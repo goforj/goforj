@@ -23,6 +23,7 @@ func testPrimitiveLegacyOwners(t *testing.T) {
 	t.Run("Events structured compatibility", testEventStructuredCompatibility)
 	t.Run("Events command boundary cleanup", testEventCommandBoundaryCleanup)
 	t.Run("Jobs framework cleanup", testJobsLegacyFrameworkCleanup)
+	t.Run("OpenAPI framework cleanup", testOpenAPILegacyFrameworkCleanup)
 	t.Run("legacy cleanup discovery failure", testLegacyCleanupDiscoveryFailure)
 }
 
@@ -352,5 +353,32 @@ func testLegacyCleanupDiscoveryFailure(t *testing.T) {
 	}
 	if got := readPrimitiveRendererFile(t, sentinel); got != contents {
 		t.Fatal("legacy cleanup discovery failure removed or changed an existing generated file")
+	}
+}
+
+// testOpenAPILegacyFrameworkCleanup removes obsolete generated names without touching App-owned documentation handlers.
+func testOpenAPILegacyFrameworkCleanup(t *testing.T) {
+	usePrimitiveRendererRoot(t)
+	for _, name := range []string{"swagger.go", "swagger_test.go"} {
+		writePrimitiveRendererFile(t, filepath.Join("internal", "http", name), "package http\n")
+	}
+	customPath := filepath.Join("app", "http", "docs_controller.go")
+	custom := "package http\n\nconst ownerDocumentation = true\n"
+	writePrimitiveRendererFile(t, customPath, custom)
+	writePrimitiveRendererFile(t, filepath.Join("project", "config.go"), "package project\n")
+	writePrimitiveRendererFile(t, filepath.Join("internal", "lighthouse", "project_config_patch.go"), "package lighthouse\n")
+	renderer := &ProjectRenderer{config: primitiveRendererConfig(project.Components{CLI: true, WebAPI: true}), stats: &renderStats{}, workspace: currentProjectRenderWorkspace(t)}
+	for range 2 {
+		if err := renderer.cleanupLegacyGeneratedFiles(); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"swagger.go", "swagger_test.go"} {
+			if _, err := os.Stat(filepath.Join("internal", "http", name)); !os.IsNotExist(err) {
+				t.Fatalf("obsolete generated file %s remains: %v", name, err)
+			}
+		}
+		if got := readPrimitiveRendererFile(t, customPath); got != custom {
+			t.Fatal("App-owned handler changed")
+		}
 	}
 }

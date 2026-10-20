@@ -478,10 +478,7 @@ func TestDevWatcherBoundaryChangeDuringRuntimeReplacementConverges(t *testing.T)
 		writeDevWatcherBoundarySource(t, sourcePath, fmt.Sprintf("pending-%02d", index), index%2 == 0)
 	}
 	writeDevWatcherBoundarySource(t, sourcePath, "latest", true)
-	latestBuild := waitForDevWatcherBoundaryBuildVersion(t, logPath, "latest")
-	if latestBuild < 2 || latestBuild > 3 {
-		t.Fatalf("latest artifact build=%d, want bounded convergence within builds 2..3\n%s", latestBuild, readDevWatcherChurnFile(logPath))
-	}
+	waitForDevWatcherBoundaryBuildVersion(t, logPath, "latest")
 	waitForDevWatcherChurnTaskIdle(t, controller.tasks[buildID])
 	waitForDevWatcherBoundaryCondition(t, "one runtime follow-up queued during replacement", func() bool {
 		return len(controller.tasks[runtimeID].triggerCh) == 1
@@ -509,6 +506,11 @@ func TestDevWatcherBoundaryChangeDuringRuntimeReplacementConverges(t *testing.T)
 		}
 		return state.heartbeat >= stableHeartbeat+20
 	})
+	// Debounced follow-ups may publish the same final source again while the runtime is being replaced.
+	latestBuild := waitForDevWatcherBoundaryBuildVersion(t, logPath, "latest")
+	if latestBuild < 2 || latestBuild > 3 {
+		t.Fatalf("latest artifact build=%d, want bounded convergence within builds 2..3\n%s", latestBuild, readDevWatcherChurnFile(logPath))
+	}
 	assertDevWatcherChurnBuildCountStable(t, logPath, latestBuild)
 	lines := readDevWatcherChurnLines(logPath)
 	starts := countDevWatcherChurnLines(logPath, "runtime-start:")
@@ -540,7 +542,7 @@ func TestDevWatcherBoundaryChangeDuringRuntimeReplacementConverges(t *testing.T)
 	waitForDevWatcherBoundaryProcessExit(t, latest.pid)
 }
 
-// waitForDevWatcherBoundaryBuildVersion returns the successful build sequence that published the requested source version.
+// waitForDevWatcherBoundaryBuildVersion returns the last observed successful publication of the requested source version.
 func waitForDevWatcherBoundaryBuildVersion(t *testing.T, path string, version string) int {
 	t.Helper()
 	sequence := 0
@@ -555,9 +557,8 @@ func waitForDevWatcherBoundaryBuildVersion(t *testing.T, path string, version st
 				continue
 			}
 			sequence = parsed
-			return true
 		}
-		return false
+		return sequence > 0
 	})
 	return sequence
 }
@@ -958,4 +959,13 @@ func waitForDevWatcherBoundaryProcessExit(t *testing.T, pid int) {
 	waitForDevWatcherBoundaryCondition(t, fmt.Sprintf("process %d to exit", pid), func() bool {
 		return !devWatcherChurnProcessAlive(pid)
 	})
+}
+
+// TestDevWatcherBoundaryBuildVersionUsesFinalPublication prevents an earlier successful build from masking an allowed convergence build.
+func TestDevWatcherBoundaryBuildVersionUsesFinalPublication(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "build.log")
+	writeDevWatcherChurnFile(t, path, "build-success:1:first\nbuild-success:2:latest\nbuild-start:3:latest\nbuild-success:3:latest\n", 0o600)
+	if sequence := waitForDevWatcherBoundaryBuildVersion(t, path, "latest"); sequence != 3 {
+		t.Fatalf("latest successful publication = %d, want 3", sequence)
+	}
 }

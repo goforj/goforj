@@ -40,8 +40,8 @@ func (r ProjectResolver) Resolve(context.Context) ([]Resource, error) {
 			Resource{ID: "app", Name: "App", Category: "app", URL: apiURL, Description: "Primary local app URL.", Enabled: apiURL != "", Priority: 10, Source: "config", App: project.DefaultAppName, Runtime: "http", Health: healthURL, Owner: "goforj"},
 			Resource{ID: "api", Name: "API", Category: "api", URL: apiURL, Description: "Local HTTP API URL.", Enabled: apiURL != "" && components.WebAPI, Priority: 20, Source: "config", App: project.DefaultAppName, Runtime: "http", Health: healthURL, Owner: "goforj"},
 		)
-		if swaggerURL := resolveSwaggerURL(env); swaggerURL != "" {
-			resources = append(resources, Resource{ID: "swagger", Name: "Swagger", Category: "docs", URL: swaggerURL, Description: "Generated Swagger UI for the local OpenAPI document.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Runtime: "http", Owner: "goforj"})
+		if openapiURL := resolveOpenAPIURL(env); openapiURL != "" {
+			resources = append(resources, Resource{ID: "openapi", Name: "OpenAPI", Category: "docs", URL: openapiURL, Description: "Scalar API reference for the local OpenAPI document.", Enabled: true, Priority: 10, Source: "env", App: project.DefaultAppName, Runtime: "http", Owner: "goforj"})
 		}
 	}
 
@@ -86,9 +86,12 @@ func resolveAPIURL(env map[string]string) string {
 	return urlForHostPort("http", resourceURLHost(env), "3000")
 }
 
-// resolveSwaggerURL derives the documentation path from the same externally reachable API origin.
-func resolveSwaggerURL(env map[string]string) string {
-	enabled := str.Of(envValue(env, "API_SWAGGER_ENABLED")).Trim().ToLower().String()
+// resolveOpenAPIURL derives the documentation path from the same externally reachable API origin.
+func resolveOpenAPIURL(env map[string]string) string {
+	enabled := str.Of(envValue(env, "API_OPENAPI_ENABLED")).Trim().ToLower().String()
+	if enabled == "" {
+		enabled = str.Of(envValue(env, "API_SWAGGER_ENABLED")).Trim().ToLower().String()
+	}
 	if enabled == "" {
 		enabled = str.Of(envValue(env, "SWAGGER_ENABLED")).Trim().ToLower().String()
 	}
@@ -100,7 +103,7 @@ func resolveSwaggerURL(env map[string]string) string {
 	if apiURL == "" {
 		return ""
 	}
-	return strings.TrimRight(apiURL, "/") + "/swagger"
+	return strings.TrimRight(apiURL, "/") + "/openapi"
 }
 
 // resolveLighthouseURL projects websocket configuration onto its browser-facing HTTP endpoint.

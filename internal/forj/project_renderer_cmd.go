@@ -2,6 +2,7 @@ package forj
 
 import (
 	"fmt"
+
 	"github.com/goforj/goforj/internal/logger"
 )
 
@@ -11,6 +12,7 @@ type RenderCmd struct {
 	renderer *ProjectRenderer
 
 	Components []string `help:"Components to render"`
+	Only       string   `help:"Render only OpenAPI handlers and server route registration (openapi)"`
 	Timings    bool     `help:"Print render phase timings"`
 }
 
@@ -29,6 +31,20 @@ func NewCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *RenderCmd {
 
 // Run executes the command.
 func (c *RenderCmd) Run() error {
+	if c.Only != "" {
+		if c.Only != "openapi" {
+			return fmt.Errorf("unknown render surface %q; supported: openapi", c.Only)
+		}
+		if len(c.Components) != 0 {
+			return fmt.Errorf("--only cannot be combined with --components")
+		}
+		if err := renderOpenAPI("."); err != nil {
+			return err
+		}
+		c.logger.Info().Msg("OpenAPI files and route registration updated; run forj build to rebuild App binaries")
+		return nil
+	}
+
 	c.renderer.SetTimings(c.Timings)
 	defer c.renderer.SetTimings(false)
 

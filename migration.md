@@ -1,5 +1,7 @@
 # Beta Single-App Structure Migration Guide
 
+For release-specific changes, see the [upgrade notes](UPGRADING.md).
+
 This is a small structural migration for existing single-app projects.
 
 Your app is still one app. The main change is that GoForj now separates the app's binary entrypoint from the app's composition files.

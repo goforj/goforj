@@ -203,6 +203,14 @@ At a high level:
 
 If sibling repos are not being picked up, inspect `render.module_replaces` first.
 
+## OpenAPI terminology upgrade
+
+Use `forj render --only openapi` with an updated CLI to migrate an existing HTTP project without a full render. It refreshes only the two OpenAPI Go files, patches the recognized documentation route call in `internal/http/server.go`, and removes the legacy generated filenames. It does not update modules, run Wire, or reconcile environment and project configuration. Unsupported server wiring is rejected before publication. Rebuild App binaries after reviewing the resulting diff.
+
+A normal `forj render` still performs the same migration as part of a complete refresh. Keep existing `API_SWAGGER_ENABLED` or `SWAGGER_ENABLED` deployment settings until their owners deliberately migrate them. Both remain compatibility fallbacks for `API_OPENAPI_ENABLED`, and `/swagger` URLs remain aliases. Do not blindly replace text in App-owned source or external deployment configuration.
+
+The tests in `project_renderer_openapi_test.go` assert the targeted command's exact file boundary and failure behavior. `project_renderer_openapi_migration_test.go` exercises the full-render upgrade path. Both verify repeatability and preservation of owner files and settings.
+
 ## `module_replaces`
 
 Use `render.module_replaces` when the rendered app needs local sibling repos before a release is tagged.

@@ -281,7 +281,7 @@ func TestDevStatusCmdProjectsHostResources(t *testing.T) {
 					"APP_URL":                "http://localhost:3000",
 					"IP_ADDRESS":             "127.77.42.18",
 					"LIGHTHOUSE_URL":         "ws://localhost:3000/lighthouse/ws/agent",
-					"API_SWAGGER_ENABLED":    "true",
+					"API_OPENAPI_ENABLED":    "true",
 					"COMPOSE_PROFILES":       "mailpit,grafana",
 					"MAILPIT_HTTP_PORT":      "8025",
 					"OBSERVABILITY_VM_PORT":  "8428",
@@ -322,7 +322,7 @@ func TestDevStatusCmdProjectsHostResources(t *testing.T) {
 	}{
 		{id: "app", url: "http://127.77.42.18:3000", app: project.DefaultAppName},
 		{id: "api", url: "http://127.77.42.18:3000", app: project.DefaultAppName},
-		{id: "swagger", url: "http://127.77.42.18:3000/swagger", app: project.DefaultAppName},
+		{id: "openapi", url: "http://127.77.42.18:3000/openapi", app: project.DefaultAppName},
 		{id: "lighthouse", url: "http://127.77.42.18:3000/lighthouse", app: project.DefaultAppName},
 		{id: "mailpit", url: "http://127.77.42.18:8025", service: "mailpit"},
 		{id: "victoria-metrics", url: "http://127.77.42.18:8428", service: "victoriametrics"},
@@ -477,7 +477,7 @@ func TestDevStatusCmdOmitsDisabledResources(t *testing.T) {
 				config: config,
 				environment: map[string]string{
 					"LIGHTHOUSE_ENABLED":  "false",
-					"API_SWAGGER_ENABLED": "false",
+					"API_OPENAPI_ENABLED": "false",
 					"COMPOSE_PROFILES":    "mailpit-debug,grafana-preview",
 				},
 			}, nil
@@ -490,7 +490,7 @@ func TestDevStatusCmdOmitsDisabledResources(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	for _, id := range []string{"lighthouse", "swagger", "mailpit", "victoria-metrics", "grafana"} {
+	for _, id := range []string{"lighthouse", "openapi", "mailpit", "victoria-metrics", "grafana"} {
 		if _, found := devStatusResourceByID(report.Resources, id); found {
 			t.Fatalf("disabled resource %q present in %#v", id, report.Resources)
 		}

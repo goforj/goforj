@@ -569,14 +569,14 @@ a remaining limitation.
 Generated WebAPI Apps register:
 
 ```text
-GET /swagger
-GET /swagger/
-GET /swagger/doc.json
+GET /openapi
+GET /openapi/
+GET /openapi/doc.json
 ```
 
 The HTML routes use Scalar's API reference bundle pinned to
 `@scalar/api-reference@1.62.5` and configure it to fetch
-`/swagger/doc.json`. The pin prevents an unrelated CDN release from changing a
+`/openapi/doc.json`. The pin prevents an unrelated CDN release from changing a
 generated application's behavior.
 
 The JSON handler serves only the current process App's artifact. `FORJ_APP`
@@ -588,8 +588,9 @@ returns JSON `404` with the exact
 JSON `500`; other filesystem failures remain errors. There is no fallback from
 a missing named-App document to the default App's document.
 
-`API_SWAGGER_ENABLED` can disable the routes. The legacy `SWAGGER_ENABLED`
-value remains a migration fallback.
+`API_OPENAPI_ENABLED` can disable the routes. `API_SWAGGER_ENABLED` and then `SWAGGER_ENABLED` remain compatibility fallbacks.
+
+The previous `/swagger`, `/swagger/`, and `/swagger/doc.json` URLs remain compatibility aliases. New links and generated code use OpenAPI names. After upgrading the CLI, rerun `forj render` and `forj build` to replace the old framework-owned `swagger.go` and `swagger_test.go` files with `openapi.go` and `openapi_test.go`.
 
 ## Reproducibility and Performance
 

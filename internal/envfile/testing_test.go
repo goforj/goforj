@@ -154,3 +154,18 @@ func TestMergeTestingIsolatesMaintenanceMode(t *testing.T) {
 		}
 	}
 }
+
+// TestMergeTestingRefreshesOpenAPISetting keeps canonical and legacy documentation keys under framework ownership.
+func TestMergeTestingRefreshesOpenAPISetting(t *testing.T) {
+	existing := []byte("API_OPENAPI_ENABLED=false\nAPI_SWAGGER_ENABLED=false\nBILLING_API_OPENAPI_ENABLED=false\n")
+	example := []byte("API_OPENAPI_ENABLED=true\nBILLING_API_OPENAPI_ENABLED=true\n")
+	got := string(envfile.MergeTesting(existing, example))
+	for _, want := range []string{"API_OPENAPI_ENABLED=true", "BILLING_API_OPENAPI_ENABLED=true"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing framework setting %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "API_SWAGGER_ENABLED=") {
+		t.Fatalf("retained removed legacy setting:\n%s", got)
+	}
+}

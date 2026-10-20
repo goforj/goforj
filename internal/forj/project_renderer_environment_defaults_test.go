@@ -50,7 +50,7 @@ func TestEnsureEnvironmentDefaultsIgnoresCommentedAndSimilarKeys(t *testing.T) {
 			t.Fatalf("generated %s value = %q, want concrete secret", key, assignment.value)
 		}
 	}
-	for _, key := range []string{"LIGHTHOUSE_URL", "LIGHTHOUSE_ENABLED", "SWAGGER_ENABLED", "FORJ_MAKE_OPEN", "FORJ_EDITOR"} {
+	for _, key := range []string{"LIGHTHOUSE_URL", "LIGHTHOUSE_ENABLED", "API_OPENAPI_ENABLED", "API_SWAGGER_ENABLED", "SWAGGER_ENABLED", "FORJ_MAKE_OPEN", "FORJ_EDITOR"} {
 		if assignment := finalEnvironmentAssignment(lines, key); assignment.exists() {
 			t.Fatalf("default-valued %s assignment was added:\n%s", key, updated)
 		}
@@ -122,6 +122,8 @@ func TestEnsureEnvironmentDefaultsPreservesOwnerSyntaxAndDeduplicatesLighthouseS
 		"# LIGHTHOUSE_SECRET=commented-placeholder",
 		"LIGHTHOUSE_SECRET=generated-duplicate",
 		"export LIGHTHOUSE_ENABLED = 'false'",
+		"export API_OPENAPI_ENABLED = 'false'",
+		"export API_SWAGGER_ENABLED = 'false'",
 		"export SWAGGER_ENABLED = 'false'",
 		"export FORJ_MAKE_OPEN = 'never'",
 		"export FORJ_EDITOR = 'vim'",
@@ -265,4 +267,28 @@ func readEnvironmentDefaultsFile(t *testing.T, root string) string {
 		t.Fatalf("read owner environment: %v", err)
 	}
 	return string(content)
+}
+
+// TestOpenAPIRenderPreservesLegacyOptOut keeps rerenders from overriding an existing documentation opt-out.
+func TestOpenAPIRenderPreservesLegacyOptOut(t *testing.T) {
+	for _, key := range []string{"API_SWAGGER_ENABLED", "SWAGGER_ENABLED"} {
+		t.Run(key, func(t *testing.T) {
+			root := t.TempDir()
+			source := key + "=false\n"
+			if err := os.WriteFile(filepath.Join(root, ".env"), []byte(source), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			renderer := environmentDefaultsRenderer(t, root, project.Components{WebAPI: true})
+			if err := renderer.ensureEnvironmentDefaults(".env"); err != nil {
+				t.Fatal(err)
+			}
+			updated := readEnvironmentDefaultsFile(t, root)
+			if !strings.Contains(updated, source) {
+				t.Fatal("legacy opt-out was removed")
+			}
+			if finalEnvironmentAssignment(strings.Split(updated, "\n"), "API_OPENAPI_ENABLED").exists() {
+				t.Fatal("canonical setting overrides legacy opt-out")
+			}
+		})
+	}
 }

@@ -689,7 +689,7 @@ func TestBuildDevResourceHeaderLineRespondsWithoutWrapping(t *testing.T) {
 	tools := []devToolLink{
 		{Label: "App", URL: "http://localhost:3000"},
 		{Label: "Lighthouse", URL: "http://localhost:3000/lighthouse"},
-		{Label: "Swagger", URL: "http://localhost:3000/swagger"},
+		{Label: "OpenAPI", URL: "http://localhost:3000/openapi"},
 		{Label: "Mailpit", URL: "http://localhost:8025"},
 	}
 	tests := []struct {
@@ -697,9 +697,9 @@ func TestBuildDevResourceHeaderLineRespondsWithoutWrapping(t *testing.T) {
 		want   []string
 		hidden []string
 	}{
-		{width: 60, want: []string{"1 App", "2 Lighthouse", "3 Swagger", "4 Mailpit"}, hidden: []string{"…"}},
-		{width: 35, want: []string{"1 App", "2 Lighthouse", "3 Swagger", "…"}, hidden: []string{"4 Mailpit"}},
-		{width: 25, want: []string{"1 App", "2 Lighthouse", "…"}, hidden: []string{"3 Swagger"}},
+		{width: 60, want: []string{"1 App", "2 Lighthouse", "3 OpenAPI", "4 Mailpit"}, hidden: []string{"…"}},
+		{width: 35, want: []string{"1 App", "2 Lighthouse", "3 OpenAPI", "…"}, hidden: []string{"4 Mailpit"}},
+		{width: 25, want: []string{"1 App", "2 Lighthouse", "…"}, hidden: []string{"3 OpenAPI"}},
 		{width: 10, want: []string{"1 App", "…"}, hidden: []string{"2 Lighthouse"}},
 	}
 	for _, test := range tests {
