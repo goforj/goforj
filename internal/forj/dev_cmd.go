@@ -12,7 +12,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -254,7 +253,7 @@ func (c *DevCmd) Run() (resultErr error) {
 	if err != nil {
 		return err
 	}
-	if err := runDevInitialLifecycle(config, os.Stdout, os.Stderr, progress); err != nil {
+	if err := runDevInitialLifecycle(runCtx, config, os.Stdout, os.Stderr, progress); err != nil {
 		return err
 	}
 	outputSession = buildDevOutputSession(config, requestRestart, requestRender, requestCommand)
@@ -335,11 +334,12 @@ type devInitialTaskPlan struct {
 }
 
 // runDevInitialLifecycle builds structured projects once when every configured setup task has a known safe phase.
-func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWriter io.Writer, observers ...*devStartupProgress) error {
+func runDevInitialLifecycle(ctx context.Context, config *project.Config, outWriter io.Writer, errWriter io.Writer, observers ...*devStartupProgress) error {
 	progress := firstDevStartupProgress(observers)
 	plan := planDevInitialTasks(config)
 	if plan.fastPath {
-		if err := runDevTasks(plan.preBuild, progress); err != nil {
+		preparation := newDevDatabasePreparation(ctx, config)
+		if err := runDevPreTasks(preparation, plan.preBuild, outWriter, errWriter, progress); err != nil {
 			return err
 		}
 		if _, err := runDevInitialSPABuildsWithProgress(config, outWriter, errWriter, progress); err != nil {
@@ -350,7 +350,7 @@ func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWrit
 			if err := runDevInitialBuild(config, phaseOut, phaseErr); err != nil {
 				return err
 			}
-			return runDevAppSetup(config, phaseOut, phaseErr)
+			return runDevAppSetup(preparation, phaseOut, phaseErr)
 		}, progress); err != nil {
 			return err
 		}
@@ -373,7 +373,7 @@ func runDevInitialLifecycle(config *project.Config, outWriter io.Writer, errWrit
 	}, progress); err != nil {
 		return err
 	}
-	rebuildAfterSetup, err := runPreDevSetup(config, outWriter, errWriter, progress)
+	rebuildAfterSetup, err := runPreDevSetup(ctx, config, outWriter, errWriter, progress)
 	if err != nil {
 		return err
 	}
@@ -471,8 +471,7 @@ func isConventionalDevBootstrapTask(task project.DevTask) bool {
 	case name == "Run Docker Compose":
 		return isConventionalDevComposeUpCommand(task.Cmd)
 	case name == "Waiting for Database to be ready":
-		command := normalizeDevComposeExecutable(task.Cmd)
-		return command == generatedMySQLDevWaitCommand || command == generatedPostgresDevWaitCommand
+		return legacyDevDatabaseTaskService(task) != ""
 	case name == "Seed Grafana Dashboards":
 		command := normalizeDevComposeExecutable(task.Cmd)
 		return command == "docker-compose up -d --force-recreate grafana-seed" ||
@@ -545,164 +544,12 @@ func devFrontendInstallTaskApp(name string) (project.App, bool) {
 	return project.AppForName(appName), true
 }
 
-// ensureDevDatabaseExistsWithWriters provisions only service-backed databases because SQLite needs no external preparation.
-func ensureDevDatabaseExistsWithWriters(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	databases, err := devDatabasesForApps(config, activeDevAppsForConfig(config))
-	if err != nil {
-		return err
-	}
-	databasesByDriver := map[string][]string{}
-	for _, database := range databases {
-		databasesByDriver[database.Driver] = append(databasesByDriver[database.Driver], database.Name)
-	}
-	if names := databasesByDriver["mysql"]; len(names) > 0 {
-		res, err := devComposeCommand("exec", "-T", "mysql", "sh", "-c", mysqlCreateDatabasesScript(names)).
-			EnvInherit().
-			StdinReader(os.Stdin).
-			StdoutWriter(outWriter).
-			StderrWriter(errWriter).
-			Run()
-		if err != nil {
-			return fmt.Errorf("ensure mysql database failed: %v", err)
-		}
-		if !res.OK() {
-			return fmt.Errorf("ensure mysql database failed with exit code %d", res.ExitCode)
-		}
-	}
-	if names := databasesByDriver["postgres"]; len(names) > 0 {
-		res, err := devComposeCommand("exec", "-T", "postgres", "sh", "-c", postgresCreateDatabasesScript(names)).
-			EnvInherit().
-			StdinReader(os.Stdin).
-			StdoutWriter(outWriter).
-			StderrWriter(errWriter).
-			Run()
-		if err != nil {
-			return fmt.Errorf("ensure postgres database failed: %v", err)
-		}
-		if !res.OK() {
-			return fmt.Errorf("ensure postgres database failed with exit code %d", res.ExitCode)
-		}
-	}
-	return nil
-}
-
 // devComposeCommand uses the installed Compose frontend for framework-owned direct invocations.
 func devComposeCommand(arguments ...string) *execx.Cmd {
 	if installedDevComposeUsesLegacy() {
 		return execx.Command("docker-compose", arguments...)
 	}
 	return execx.Command("docker", append([]string{"compose"}, arguments...)...)
-}
-
-type devDatabase struct {
-	App    string
-	Driver string
-	Name   string
-}
-
-// devDatabasesForApps discovers server databases whose Compose services participate in the current dev session.
-func devDatabasesForApps(config *project.Config, apps []project.App) ([]devDatabase, error) {
-	seen := map[string]bool{}
-	databases := make([]devDatabase, 0, len(apps))
-	for _, app := range apps {
-		app = projectlayout.NormalizeApp(app)
-		components := appRenderComponents(config, app)
-		if !components.HasDatabase() {
-			continue
-		}
-		driver := normalizeDevDatabaseDriver(appScopedEnvValue(app, "DB_DRIVER"))
-		if driver == "" {
-			driver = normalizeDevDatabaseDriver(components.DatabaseDriver())
-		}
-		if driver == "" || driver == "sqlite" || composeServiceDisabled(driver) {
-			continue
-		}
-		name := appScopedEnvValue(app, "DB_DATABASE")
-		if name == "" {
-			return nil, fmt.Errorf("missing %s for %s database app %s", appScopedEnvKey(app, "DB_DATABASE"), driver, app.Name)
-		}
-		if err := validateDevDatabaseName(name); err != nil {
-			return nil, fmt.Errorf("%s for app %s: %w", appScopedEnvKey(app, "DB_DATABASE"), app.Name, err)
-		}
-		key := driver + "\x00" + name
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		databases = append(databases, devDatabase{App: app.Name, Driver: driver, Name: name})
-	}
-	sort.Slice(databases, func(left, right int) bool {
-		if databases[left].Driver != databases[right].Driver {
-			return databases[left].Driver < databases[right].Driver
-		}
-		return databases[left].Name < databases[right].Name
-	})
-	return databases, nil
-}
-
-// normalizeDevDatabaseDriver maps common aliases to the compose service driver names.
-func normalizeDevDatabaseDriver(driver string) string {
-	switch str.Of(driver).Trim().ToLower().String() {
-	case "mysql", "mariadb":
-		return "mysql"
-	case "postgres", "postgresql":
-		return "postgres"
-	case "sqlite", "sqlite3":
-		return "sqlite"
-	default:
-		return str.Of(driver).Trim().ToLower().String()
-	}
-}
-
-// appScopedEnvValue reads app-specific env with the same fallback shape used by app runtime.
-func appScopedEnvValue(app project.App, key string) string {
-	if app.Name != "" && app.Name != project.DefaultAppName {
-		if value := strings.TrimSpace(os.Getenv(appScopedEnvKey(app, key))); value != "" {
-			return value
-		}
-	}
-	return strings.TrimSpace(os.Getenv(key))
-}
-
-// appScopedEnvKey returns the app-prefixed env key that overrides a base env value.
-func appScopedEnvKey(app project.App, key string) string {
-	if app.Name == "" || app.Name == project.DefaultAppName {
-		return key
-	}
-	prefix := project.AppEnvironmentPrefix(app.Name)
-	if prefix == "" {
-		return key
-	}
-	return prefix + "_" + key
-}
-
-// validateDevDatabaseName keeps local database creation scripts simple and injection-safe.
-func validateDevDatabaseName(name string) error {
-	if name == "" {
-		return fmt.Errorf("database name is empty")
-	}
-	for _, char := range name {
-		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '_' {
-			continue
-		}
-		return fmt.Errorf("database name %q must contain only letters, numbers, and underscores", name)
-	}
-	return nil
-}
-
-// mysqlWaitForReadyScript bounds container-local readiness and reports the final native failure.
-func mysqlWaitForReadyScript() string {
-	return `attempt=0; until mariadb-admin ping --protocol=socket --connect-timeout=1 --silent; do attempt=$((attempt + 1)); if [ "$attempt" -ge 60 ]; then echo "MySQL did not become ready after 60 attempts" >&2; mariadb-admin ping --protocol=socket --connect-timeout=1; exit 1; fi; sleep .5; done`
-}
-
-// mysqlCreateDatabasesScript bootstraps through authenticated local sockets so container TLS trust cannot block development.
-func mysqlCreateDatabasesScript(names []string) string {
-	return `set -e; ` + mysqlWaitForReadyScript() + `; for db in ` + strings.Join(names, " ") + `; do mariadb --protocol=socket -uroot -p"$MARIADB_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \` + "`" + `$db\` + "`" + `; GRANT ALL PRIVILEGES ON \` + "`" + `$db\` + "`" + `.* TO '$MARIADB_USER'@'%';"; done; mariadb --protocol=socket -uroot -p"$MARIADB_ROOT_PASSWORD" -e "FLUSH PRIVILEGES;"`
-}
-
-// postgresCreateDatabasesScript creates every needed Postgres database after the service is ready.
-func postgresCreateDatabasesScript(names []string) string {
-	return `export PGPASSWORD="$POSTGRES_PASSWORD"; until pg_isready -h "postgres" -p 5432; do sleep .5; done; for db in ` + strings.Join(names, " ") + `; do psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1 || psql -U "$POSTGRES_USER" -h "postgres" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$db\";"; done`
 }
 
 // runDevTasks centralizes run dev tasks behavior so callers follow the same contract.
@@ -1054,8 +901,9 @@ func (t *devTaskOutputTail) normalizeLine(line string) string {
 }
 
 // runPreDevSetup orders configured tasks around migration and reports when generated source requires another build.
-func runPreDevSetup(config *project.Config, outWriter io.Writer, errWriter io.Writer, observers ...*devStartupProgress) (bool, error) {
+func runPreDevSetup(ctx context.Context, config *project.Config, outWriter io.Writer, errWriter io.Writer, observers ...*devStartupProgress) (bool, error) {
 	progress := firstDevStartupProgress(observers)
+	preparation := newDevDatabasePreparation(ctx, config)
 	preTasks := effectiveDevPreTasks(config)
 	postMigrateTasks := make([]project.DevTask, 0, len(config.Dev.Pre))
 	rebuildAfterSetup := false
@@ -1075,11 +923,11 @@ func runPreDevSetup(config *project.Config, outWriter io.Writer, errWriter io.Wr
 			preTasks = append(preTasks, task)
 		}
 	}
-	if err := runDevTasks(preTasks, progress); err != nil {
+	if err := runDevPreTasks(preparation, preTasks, outWriter, errWriter, progress); err != nil {
 		return false, err
 	}
 	if err := runDevPhaseOutput(devAppPhaseLabel(config, "Preparing"), outWriter, errWriter, func(phaseOut io.Writer, phaseErr io.Writer) error {
-		return runDevAppSetup(config, phaseOut, phaseErr)
+		return runDevAppSetup(preparation, phaseOut, phaseErr)
 	}, progress); err != nil {
 		return false, err
 	}
@@ -1090,8 +938,8 @@ func runPreDevSetup(config *project.Config, outWriter io.Writer, errWriter io.Wr
 }
 
 // runDevAppSetup catches databases and migrations up before dev starts or restarts app processes.
-func runDevAppSetup(config *project.Config, outWriter io.Writer, errWriter io.Writer) error {
-	_, err := runDevAppSetupWithResult(config, outWriter, errWriter)
+func runDevAppSetup(preparation *devDatabasePreparation, outWriter io.Writer, errWriter io.Writer) error {
+	_, err := runDevAppSetupWithResult(preparation, outWriter, errWriter)
 	return err
 }
 
@@ -1100,20 +948,14 @@ type devAppSetupResult struct {
 }
 
 // runDevAppSetupWithResult retains migration timing without coupling lifecycle summaries to rendered output.
-func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWriter io.Writer) (devAppSetupResult, error) {
+func runDevAppSetupWithResult(preparation *devDatabasePreparation, outWriter io.Writer, errWriter io.Writer) (devAppSetupResult, error) {
 	result := devAppSetupResult{}
+	config := preparation.config
+	if err := preparation.prepare(outWriter, errWriter); err != nil {
+		return result, err
+	}
 	if !shouldRunDevAutoMigrate(config) {
 		return result, nil
-	}
-	if config.Render.Components.Docker {
-		start := time.Now()
-		if !isDevPhaseOutput(outWriter) && !suppressDevLifecycleOrchestration(outWriter) {
-			writeDevActionLine(outWriter, "Ensuring dev databases")
-		}
-		if err := ensureDevDatabaseExistsWithWriters(config, outWriter, errWriter); err != nil {
-			return result, err
-		}
-		writeDevSuccessLine(outWriter, "Databases", formatDevElapsed(time.Since(start)))
 	}
 	start := time.Now()
 	phaseOutput := isDevPhaseOutput(outWriter) || suppressDevLifecycleOrchestration(outWriter)
@@ -1121,6 +963,7 @@ func runDevAppSetupWithResult(config *project.Config, outWriter io.Writer, errWr
 		writeDevActionLine(outWriter, "Running auto-migrate")
 	}
 	command := execx.Command("bash", "-c", devAutoMigrateShellCommand(config)).
+		WithContext(preparation.ctx).
 		EnvInherit().
 		Env(devAutoMigrateEnv()).
 		StdinReader(os.Stdin)
@@ -1600,6 +1443,9 @@ const (
 
 // runWatchersLoop starts all configured watchers, handles restart requests, and surfaces exit errors.
 func (c *DevCmd) runWatchersLoop(session *devWatchSession) error {
+	setupContext, cancelSetup := devWatchStopContext(session.stopCh)
+	defer cancelSetup()
+
 	var activeTransaction *activeDevLifecycleTransaction
 watcherLoop:
 	for {
@@ -1631,7 +1477,7 @@ watcherLoop:
 		reconciliationSucceeded := true
 		if session.reconcile {
 			reconcileResult, reconcileErr := runDevWatcherReconciliation(
-				session.config,
+				setupContext, session.config,
 				session.outWriter,
 				session.errWriter,
 				session.reconcileFrontendDeps,
@@ -1774,7 +1620,7 @@ watcherLoop:
 				}
 				session.streamer = refreshedStreamer
 				if !session.reconcile {
-					setupResult, setupErr := runDevAppSetupWithResult(session.config, session.outWriter, session.errWriter)
+					setupResult, setupErr := runDevAppSetupWithResult(newDevDatabasePreparation(setupContext, session.config), session.outWriter, session.errWriter)
 					if setupErr != nil {
 						failActiveDevLifecycleTransaction(session.outWriter, &activeTransaction, setupErr)
 						disableDevFooter(session.outWriter)
@@ -1838,7 +1684,7 @@ watcherLoop:
 					}
 				}
 				if !session.reconcile {
-					if err := runDevAppSetup(session.config, session.outWriter, session.errWriter); err != nil {
+					if err := runDevAppSetup(newDevDatabasePreparation(setupContext, session.config), session.outWriter, session.errWriter); err != nil {
 						disableDevFooter(session.outWriter)
 						disableDevFooter(session.errWriter)
 						fmt.Println(buildDevFooterSeparatorLine())
@@ -2023,7 +1869,7 @@ type devWatcherReconciliationResult struct {
 }
 
 // runDevWatcherReconciliation rebuilds frontend assets as a barrier before publishing app runtimes.
-func runDevWatcherReconciliation(config *project.Config, outWriter io.Writer, errWriter io.Writer, installFrontendDeps bool) (devWatcherReconciliationResult, error) {
+func runDevWatcherReconciliation(ctx context.Context, config *project.Config, outWriter io.Writer, errWriter io.Writer, installFrontendDeps bool) (devWatcherReconciliationResult, error) {
 	result := devWatcherReconciliationResult{}
 	if installFrontendDeps {
 		if err := runDevFrontendDependencySetup(config); err != nil {
@@ -2038,7 +1884,7 @@ func runDevWatcherReconciliation(config *project.Config, outWriter io.Writer, er
 		return result, err
 	}
 	result.BuildElapsed = time.Since(buildStartedAt)
-	setupResult, err := runDevAppSetupWithResult(config, outWriter, errWriter)
+	setupResult, err := runDevAppSetupWithResult(newDevDatabasePreparation(ctx, config), outWriter, errWriter)
 	if err != nil {
 		return result, fmt.Errorf("dev app setup failed: %w", err)
 	}

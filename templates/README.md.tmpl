@@ -18,6 +18,8 @@ forj dev
 
 GoForj prepares the configured local services, generates framework code, builds frontend assets when present, and watches the application for changes.
 
+Keep project-specific startup commands in `dev.pre` inside `.goforj.yml`. The CLI handles readiness and database preparation for selected local MySQL and Postgres services. Set `dev.auto_migrate: false` to manage migrations yourself while retaining readiness checks.
+
 ## Build and Test
 
 Build the complete application artifact:

@@ -40,9 +40,10 @@ type DevTask struct {
 
 // DevConfig represents development lifecycle configuration.
 type DevConfig struct {
-	Pre               []DevTask         `yaml:"pre" json:"pre"`
-	Down              []DevTask         `yaml:"down" json:"down"`
-	Run               map[string]string `yaml:"run,omitempty" json:"run,omitempty"`
+	Pre  []DevTask         `yaml:"pre" json:"pre"`
+	Down []DevTask         `yaml:"down" json:"down"`
+	Run  map[string]string `yaml:"run,omitempty" json:"run,omitempty"`
+	// AutoMigrate controls schema migrations independently from local database readiness.
 	AutoMigrate       bool              `yaml:"auto_migrate" json:"auto_migrate"`
 	DownOnExit        bool              `yaml:"down_on_exit" json:"down_on_exit"`
 	SoundOnWatchError bool              `yaml:"sound_on_watch_error" json:"sound_on_watch_error"`

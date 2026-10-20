@@ -835,34 +835,6 @@ func TestDevAppsChangedComparesAppNames(t *testing.T) {
 	}
 }
 
-func TestCreateDatabaseScriptsIncludeAllDatabases(t *testing.T) {
-	mysqlScript := mysqlCreateDatabasesScript([]string{"billing", "db"})
-	for _, want := range []string{
-		`mariadb-admin ping`,
-		`mariadb --protocol=socket`,
-		`for db in billing db`,
-		"CREATE DATABASE IF NOT EXISTS \\`$db\\`;",
-		"GRANT ALL PRIVILEGES ON \\`$db\\`.* TO '$MARIADB_USER'@'%';",
-		`FLUSH PRIVILEGES;`,
-	} {
-		if !strings.Contains(mysqlScript, want) {
-			t.Fatalf("mysql script missing %q:\n%s", want, mysqlScript)
-		}
-	}
-
-	postgresScript := postgresCreateDatabasesScript([]string{"app", "reporting"})
-	for _, want := range []string{
-		`export PGPASSWORD="$POSTGRES_PASSWORD"`,
-		`pg_isready`,
-		`for db in app reporting`,
-		`CREATE DATABASE \"$db\";`,
-	} {
-		if !strings.Contains(postgresScript, want) {
-			t.Fatalf("postgres script missing %q:\n%s", want, postgresScript)
-		}
-	}
-}
-
 func TestDevAutoMigrateUsesUnqualifiedFrameworkPrefix(t *testing.T) {
 	if got := devAutoMigrateShellCommand(&project.Config{}); got != "./bin/app migrate" {
 		t.Fatalf("auto-migrate command = %q, want ./bin/app migrate", got)
@@ -1899,7 +1871,7 @@ func TestRunDevWatcherReconciliationBuildsSPAJoinBeforeApp(t *testing.T) {
 		},
 	}}}
 	output := &devLifecycleOrchestrationWriter{compact: true}
-	result, err := runDevWatcherReconciliation(config, output, output, false)
+	result, err := runDevWatcherReconciliation(t.Context(), config, output, output, false)
 	if err != nil {
 		t.Fatalf("runDevWatcherReconciliation() error = %v", err)
 	}
@@ -1962,7 +1934,7 @@ func TestDevWatchSessionReloadPreservesSPAFailureDiagnostics(t *testing.T) {
 func TestDevPlanInitialTasksUsesFastPathForConventionalSetup(t *testing.T) {
 	pre := []project.DevTask{
 		{Name: "Run Docker Compose", Cmd: "docker compose up -d"},
-		{Name: "Waiting for Database to be ready", Cmd: strings.Replace(generatedMySQLDevWaitCommand, "docker-compose", "docker compose", 1)},
+		{Name: "Waiting for Database to be ready", Cmd: strings.Replace(legacySocketMySQLDevWaitCommand, "docker-compose", "docker compose", 1)},
 		{Name: "Install Frontend Dependencies", Cmd: "cd cmd/app/frontend && npm install --no-audit >/dev/null"},
 	}
 	config := &project.Config{Dev: project.DevConfig{
@@ -2066,7 +2038,7 @@ func TestRunDevInitialLifecycleBuildsStructuredAppOnce(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if err := runDevInitialLifecycle(config, &stdout, &stderr); err != nil {
+	if err := runDevInitialLifecycle(t.Context(), config, &stdout, &stderr); err != nil {
 		t.Fatalf("runDevInitialLifecycle() error = %v", err)
 	}
 	assertDevLifecycleTestLines(t, logPath, []string{"pre", "spa", "app"})
@@ -2140,7 +2112,7 @@ func TestRunDevAppSetupSummarizesMigrationCommand(t *testing.T) {
 	}
 	var output bytes.Buffer
 	if err := runDevPhaseOutput("Preparing App", &output, &output, func(phaseOut io.Writer, phaseErr io.Writer) error {
-		return runDevAppSetup(config, phaseOut, phaseErr)
+		return runDevAppSetup(newDevDatabasePreparation(t.Context(), config), phaseOut, phaseErr)
 	}); err != nil {
 		t.Fatalf("run dev app setup: %v", err)
 	}
@@ -2169,7 +2141,7 @@ func TestRunDevAppSetupSummarizesCompactRestartMigration(t *testing.T) {
 		Render: project.RenderConfig{Components: project.Components{DatabaseSQLite: true}},
 	}
 	output := &devLifecycleOrchestrationWriter{compact: true}
-	if _, err := runDevAppSetupWithResult(config, output, output); err != nil {
+	if _, err := runDevAppSetupWithResult(newDevDatabasePreparation(t.Context(), config), output, output); err != nil {
 		t.Fatalf("run dev app setup: %v", err)
 	}
 	plain := stripANSI(output.String())
@@ -2201,7 +2173,7 @@ func TestRunDevAppSetupReplaysMigrationFailure(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	err := runDevPhaseOutput("Preparing App", &stdout, &stderr, func(phaseOut io.Writer, phaseErr io.Writer) error {
-		return runDevAppSetup(config, phaseOut, phaseErr)
+		return runDevAppSetup(newDevDatabasePreparation(t.Context(), config), phaseOut, phaseErr)
 	})
 	if err == nil {
 		t.Fatal("run dev app setup succeeded, want migration failure")
@@ -2225,7 +2197,7 @@ func TestRunDevInitialLifecyclePreservesCustomPreCompatibility(t *testing.T) {
 	config := devInitialLifecycleTestConfig(logPath)
 	config.Dev.Pre = []project.DevTask{{Name: "Owner setup", Cmd: appendDevLifecycleTestLine(logPath, "pre")}}
 
-	if err := runDevInitialLifecycle(config, io.Discard, io.Discard); err != nil {
+	if err := runDevInitialLifecycle(t.Context(), config, io.Discard, io.Discard); err != nil {
 		t.Fatalf("runDevInitialLifecycle() error = %v", err)
 	}
 	assertDevLifecycleTestLines(t, logPath, []string{"app", "pre", "spa", "app"})
@@ -2284,7 +2256,7 @@ func main() {
 		},
 	}}
 
-	if err := runDevInitialLifecycle(config, io.Discard, io.Discard); err != nil {
+	if err := runDevInitialLifecycle(t.Context(), config, io.Discard, io.Discard); err != nil {
 		t.Fatalf("runDevInitialLifecycle() error = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(frontendRoot, "dist", "index.html")); err != nil {

@@ -36,12 +36,6 @@ func effectiveDevPreTasksWithLegacy(config *project.Config, useLegacy bool) []pr
 	filtered := make([]project.DevTask, 0, len(tasks)+1)
 	hasComposeTask := false
 	for _, task := range tasks {
-		if strings.TrimSpace(task.Name) == "Waiting for Database to be ready" {
-			command := normalizeDevComposeExecutable(task.Cmd)
-			if command == legacyGeneratedMySQLDevWaitCommand || command == strings.ReplaceAll(legacyGeneratedMySQLDevWaitCommand, "mariadb", "mysql") {
-				task.Cmd = generatedMySQLDevWaitCommand
-			}
-		}
 		if service := generatedDevTaskComposeService(task); service != "" && composeServiceDisabled(service) {
 			continue
 		}
@@ -218,14 +212,13 @@ func composeServiceDisabled(name string) bool {
 
 // generatedDevTaskComposeService preserves custom tasks while identifying the built-in container bootstrap commands.
 func generatedDevTaskComposeService(task project.DevTask) string {
+	if service := legacyDevDatabaseTaskService(task); service != "" {
+		return service
+	}
 	if !isConventionalDevBootstrapTask(task) {
 		return ""
 	}
 	switch normalizeDevComposeExecutable(task.Cmd) {
-	case generatedMySQLDevWaitCommand:
-		return "mysql"
-	case generatedPostgresDevWaitCommand:
-		return "postgres"
 	case "docker-compose up -d --force-recreate grafana-seed", "docker-compose run --rm --no-deps grafana-seed":
 		return "grafana-seed"
 	default:
