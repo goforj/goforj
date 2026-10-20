@@ -15,7 +15,7 @@ Create one centralized source of truth for discoverable project resources such a
 - app URL
 - API URL
 - Lighthouse URL
-- Swagger or OpenAPI docs URL
+- OpenAPI docs URL
 - Mailpit URL
 - Grafana URL
 - VictoriaMetrics URL
@@ -52,7 +52,7 @@ Examples of drift:
 
 - one surface says `App`, another says `Frontend`
 - one surface knows about Mailpit, another does not
-- one surface hardcodes Swagger, another derives it dynamically
+- one surface hardcodes OpenAPI, another derives it dynamically
 - one surface shows disabled resources, another hides them
 
 ## Core Idea
@@ -102,7 +102,7 @@ Suggested supporting concepts:
 
 - `ID`
   - stable machine identifier
-  - examples: `app`, `api`, `mailpit`, `grafana`, `lighthouse`, `swagger`
+  - examples: `app`, `api`, `mailpit`, `grafana`, `lighthouse`, `openapi`
 - `Name`
   - user-facing label
 - `Category`
@@ -149,7 +149,7 @@ Then the registry can compose many resolvers:
 - static app resolver
 - local dev services resolver
 - observability resolver
-- OpenAPI or Swagger resolver
+- OpenAPI resolver
 - Lighthouse resolver
 - future plugin or extension resolvers
 
@@ -213,7 +213,6 @@ Examples:
   - App
   - API
 - `docs`
-  - Swagger
   - OpenAPI
 - `mail`
   - Mailpit
@@ -333,7 +332,7 @@ Tasks:
   - Grafana
   - VictoriaMetrics
   - Lighthouse
-  - Swagger or OpenAPI
+  - OpenAPI
 - add tests for enabled and disabled combinations
 
 Exit criteria:
@@ -397,7 +396,7 @@ The first registry-backed resources should be:
 - App
 - API
 - Lighthouse
-- Swagger or OpenAPI
+- OpenAPI
 - Mailpit
 - Grafana
 - VictoriaMetrics

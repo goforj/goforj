@@ -25,3 +25,5 @@
 <p align="center">
 If you are interested in being a part of our private beta, please reach out to us by opening an issue or contacting us at chris@milestech.co
 </p>
+
+For existing projects, see the [upgrade notes](UPGRADING.md).

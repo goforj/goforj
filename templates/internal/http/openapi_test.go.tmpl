@@ -1,0 +1,264 @@
+package http
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/runtime"
+{{- if .ProjectComponents.Metrics }}
+	"{{.GoModuleName}}/internal/metrics"
+{{- end }}
+)
+
+// TestOpenAPIUIAndSpecRoutes verifies the default App serves its artifact and a version-pinned Scalar page.
+func TestOpenAPIUIAndSpecRoutes(t *testing.T) {
+	t.Setenv("API_OPENAPI_ENABLED", "true")
+	t.Setenv("FORJ_APP", "app")
+	t.Setenv("OPENAPI_SPEC_PATH", "")
+
+	root := t.TempDir()
+	writeOpenAPITestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/default-app":{}}}`)
+	writeOpenAPITestSpec(t, filepath.Join(root, "build", "customer-portal", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-app":{}}}`)
+	useOpenAPITestWorkingDirectory(t, root)
+	e := bootstrapOpenAPITestServer(t)
+
+	for _, path := range []string{"/openapi", "/openapi/", "/swagger", "/swagger/"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusOK, rec.Code)
+			assert.Contains(t, rec.Body.String(), "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.62.5")
+			assert.Contains(t, rec.Body.String(), "Scalar.createApiReference('#app'")
+			assert.Contains(t, rec.Body.String(), "url: '/openapi/doc.json'")
+		})
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi/doc.json", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{"/default-app":{}}}`, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "/wrong-app")
+}
+
+// TestOpenAPISpecUsesAppDefaultPath verifies an additional app cannot silently serve the default app document.
+func TestOpenAPISpecUsesAppDefaultPath(t *testing.T) {
+	t.Setenv("API_OPENAPI_ENABLED", "true")
+	t.Setenv("FORJ_APP", "customer-portal")
+	t.Setenv("OPENAPI_SPEC_PATH", "")
+
+	root := t.TempDir()
+	writeOpenAPITestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-default":{}}}`)
+	writeOpenAPITestSpec(t, filepath.Join(root, "build", "customer-portal", "openapi.json"), `{"openapi":"3.0.3","paths":{"/target":{}}}`)
+	useOpenAPITestWorkingDirectory(t, root)
+	e := bootstrapOpenAPITestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi/doc.json", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{"/target":{}}}`, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "/wrong-default")
+}
+
+// TestOpenAPISpecPreservesPathOverride verifies an explicit artifact path wins over every App-derived default.
+func TestOpenAPISpecPreservesPathOverride(t *testing.T) {
+	t.Setenv("API_OPENAPI_ENABLED", "true")
+	t.Setenv("FORJ_APP", "customer-portal")
+
+	root := t.TempDir()
+	overridePath := filepath.Join(root, "custom", "selected-openapi.json")
+	t.Setenv("OPENAPI_SPEC_PATH", overridePath)
+	writeOpenAPITestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-default":{}}}`)
+	writeOpenAPITestSpec(t, filepath.Join(root, "build", "customer-portal", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-selected":{}}}`)
+	writeOpenAPITestSpec(t, overridePath, `{"openapi":"3.0.3","paths":{"/override":{}}}`)
+	useOpenAPITestWorkingDirectory(t, root)
+	e := bootstrapOpenAPITestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi/doc.json", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{"/override":{}}}`, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "/wrong-default")
+	assert.NotContains(t, rec.Body.String(), "/wrong-selected")
+}
+
+// TestOpenAPISpecMissingDoesNotFallBack verifies a stale default artifact cannot masquerade as the selected app document.
+func TestOpenAPISpecMissingDoesNotFallBack(t *testing.T) {
+	t.Setenv("API_OPENAPI_ENABLED", "true")
+	t.Setenv("FORJ_APP", "customer-portal")
+	t.Setenv("OPENAPI_SPEC_PATH", "")
+
+	root := t.TempDir()
+	writeOpenAPITestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-default":{}}}`)
+	useOpenAPITestWorkingDirectory(t, root)
+	e := bootstrapOpenAPITestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi/doc.json", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+	assert.JSONEq(t, `{
+		"error":"OpenAPI document is missing",
+		"app":"customer-portal",
+		"path":"build/customer-portal/openapi.json",
+		"hint":"Run \"forj customer-portal build:api-index\" before opening the API reference."
+	}`, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "/wrong-default")
+}
+
+// TestOpenAPISpecRejectsUnsafeImplicitAppPath verifies FORJ_APP cannot become an undocumented filesystem-path override.
+func TestOpenAPISpecRejectsUnsafeImplicitAppPath(t *testing.T) {
+	t.Setenv("API_OPENAPI_ENABLED", "true")
+	t.Setenv("FORJ_APP", "../customer-portal")
+	t.Setenv("OPENAPI_SPEC_PATH", "")
+
+	root := t.TempDir()
+	writeOpenAPITestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/default-app":{}}}`)
+	writeOpenAPITestSpec(t, filepath.Join(root, "customer-portal", "openapi.json"), `{"openapi":"3.0.3","paths":{"/escaped":{}}}`)
+	useOpenAPITestWorkingDirectory(t, root)
+	e := bootstrapOpenAPITestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi/doc.json", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"openapi":"3.0.3","paths":{"/default-app":{}}}`, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "/escaped")
+}
+
+// TestOpenAPIRoutesDisabledByEnv verifies the current opt-out hides both the UI and its document endpoint.
+func TestOpenAPIRoutesDisabledByEnv(t *testing.T) {
+	t.Setenv("API_OPENAPI_ENABLED", "false")
+
+	e := bootstrapOpenAPITestServer(t)
+
+	for _, path := range []string{"/openapi", "/openapi/", "/openapi/doc.json", "/swagger", "/swagger/", "/swagger/doc.json"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusNotFound, rec.Code)
+		})
+	}
+}
+
+// TestOpenAPIRoutesRespectsLegacyEnvWhenNewEnvMissing verifies old projects retain their documented opt-out.
+func TestOpenAPIRoutesRespectsLegacyEnvWhenNewEnvMissing(t *testing.T) {
+	unsetOpenAPITestEnv(t, "API_OPENAPI_ENABLED")
+	unsetOpenAPITestEnv(t, "API_SWAGGER_ENABLED")
+	t.Setenv("SWAGGER_ENABLED", "false")
+
+	e := bootstrapOpenAPITestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// bootstrapOpenAPITestServer centralizes framework setup so route assertions stay focused on OpenAPI behavior.
+func bootstrapOpenAPITestServer(t *testing.T) http.Handler {
+	t.Helper()
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} nil{{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
+	e, err := s.bootstrap("")
+	require.NoError(t, err)
+	return e
+}
+
+// writeOpenAPITestSpec keeps competing App fixtures explicit in tests that guard against cross-App fallback.
+func writeOpenAPITestSpec(t *testing.T, path string, body string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+}
+
+// useOpenAPITestWorkingDirectory makes relative build artifacts behave exactly as they do in a launched project.
+func useOpenAPITestWorkingDirectory(t *testing.T, root string) {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(root))
+	t.Cleanup(func() {
+		require.NoError(t, os.Chdir(wd))
+	})
+}
+
+// unsetOpenAPITestEnv preserves absence semantics needed to exercise the legacy fallback branch.
+func unsetOpenAPITestEnv(t *testing.T, name string) {
+	t.Helper()
+	value, exists := os.LookupEnv(name)
+	require.NoError(t, os.Unsetenv(name))
+	t.Cleanup(func() {
+		if exists {
+			require.NoError(t, os.Setenv(name, value))
+			return
+		}
+		require.NoError(t, os.Unsetenv(name))
+	})
+}
+
+// TestOpenAPIEnvironmentPrecedence preserves old opt-outs while giving the canonical setting priority.
+func TestOpenAPIEnvironmentPrecedence(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		canonical string
+		previous  string
+		legacy    string
+		enabled   bool
+	}{
+		{name: "default", enabled: true},
+		{name: "canonical disables", canonical: "false", previous: "true", legacy: "true"},
+		{name: "canonical enables", canonical: "true", previous: "false", legacy: "false", enabled: true},
+		{name: "previous disables", previous: "false", legacy: "true"},
+		{name: "previous enables", previous: "true", legacy: "false", enabled: true},
+		{name: "legacy disables", legacy: "false"},
+		{name: "zero disables", canonical: "0"},
+		{name: "off disables", canonical: "off"},
+		{name: "blank inherits", canonical: " ", previous: "false"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("API_OPENAPI_ENABLED", test.canonical)
+			t.Setenv("API_SWAGGER_ENABLED", test.previous)
+			t.Setenv("SWAGGER_ENABLED", test.legacy)
+			e := bootstrapOpenAPITestServer(t)
+			for _, path := range []string{"/openapi", "/openapi/", "/swagger", "/swagger/"} {
+				rec := httptest.NewRecorder()
+				e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+				want := http.StatusNotFound
+				if test.enabled {
+					want = http.StatusOK
+				}
+				assert.Equal(t, want, rec.Code, path)
+			}
+		})
+	}
+}
+
+// TestOpenAPILegacySpecURLPreservesAppSelection keeps bookmarked document URLs scoped to the active App.
+func TestOpenAPILegacySpecURLPreservesAppSelection(t *testing.T) {
+	t.Setenv("API_OPENAPI_ENABLED", "true")
+	t.Setenv("FORJ_APP", "customer-portal")
+	t.Setenv("OPENAPI_SPEC_PATH", "")
+	root := t.TempDir()
+	writeOpenAPITestSpec(t, filepath.Join(root, "build", "openapi.json"), `{"openapi":"3.0.3","paths":{"/wrong-app":{}}}`)
+	writeOpenAPITestSpec(t, filepath.Join(root, "build", "customer-portal", "openapi.json"), `{"openapi":"3.0.3","paths":{"/selected":{}}}`)
+	useOpenAPITestWorkingDirectory(t, root)
+	e := bootstrapOpenAPITestServer(t)
+	for _, path := range []string{"/openapi/doc.json", "/swagger/doc.json"} {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "/selected")
+		assert.NotContains(t, rec.Body.String(), "/wrong-app")
+	}
+}

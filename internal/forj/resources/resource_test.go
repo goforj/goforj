@@ -24,7 +24,7 @@ func TestRegistryForProjectResolvesBaseResources(t *testing.T) {
 	env := map[string]string{
 		"APP_URL":               "http://127.0.0.1:8080",
 		"LIGHTHOUSE_URL":        "ws://127.0.0.1:7777/lighthouse/ws/agent",
-		"API_SWAGGER_ENABLED":   "true",
+		"API_OPENAPI_ENABLED":   "true",
 		"MAILPIT_HTTP_PORT":     "18025",
 		"OBSERVABILITY_VM_PORT": "18428",
 		"GRAFANA_PORT":          "13001",
@@ -44,7 +44,7 @@ func TestRegistryForProjectResolvesBaseResources(t *testing.T) {
 	wantURLs := map[string]string{
 		"app":              "http://127.0.0.1:8080",
 		"api":              "http://127.0.0.1:8080",
-		"swagger":          "http://127.0.0.1:8080/swagger",
+		"openapi":          "http://127.0.0.1:8080/openapi",
 		"mailpit":          "http://localhost:18025",
 		"lighthouse":       "http://127.0.0.1:7777/lighthouse",
 		"victoria-metrics": "http://localhost:18428",
@@ -65,7 +65,7 @@ func TestRegistryForProjectResolvesBaseResources(t *testing.T) {
 	}{
 		"app":              {app: project.DefaultAppName},
 		"api":              {app: project.DefaultAppName},
-		"swagger":          {app: project.DefaultAppName},
+		"openapi":          {app: project.DefaultAppName},
 		"lighthouse":       {app: project.DefaultAppName},
 		"mailpit":          {service: "mailpit"},
 		"victoria-metrics": {service: "victoriametrics"},
@@ -105,7 +105,7 @@ func TestRegistryProjectURLsHonorAssignedIPAddress(t *testing.T) {
 		"IP_ADDRESS":            "127.77.18.24",
 		"APP_URL":               "http://localhost:3100",
 		"LIGHTHOUSE_URL":        "ws://127.0.0.1:3100/lighthouse/ws/agent",
-		"API_SWAGGER_ENABLED":   "true",
+		"API_OPENAPI_ENABLED":   "true",
 		"COMPOSE_PROFILES":      "mailpit,grafana",
 		"MAILPIT_HTTP_PORT":     "18025",
 		"OBSERVABILITY_VM_PORT": "18428",
@@ -117,7 +117,7 @@ func TestRegistryProjectURLsHonorAssignedIPAddress(t *testing.T) {
 	wantURLs := map[string]string{
 		"app":              "http://127.77.18.24:3100",
 		"api":              "http://127.77.18.24:3100",
-		"swagger":          "http://127.77.18.24:3100/swagger",
+		"openapi":          "http://127.77.18.24:3100/openapi",
 		"lighthouse":       "http://127.77.18.24:3100/lighthouse",
 		"mailpit":          "http://127.77.18.24:18025",
 		"victoria-metrics": "http://127.77.18.24:18428",
@@ -186,8 +186,8 @@ func TestRegistryHandlesDisabledAndMissingOptionalResources(t *testing.T) {
 	if _, ok := resourceByID(resources, "lighthouse"); ok {
 		t.Fatalf("disabled lighthouse present in %#v", resources)
 	}
-	if _, ok := resourceByID(resources, "swagger"); ok {
-		t.Fatalf("disabled swagger present in %#v", resources)
+	if _, ok := resourceByID(resources, "openapi"); ok {
+		t.Fatalf("disabled openapi present in %#v", resources)
 	}
 	if _, ok := resourceByID(resources, "events-audit"); ok {
 		t.Fatalf("stale Events env resurrected a disabled resource in %#v", resources)
@@ -505,4 +505,33 @@ func equalStrings(left []string, right []string) bool {
 		}
 	}
 	return true
+}
+
+// TestResolveOpenAPIURLEnvironmentPrecedence verifies canonical documentation links honor both historical opt-outs.
+func TestResolveOpenAPIURLEnvironmentPrecedence(t *testing.T) {
+	for _, test := range []struct {
+		name, canonical, previous, legacy string
+		enabled                           bool
+	}{
+		{name: "default", enabled: true},
+		{name: "canonical disables", canonical: "false", previous: "true", legacy: "true"},
+		{name: "canonical enables", canonical: "true", previous: "false", legacy: "false", enabled: true},
+		{name: "previous disables", previous: "false", legacy: "true"},
+		{name: "previous enables", previous: "true", legacy: "false", enabled: true},
+		{name: "legacy disables", legacy: "false"},
+		{name: "zero disables", canonical: "0"},
+		{name: "off disables", canonical: "off"},
+		{name: "blank inherits", canonical: " ", previous: "false"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env := map[string]string{"APP_URL": "https://app.example", "API_OPENAPI_ENABLED": test.canonical, "API_SWAGGER_ENABLED": test.previous, "SWAGGER_ENABLED": test.legacy}
+			want := ""
+			if test.enabled {
+				want = "https://app.example/openapi"
+			}
+			if got := resolveOpenAPIURL(env); got != want {
+				t.Fatalf("OpenAPI URL = %q, want %q", got, want)
+			}
+		})
+	}
 }

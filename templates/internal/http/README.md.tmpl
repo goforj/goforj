@@ -57,13 +57,13 @@ This package exposes two classes of health probes for deployment tooling:
 }
 ```
 
-- `GET /swagger` and `GET /swagger/`
+- `GET /openapi` and `GET /openapi/`
   - serves the version-pinned Scalar API reference
-  - loads spec from `/swagger/doc.json`
-  - gated by `API_SWAGGER_ENABLED` (default: `true`)
-  - legacy fallback: `SWAGGER_ENABLED`
+  - loads spec from `/openapi/doc.json`
+  - gated by `API_OPENAPI_ENABLED` (default: `true`)
+  - compatibility fallbacks: `API_SWAGGER_ENABLED`, then `SWAGGER_ENABLED`
 
-- `GET /swagger/doc.json`
+- `GET /openapi/doc.json`
   - serves the active App's OpenAPI JSON
   - defaults to `build/openapi.json` for the default app and `build/<app>/openapi.json` for an additional app
   - accepts only a conventional lowercase App slug from `FORJ_APP`; unsafe path-like values fall back to `app`
@@ -133,9 +133,23 @@ Checks that are not active for current runtime configuration are treated as pass
 2. Alternatively, use `forj build` or `forj run`; both index the active App and publish the artifact only after their final build or process-start boundary succeeds.
 3. Start the server if it is not already running.
 4. Open:
-   - `http://localhost:3000/swagger`
+   - `http://localhost:3000/openapi`
 
 Use `build:api-index --strict`, or `--api-index-strict` with `build` and `run`, to make API-index warnings fail in CI. `OPENAPI_SPEC_PATH` is an explicit serving override; it does not change where GoForj publishes artifacts.
+
+### Upgrading older projects
+
+After installing a CLI version that includes the OpenAPI rename, run this from your project root for a targeted upgrade:
+
+```sh
+forj render --only openapi
+```
+
+This refreshes only `internal/http/openapi.go` and `internal/http/openapi_test.go`, changes the documentation route call in `internal/http/server.go`, and removes the old generated `swagger.go` and `swagger_test.go` files. Other server code and comments are preserved. It does not run a full render, update dependencies, regenerate Wire, or modify environment files. Repeating the command is safe.
+
+The command requires an existing HTTP App and a recognizable documentation route registration. Unsupported server wiring is reported before files are changed. Rebuild your App binaries after reviewing the diff. A normal `forj render` also includes this migration when a complete framework refresh is wanted.
+
+Existing `API_SWAGGER_ENABLED` and `SWAGGER_ENABLED` settings remain effective, including disabled documentation. Existing `/swagger`, `/swagger/`, and `/swagger/doc.json` bookmarks keep working as compatibility aliases. New settings should use `API_OPENAPI_ENABLED`.
 
 ## Bind Address
 

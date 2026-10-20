@@ -112,6 +112,8 @@ Do not force a single-app migration into multi-app paths unless the project has 
 
 ## Upgrade Notes
 
+For release-specific changes, including the targeted OpenAPI upgrade, see the root [upgrade notes](../../UPGRADING.md).
+
 For beta projects created before this layout, use the root migration note:
 
 - [`../../migration.md`](../../migration.md)

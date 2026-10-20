@@ -54,6 +54,8 @@ func (p *ProjectRenderer) cleanupLegacyGeneratedFiles() error {
 		filepath.Join("internal", "observability", "observers_test.go"),
 		filepath.Join("internal", "router", "routes_registry.go"),
 		filepath.Join("internal", "http", "devconsole.go"),
+		filepath.Join("internal", "http", "swagger.go"),
+		filepath.Join("internal", "http", "swagger_test.go"),
 		filepath.Join("internal", "http", "route.go"),
 		filepath.Join("internal", "http", "middleware_non_200.go"),
 		filepath.Join("internal", "http", "routes_list.go"),

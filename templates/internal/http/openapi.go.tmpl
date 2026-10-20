@@ -18,13 +18,10 @@ const defaultOpenAPISpecPath = "build/openapi.json"
 // scalarAPIReferenceURL pins the generated UI so a CDN release cannot change application behavior between builds.
 const scalarAPIReferenceURL = "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.62.5"
 
-// swaggerRoutes keeps API documentation opt-out while honoring the legacy environment variable during migration.
-func (s *Server) swaggerRoutes() []web.RouteGroup {
-	legacyDefault := "true"
-	if legacy, ok := os.LookupEnv("SWAGGER_ENABLED"); ok {
-		legacyDefault = legacy
-	}
-	if !env.GetBool("API_SWAGGER_ENABLED", legacyDefault) {
+// openapiRoutes keeps API documentation opt-out while honoring the legacy environment variable during migration.
+func (s *Server) openapiRoutes() []web.RouteGroup {
+	legacyDefault := env.GetBool("API_SWAGGER_ENABLED", env.Get("SWAGGER_ENABLED", "true"))
+	if !env.GetBool("API_OPENAPI_ENABLED", fmt.Sprint(legacyDefault)) {
 		return nil
 	}
 
@@ -32,16 +29,20 @@ func (s *Server) swaggerRoutes() []web.RouteGroup {
 		web.NewRouteGroup(
 			"",
 			[]web.Route{
-				web.NewRoute(http.MethodGet, "/swagger", s.swaggerUIHandler),
-				web.NewRoute(http.MethodGet, "/swagger/", s.swaggerUIHandler),
-				web.NewRoute(http.MethodGet, "/swagger/doc.json", s.swaggerSpecHandler),
+				web.NewRoute(http.MethodGet, "/openapi", s.openapiUIHandler),
+				web.NewRoute(http.MethodGet, "/openapi/", s.openapiUIHandler),
+				web.NewRoute(http.MethodGet, "/openapi/doc.json", s.openapiSpecHandler),
+				// Keep bookmarked documentation URLs working while links advertise OpenAPI.
+				web.NewRoute(http.MethodGet, "/swagger", s.openapiUIHandler),
+				web.NewRoute(http.MethodGet, "/swagger/", s.openapiUIHandler),
+				web.NewRoute(http.MethodGet, "/swagger/doc.json", s.openapiSpecHandler),
 			},
 		),
 	}
 }
 
-// swaggerUIHandler renders Scalar against the App-specific OpenAPI endpoint served by this process.
-func (s *Server) swaggerUIHandler(r web.Context) error {
+// openapiUIHandler renders Scalar against the App-specific OpenAPI endpoint served by this process.
+func (s *Server) openapiUIHandler(r web.Context) error {
 	return r.HTML(http.StatusOK, fmt.Sprintf(`<!doctype html>
 <html>
 <head>
@@ -54,15 +55,15 @@ func (s *Server) swaggerUIHandler(r web.Context) error {
 	<script src="%s"></script>
 	<script>
 		Scalar.createApiReference('#app', {
-			url: '/swagger/doc.json',
+			url: '/openapi/doc.json',
 		})
 	</script>
 </body>
 </html>`, scalarAPIReferenceURL))
 }
 
-// swaggerSpecHandler serves only the active App artifact and explains how to create it when absent.
-func (s *Server) swaggerSpecHandler(r web.Context) error {
+// openapiSpecHandler serves only the active App artifact and explains how to create it when absent.
+func (s *Server) openapiSpecHandler(r web.Context) error {
 	specPath := os.Getenv("OPENAPI_SPEC_PATH")
 	if specPath == "" {
 		specPath = defaultOpenAPISpecPathForApp()
