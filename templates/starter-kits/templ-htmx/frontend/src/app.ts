@@ -62,6 +62,10 @@ function applyTheme(preference: ThemePreference = themePreference()) {
   const dark = resolveTheme(preference)
   document.documentElement.classList.toggle("dark", dark)
   document.documentElement.style.colorScheme = dark ? "dark" : "light"
+  document.querySelector<HTMLLinkElement>("[data-theme-icon]")?.setAttribute(
+    "href",
+    dark ? "/goforj-tile-dark.svg" : "/goforj-tile-light.svg",
+  )
 }
 
 function setThemePreference(preference: ThemePreference) {

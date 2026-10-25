@@ -103,6 +103,7 @@ func TestScaffoldStarterKitPreservesExistingFrontendFiles(t *testing.T) {
 		filepath.Join(frontendDir, "dist", "goforj-logo.png"),
 		filepath.Join(frontendDir, "public", "goforj-tile-dark.svg"),
 		filepath.Join(frontendDir, "public", "goforj-tile-light.svg"),
+		filepath.Join(frontendDir, "public", "goforj-touch-icon.png"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)
@@ -324,6 +325,9 @@ func TestScaffoldReactStarterKit(t *testing.T) {
 		filepath.Join(starterKitFrontendDir(), "src", "lib", "auth.ts"),
 		filepath.Join(starterKitFrontendDir(), "dist", "index.html"),
 		filepath.Join(starterKitFrontendDir(), "dist", "goforj-logo.png"),
+		filepath.Join(starterKitFrontendDir(), "dist", "goforj-tile-light.svg"),
+		filepath.Join(starterKitFrontendDir(), "dist", "goforj-tile-dark.svg"),
+		filepath.Join(starterKitFrontendDir(), "dist", "goforj-touch-icon.png"),
 		filepath.Join(starterKitFrontendDir(), "dist", "assets"),
 	} {
 		if _, err := os.Stat(path); err != nil {
@@ -435,6 +439,7 @@ func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 		filepath.Join(starterKitFrontendDir(), "dist", "goforj-logo.png"),
 		filepath.Join(starterKitFrontendDir(), "dist", "goforj-tile-light.svg"),
 		filepath.Join(starterKitFrontendDir(), "dist", "goforj-tile-dark.svg"),
+		filepath.Join(starterKitFrontendDir(), "dist", "goforj-touch-icon.png"),
 		filepath.Join("internal", "starterui", "controller.go"),
 		filepath.Join("internal", "starterui", "controller_test.go"),
 		filepath.Join("internal", "starterui", "viewmodels.go"),
