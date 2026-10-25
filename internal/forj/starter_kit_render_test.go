@@ -112,7 +112,7 @@ func TestScaffoldStarterKitPreservesExistingFrontendFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Vue starter package: %v", err)
 	}
-	for _, expected := range []string{"@internationalized/date", "@lucide/vue", `"vite":`, `"vue-router": "^5.4.0"`, `"zod": "^4.6.5"`} {
+	for _, expected := range []string{"@internationalized/date", "@lucide/vue", `"vite":`, `"vue-router": "^5.4.0"`, `"zod": "^4.6.7"`} {
 		if !strings.Contains(string(packageJSON), expected) {
 			t.Errorf("Vue starter package omitted %q:\n%s", expected, packageJSON)
 		}
@@ -319,6 +319,8 @@ func TestScaffoldReactStarterKit(t *testing.T) {
 		filepath.Join(starterKitFrontendDir(), "package.json"),
 		filepath.Join(starterKitFrontendDir(), "components.json"),
 		filepath.Join(starterKitFrontendDir(), "src", "App.tsx"),
+		filepath.Join(starterKitFrontendDir(), "src", "assets", "goforj-tile-light.svg"),
+		filepath.Join(starterKitFrontendDir(), "src", "assets", "goforj-tile-dark.svg"),
 		filepath.Join(starterKitFrontendDir(), "src", "lib", "auth.ts"),
 		filepath.Join(starterKitFrontendDir(), "dist", "index.html"),
 		filepath.Join(starterKitFrontendDir(), "dist", "goforj-logo.png"),
@@ -431,6 +433,8 @@ func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 		filepath.Join(starterKitFrontendDir(), "package.json"),
 		filepath.Join(starterKitFrontendDir(), "dist", "app.js"),
 		filepath.Join(starterKitFrontendDir(), "dist", "goforj-logo.png"),
+		filepath.Join(starterKitFrontendDir(), "dist", "goforj-tile-light.svg"),
+		filepath.Join(starterKitFrontendDir(), "dist", "goforj-tile-dark.svg"),
 		filepath.Join("internal", "starterui", "controller.go"),
 		filepath.Join("internal", "starterui", "controller_test.go"),
 		filepath.Join("internal", "starterui", "viewmodels.go"),

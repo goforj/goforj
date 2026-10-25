@@ -27,7 +27,7 @@
     "vue-input-otp": "^0.4.0",
     "vue-router": "^5.4.0",
     "vue-sonner": "^2.0.9",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.10",
