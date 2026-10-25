@@ -46,6 +46,10 @@ templ baseHead(title string) {
 			.team-switcher-mark { display: grid; flex: 0 0 2.5rem; height: 2.5rem; place-items: center; width: 2.5rem; }
 			.team-switcher-mark img { display: block; height: 100%; object-fit: contain; width: 100%; }
 			.team-switcher-label { font-size: .875rem; font-weight: 600; letter-spacing: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+			.theme-logo { display: grid; height: 100%; place-items: center; width: 100%; }
+			.theme-logo img { grid-area: 1 / 1; }
+			.theme-logo .theme-logo-dark, .dark .theme-logo .theme-logo-light { display: none; }
+			.dark .theme-logo .theme-logo-dark { display: block; }
 			.sidebar-logo { height: 2rem; width: 2rem; object-fit: contain; }
 			.sidebar-brand { min-width: 0; text-align: left; }
 			.sidebar-brand span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -404,7 +408,7 @@ templ appSidebar(data PageData) {
 templ appTeamSwitcher() {
 	<a class="team-switcher" href="/" hx-boost="true" hx-target="body" hx-swap="innerHTML show:none">
 		<span class="team-switcher-mark">
-			<img src="/goforj-logo.png" alt="GoForj Starter Kit"/>
+			@themeLogo()
 		</span>
 		<span class="team-switcher-label">GoForj Starter Kit</span>
 	</a>
@@ -582,4 +586,12 @@ templ componentIcon(title string) {
 	} else if title == "Data" {
 		@iconDatabase()
 	}
+}
+
+// themeLogo keeps the starter branding in sync with the active app theme.
+templ themeLogo() {
+	<span class="theme-logo">
+		<img class="theme-logo-light" src="/goforj-tile-light.svg" alt="GoForj Starter Kit"/>
+		<img class="theme-logo-dark" src="/goforj-tile-dark.svg" alt="GoForj Starter Kit"/>
+	</span>
 }

@@ -41,7 +41,8 @@ import type { LucideIcon } from "lucide-react"
 import * as React from "react"
 import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useState } from "react"
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router-dom"
-import logo from "./assets/goforj-logo.png"
+import logoLight from "./assets/goforj-tile-light.svg"
+import logoDark from "./assets/goforj-tile-dark.svg"
 import {
   Avatar,
   AvatarFallback,
@@ -486,7 +487,7 @@ function AppSidebar({
       <SidebarHeader>
         <Link className="team-switcher" to="/" onClick={closeMobile}>
           <span className="team-switcher-mark">
-            <img src={logo} alt="GoForj Starter Kit" />
+            <ThemeLogo />
           </span>
           <span className="team-switcher-label">GoForj Starter Kit</span>
         </Link>
@@ -1855,7 +1856,7 @@ function AuthShell({ children }: { eyebrow: string; title: string; children: Rea
       <section className="auth-main">
         <div className="auth-panel">
           <Link to="/" className="auth-logo">
-            <img src={logo} alt="GoForj Starter Kit" />
+            <ThemeLogo />
             <span className="sr-only">GoForj Starter Kit</span>
           </Link>
           {children}
@@ -2132,4 +2133,13 @@ function initials(user: AuthUser) {
 
 function displayName(user: AuthUser) {
   return user.display_name || user.username || "User"
+}
+
+function ThemeLogo() {
+  return (
+    <span className="theme-logo">
+      <img className="theme-logo-light" src={logoLight} alt="GoForj Starter Kit" />
+      <img className="theme-logo-dark" src={logoDark} alt="GoForj Starter Kit" />
+    </span>
+  )
 }
