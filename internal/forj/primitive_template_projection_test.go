@@ -422,7 +422,7 @@ func TestLighthouseUIUsesViteEightToolchain(t *testing.T) {
 	if err := json.Unmarshal(packageJSON, &manifest); err != nil {
 		t.Fatalf("decode template %s: %v", packagePath, err)
 	}
-	if got, want := manifest.DevDependencies["vite"], "^8.3.4"; got != want {
+	if got, want := manifest.DevDependencies["vite"], "^8.3.5"; got != want {
 		t.Fatalf("Vite dependency = %q, want %q", got, want)
 	}
 
@@ -441,7 +441,7 @@ func TestLighthouseUIUsesViteEightToolchain(t *testing.T) {
 		t.Fatalf("decode template %s: %v", lockPath, err)
 	}
 	vite := lock.Packages["node_modules/vite"]
-	if got, want := vite.Version, "8.3.4"; got != want {
+	if got, want := vite.Version, "8.3.5"; got != want {
 		t.Fatalf("locked Vite version = %q, want %q", got, want)
 	}
 	if got, want := vite.Engines["node"], "^20.19.0 || >=22.12.0"; got != want {

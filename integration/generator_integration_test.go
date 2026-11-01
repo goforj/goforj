@@ -48,7 +48,7 @@ const cacheGeneratorIntegrationGoMod = `module example.com/cachegeneratorintegra
 go 1.26.0
 
 require (
-	github.com/klauspost/compress v1.20.2
+	github.com/klauspost/compress v1.20.3
 	golang.org/x/text v0.41.0
 	github.com/goforj/cache v0.4.0
 	github.com/goforj/cache/cachecore v0.4.2
@@ -71,7 +71,7 @@ const storageGeneratorIntegrationGoMod = `module example.com/storagegeneratorint
 go 1.26.0
 
 require (
-	github.com/klauspost/compress v1.20.2
+	github.com/klauspost/compress v1.20.3
 	github.com/goforj/env/v2 v2.6.1
 	golang.org/x/net v0.61.0
 	go.opentelemetry.io/otel/sdk v1.45.0
