@@ -30,7 +30,7 @@ var (
 	sharedRedisStop func()
 )
 
-const integrationWireInstallTarget = "github.com/goforj/wire/cmd/wire@v1.2.0"
+const integrationWireInstallTarget = "github.com/goforj/wire/cmd/wire@v1.3.1"
 
 // RenderProjectRequest keeps config, process environment, and local module substitutions explicit for a real CLI render.
 type RenderProjectRequest struct {

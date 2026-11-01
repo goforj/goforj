@@ -18,7 +18,7 @@ env:
   GENERATOR_DOCKER_CACHE_VERSION: "v1"
   GOPRIVATE: "github.com/goforj/*"
   GONOPROXY: "none"
-  WIRE_INSTALL_TARGET: "github.com/goforj/wire/cmd/wire@v1.2.0"
+  WIRE_INSTALL_TARGET: "github.com/goforj/wire/cmd/wire@v1.3.1"
 
 jobs:
   vue-starter:

@@ -490,7 +490,7 @@ func TestScaffoldTemplHTMXStarterKit(t *testing.T) {
 			t.Fatalf("templ starter missing frontend styling marker %q", expected)
 		}
 	}
-	for _, expected := range []string{`"basecoat-css": "^1.0.2"`, `sidebar?.toggle?.()`, `toaster?.toast?.({`, `"htmx:historyRestore"`, `initAll({ force: true })`, `boot(document, { force: true })`} {
+	for _, expected := range []string{`"basecoat-css": "^1.1.0"`, `sidebar?.toggle?.()`, `toaster?.toast?.({`, `"htmx:historyRestore"`, `initAll({ force: true })`, `boot(document, { force: true })`} {
 		if !strings.Contains(string(packageJSON)+"\n"+string(frontendSource), expected) {
 			t.Fatalf("templ starter missing Basecoat 1 migration marker %q", expected)
 		}

@@ -2272,6 +2272,22 @@ func main() {
 func TestDevBuildWavePublishesFreshEmbeddedSPAAndAPIIndex(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
+		"cmd/app/frontend/build.go": `//go:build ignore
+
+package main
+
+import "os"
+
+// main supplies the same frontend build on every supported development platform.
+func main() {
+	if err := os.MkdirAll("dist", 0o755); err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile("dist/index.html", []byte("<main>fresh</main>\n"), 0o644); err != nil {
+		panic(err)
+	}
+}
+`,
 		"go.mod": `module example.com/dev-wave
 
 go 1.25.0
@@ -2330,7 +2346,7 @@ func main() { _, _ = frontend.ReadFile("frontend/dist/index.html") }
 	config := &project.Config{Dev: project.DevConfig{Apps: map[string]project.DevApp{
 		project.DefaultAppName: {
 			SPAs: map[string]project.DevSPA{
-				"frontend": {Path: frontendRoot, Build: "mkdir -p dist && printf '%s\\n' '<main>fresh</main>' > dist/index.html"},
+				"frontend": {Path: frontendRoot, Build: "go run build.go"},
 			},
 		},
 	}}}
