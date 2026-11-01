@@ -128,7 +128,7 @@ func TestQualityReleaseVersionsArePinned(t *testing.T) {
 		{module: "github.com/goforj/web", version: "v0.6.4"},
 		{module: "github.com/goforj/scheduler/v2", version: "v2.1.4"},
 		{module: "github.com/goforj/null/v6", version: "v6.0.2"},
-		{module: "github.com/goforj/wire", version: "v1.2.0"},
+		{module: "github.com/goforj/wire", version: "v1.3.1"},
 		{module: "github.com/goforj/events", version: "v0.2.1"},
 		{module: "github.com/goforj/events/eventscore", version: "v0.2.1"},
 		{module: "github.com/goforj/events/driver/gcppubsubevents", version: "v0.2.1"},

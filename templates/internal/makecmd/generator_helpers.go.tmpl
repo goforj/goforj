@@ -170,7 +170,7 @@ func refreshWireGeneratedFile(path string) error {
 		return err
 	}
 
-	cmd := exec.Command("go", "run", "github.com/goforj/wire/cmd/wire@v1.2.0")
+	cmd := exec.Command("go", "run", "github.com/goforj/wire/cmd/wire@v1.3.1")
 	if wirePath, err := exec.LookPath("wire"); err == nil {
 		cmd = exec.Command(wirePath)
 	}
