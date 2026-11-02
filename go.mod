@@ -16,19 +16,19 @@ require (
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/goforj/atlas v0.4.13
 	github.com/goforj/cache v0.4.0
-	github.com/goforj/cache/cachecore v0.4.2
+	github.com/goforj/cache/cachecore v0.4.3
 	github.com/goforj/console v0.2.0
 	github.com/goforj/crypt v1.2.0
 	github.com/goforj/env/v2 v2.6.1
 	github.com/goforj/execx v1.1.4
 	github.com/goforj/httpx/v2 v2.0.1
 	github.com/goforj/queue v0.2.1
-	github.com/goforj/storage v0.6.0
-	github.com/goforj/storage/driver/localstorage v0.6.0
-	github.com/goforj/storage/driver/s3storage v0.6.0
-	github.com/goforj/storage/storagecore v0.6.0
+	github.com/goforj/storage v0.6.1
+	github.com/goforj/storage/driver/localstorage v0.6.1
+	github.com/goforj/storage/driver/s3storage v0.6.1
+	github.com/goforj/storage/storagecore v0.6.1
 	github.com/goforj/str/v2 v2.0.1
-	github.com/goforj/web v0.6.4
+	github.com/goforj/web v0.6.5
 	github.com/goforj/wire v1.3.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/imroc/req/v3 v3.61.0
@@ -162,7 +162,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect

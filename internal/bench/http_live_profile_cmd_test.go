@@ -91,7 +91,7 @@ func TestStandaloneHTTPProfileSecurityMinimums(t *testing.T) {
 				t.Fatalf("comparison App Go floor changed: %s", text)
 			}
 			if test.stack == "echonative" {
-				for _, minimum := range []string{"github.com/labstack/echo/v5 v5.4.0", "golang.org/x/net v0.61.0"} {
+				for _, minimum := range []string{"github.com/labstack/echo/v5 v5.4.4", "golang.org/x/net v0.62.0"} {
 					if !strings.Contains(text, minimum) {
 						t.Fatalf("comparison App lacks security minimum %s: %s", minimum, text)
 					}
