@@ -77,6 +77,11 @@ jobs:
       - name: run go tests
         run: go test ./... -count=1 -v
 
+      - name: race-test Atlas MCP readiness
+        env:
+          GORACE: atexit_sleep_ms=0
+        run: go test -race ./internal/forj/atlas -run '^TestProbeMCPCommand' -count=10
+
       - name: build goforj binary
         run: go install ./cmd/forj
 
