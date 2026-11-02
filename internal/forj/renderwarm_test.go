@@ -37,7 +37,7 @@ func TestRenderwarmUsesCurrentTemplateDependencies(t *testing.T) {
 	if !strings.Contains(goMod, "github.com/goforj/godump v1.9.1") {
 		t.Fatalf("renderwarm should pin the host-validated godump release:\n%s", goMod)
 	}
-	if !strings.Contains(goMod, "github.com/goforj/cache/driver/rediscache v0.4.2") {
+	if !strings.Contains(goMod, "github.com/goforj/cache/driver/rediscache v0.4.3") {
 		t.Fatalf("renderwarm should pin the current Redis cache driver release:\n%s", goMod)
 	}
 	for _, want := range []string{
@@ -45,7 +45,7 @@ func TestRenderwarmUsesCurrentTemplateDependencies(t *testing.T) {
 		"github.com/goforj/str v1.3.0",
 		"github.com/goforj/str/v2 v2.0.1",
 		"github.com/klauspost/compress v1.20.3",
-		"github.com/labstack/echo/v5 v5.4.0",
+		"github.com/labstack/echo/v5 v5.4.4",
 	} {
 		if !strings.Contains(goMod, want) {
 			t.Fatalf("renderwarm should pin %q:\n%s", want, goMod)

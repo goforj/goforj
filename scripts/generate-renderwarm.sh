@@ -140,8 +140,8 @@ override_version_for_module() {
   case "$1" in
     github.com/charmbracelet/x/cellbuf) echo "v0.0.15" ;;
     github.com/goforj/cache) echo "v0.4.0" ;;
-    github.com/goforj/cache/cachecore) echo "v0.4.2" ;;
-    github.com/goforj/cache/driver/rediscache) echo "v0.4.2" ;;
+    github.com/goforj/cache/cachecore) echo "v0.4.3" ;;
+    github.com/goforj/cache/driver/rediscache) echo "v0.4.3" ;;
     github.com/goforj/events) echo "v0.2.1" ;;
     github.com/goforj/events/eventscore) echo "v0.2.1" ;;
     github.com/goforj/events/driver/gcppubsubevents) echo "v0.2.1" ;;
@@ -158,13 +158,13 @@ override_version_for_module() {
     github.com/goforj/null/v6) echo "v6.0.2" ;;
     github.com/goforj/queue) echo "v0.2.1" ;;
     github.com/goforj/scheduler/v2) echo "v2.1.4" ;;
-    github.com/goforj/web) echo "v0.6.4" ;;
+    github.com/goforj/web) echo "v0.6.5" ;;
     github.com/klauspost/compress) echo "v1.20.3" ;;
     github.com/labstack/echo/v4) echo "v4.16.0" ;;
-    github.com/labstack/echo/v5) echo "v5.4.0" ;;
+    github.com/labstack/echo/v5) echo "v5.4.4" ;;
     github.com/redis/go-redis/v9) echo "v9.17.2" ;;
     github.com/shirou/gopsutil/v4) echo "v4.26.2" ;;
-    golang.org/x/net) echo "v0.61.0" ;;
+    golang.org/x/net) echo "v0.62.0" ;;
     golang.org/x/tools) echo "v0.52.0" ;;
     gorm.io/driver/mysql) echo "v1.6.0" ;;
     gorm.io/driver/postgres) echo "v1.6.0" ;;

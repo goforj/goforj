@@ -3,7 +3,7 @@ set -eu
 export GOWORK=off
 
 # Preserve the packaged engine releases and build profiles while patching their
-# embedded decoder. The compiler for application tests remains unchanged.
+# embedded dependencies. The compiler for application tests remains unchanged.
 build_root="$(mktemp -d)"
 trap 'rm -rf "$build_root"' EXIT
 mkdir -p /out/bin /out/licenses
@@ -92,6 +92,7 @@ cp LICENSE /out/licenses/containerd-LICENSE
 cp NOTICE /out/licenses/containerd-NOTICE
 patch_minimum github.com/klauspost/compress "$PLUGIN_COMPRESS_VERSION"
 patch_minimum golang.org/x/net "$PLUGIN_X_NET_VERSION"
+patch_minimum github.com/go-jose/go-jose/v4 "$ENGINE_GO_JOSE_VERSION"
 build_binary /usr/bin/containerd ./cmd/containerd \
     "github.com/containerd/containerd/v2/version.Revision=$containerd_revision-goforj.1"
 build_binary /usr/bin/ctr ./cmd/ctr \

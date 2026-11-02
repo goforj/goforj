@@ -3,6 +3,7 @@
 package forj
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -602,7 +603,7 @@ func runDockerComposeBestEffort(t *testing.T, projectDir string, projectName str
 	}
 }
 
-// dockerComposeOutput centralizes docker compose output behavior so callers follow the same contract.
+// dockerComposeOutput keeps Compose progress on stderr out of status codes and JSON responses.
 func dockerComposeOutput(t *testing.T, projectDir string, projectName string, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -610,11 +611,51 @@ func dockerComposeOutput(t *testing.T, projectDir string, projectName string, ar
 	fullArgs := append([]string{"compose", "-p", projectName}, args...)
 	cmd := exec.CommandContext(ctx, "docker", fullArgs...)
 	cmd.Dir = projectDir
-	output, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
 	if err != nil {
-		return fmt.Sprintf("docker %s failed: %v\n%s", strings.Join(fullArgs, " "), err, string(output))
+		return fmt.Sprintf("docker %s failed: %v\n%s\n%s", strings.Join(fullArgs, " "), err, output, stderr.String())
 	}
 	return string(output)
+}
+
+// TestDockerComposeOutputSeparatesProgress verifies progress cannot corrupt API responses or hide failure diagnostics.
+func TestDockerComposeOutputSeparatesProgress(t *testing.T) {
+	directory := t.TempDir()
+	script := "#!/bin/sh\nprintf '%s' \"$FORJ_COMPOSE_TEST_STDOUT\"\nprintf '%s' \"$FORJ_COMPOSE_TEST_STDERR\" >&2\nexit \"$FORJ_COMPOSE_TEST_EXIT\"\n"
+	if err := os.WriteFile(filepath.Join(directory, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, test := range []struct {
+		name   string
+		stdout string
+		stderr string
+		exit   string
+	}{
+		{name: "status", stdout: "200", stderr: "Container grafana-seed Creating\n", exit: "0"},
+		{name: "json", stdout: `{"meta":{"isStarred":true}}`, stderr: "Container grafana-seed Created\n", exit: "0"},
+		{name: "failure", stdout: "partial response", stderr: "curl: connection refused", exit: "7"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("FORJ_COMPOSE_TEST_STDOUT", test.stdout)
+			t.Setenv("FORJ_COMPOSE_TEST_STDERR", test.stderr)
+			t.Setenv("FORJ_COMPOSE_TEST_EXIT", test.exit)
+			got := dockerComposeOutput(t, directory, "test", "run", "grafana-seed")
+			if test.exit == "0" {
+				if got != test.stdout {
+					t.Fatalf("response = %q, want %q", got, test.stdout)
+				}
+				return
+			}
+			for _, want := range []string{"exit status 7", test.stdout, test.stderr} {
+				if !strings.Contains(got, want) {
+					t.Fatalf("failure response %q lacks %q", got, want)
+				}
+			}
+		})
+	}
 }
 
 // assertGrafanaComposeAPIStatus centralizes assert grafana compose apistatus behavior so callers follow the same contract.
