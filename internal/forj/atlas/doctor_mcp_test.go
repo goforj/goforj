@@ -65,6 +65,33 @@ func TestProbeMCPCommandReportsMalformedProtocol(t *testing.T) {
 	}
 }
 
+// TestProbeMCPCommandDrainsStderr preserves diagnostics written before malformed responses at either protocol stage.
+func TestProbeMCPCommandDrainsStderr(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		scenario string
+		protocol bool
+	}{
+		{name: "initialization", scenario: "malformed-stderr"},
+		{name: "tools", scenario: "malformed-tools-stderr", protocol: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("GOFORJ_MCP_PROBE_HELPER", test.scenario)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			result := probeMCPCommand(ctx, os.Args[0], []string{"-test.run=^TestMCPProbeHelper$"}, t.TempDir())
+			if result.Ready || result.Protocol != test.protocol || result.Err == nil {
+				t.Fatalf("probe result = %#v", result)
+			}
+			for _, detail := range []string{"decode JSON-RPC", "server diagnostic"} {
+				if !strings.Contains(result.Err.Error(), detail) {
+					t.Fatalf("probe error %q lacks %q", result.Err, detail)
+				}
+			}
+		})
+	}
+}
+
 // TestProbeMCPCommandReportsTimeout covers a server that never completes initialization.
 func TestProbeMCPCommandReportsTimeout(t *testing.T) {
 	t.Setenv("GOFORJ_MCP_PROBE_HELPER", "timeout")
@@ -158,6 +185,11 @@ func TestMCPProbeHelper(t *testing.T) {
 		fmt.Fprintln(os.Stdout, "not-json")
 		return
 	}
+	if scenario == "malformed-stderr" {
+		fmt.Fprintln(os.Stderr, "server diagnostic")
+		fmt.Fprintln(os.Stdout, "not-json")
+		return
+	}
 	encoder := json.NewEncoder(os.Stdout)
 	initialize := map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}, "serverInfo": map[string]string{"name": "test", "version": "1"}}}
 	if scenario == "initialize-error" {
@@ -173,6 +205,11 @@ func TestMCPProbeHelper(t *testing.T) {
 		return
 	}
 	if !reader.Scan() || !reader.Scan() {
+		return
+	}
+	if scenario == "malformed-tools-stderr" {
+		fmt.Fprintln(os.Stderr, "server diagnostic")
+		fmt.Fprintln(os.Stdout, "not-json")
 		return
 	}
 	if scenario == "tools-error" {

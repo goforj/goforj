@@ -10,6 +10,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -73,7 +74,9 @@ func probeMCPCommand(ctx context.Context, command string, args []string, root st
 		result.Err = fmt.Errorf("start Atlas MCP: %w", err)
 		return result
 	}
-	defer stopMCPProbe(cmd, stdin)
+	// Reaping the child also joins the stderr copier before diagnostics are read.
+	stop := sync.OnceFunc(func() { stopMCPProbe(cmd, stdin) })
+	defer stop()
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 1<<20)
@@ -93,7 +96,9 @@ func probeMCPCommand(ctx context.Context, command string, args []string, root st
 	}
 	response, err := readMCPProbeResponse(scanner)
 	if err != nil {
-		result.Err = mcpProbeFailure("read Atlas MCP initialization", err, stderr.String(), ctx.Err())
+		contextErr := ctx.Err()
+		stop()
+		result.Err = mcpProbeFailure("read Atlas MCP initialization", err, stderr.String(), contextErr)
 		return result
 	}
 	if response.Error != nil {
@@ -116,7 +121,9 @@ func probeMCPCommand(ctx context.Context, command string, args []string, root st
 	}
 	response, err = readMCPProbeResponse(scanner)
 	if err != nil {
-		result.Err = mcpProbeFailure("read Atlas MCP tools", err, stderr.String(), ctx.Err())
+		contextErr := ctx.Err()
+		stop()
+		result.Err = mcpProbeFailure("read Atlas MCP tools", err, stderr.String(), contextErr)
 		return result
 	}
 	if response.Error != nil {
