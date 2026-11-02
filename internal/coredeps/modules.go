@@ -72,7 +72,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/wire":                              "v1.3.1",
 	"github.com/klauspost/compress":                       "v1.20.3",
 	"github.com/labstack/echo/v5":                         "v5.4.4",
-	"github.com/nats-io/nats.go":                          "v1.53.1",
+	"github.com/nats-io/nats.go":                          "v1.55.0",
 	"github.com/rabbitmq/amqp091-go":                      "v1.15.0",
 	"github.com/rclone/rclone":                            "v1.75.2",
 	"go.opentelemetry.io/otel/sdk":                        "v1.45.0",
