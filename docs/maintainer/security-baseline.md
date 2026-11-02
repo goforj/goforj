@@ -46,6 +46,8 @@ As of September 5, 2026, the baseline is merged in all 22 non-docs repositories.
 
 The test image rebuilds Buildx and Compose from their configured releases. It also rebuilds `dockerd`, `containerd`, and `ctr` from the packaged engine source revisions, preserving their original toolchains, build tags, CGO settings, and version metadata. The engine rebuild also enforces the existing patched `golang.org/x/net` minimum used by the plugins, so scanner-visible HTTP/2 security fixes survive the rebuild. Rebuilt engine revisions carry a `-goforj.1` suffix. Native build dependencies stay in a separate build stage, and application tests retain the configured Go compiler.
 
+The image's application toolchain and rebuilt Docker plugins use Go 1.26.10 for the `crypto/x509` certificate-validation fix. The containerd rebuild also selects Go JOSE v4.1.7 to reject malformed RSA key parameters. These image fixes do not change the framework's Go 1.26 minimum.
+
 An upstream advisory can be public before it appears in the global advisory index or Go vulnerability database. The two-block fixture in `internal/backup/zstd_security_test.go` independently verifies decoder rejection, so a clean scanner result alone does not establish this fix.
 
 ## HTTP Security Minimum
