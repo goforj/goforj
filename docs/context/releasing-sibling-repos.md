@@ -82,7 +82,7 @@ Then tag/push modules before relying on those versions in GoForj.
 Typical validation now includes both unit/contract coverage and real integration coverage:
 
 ```bash
-cd ../filesystem
+cd ../storage
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test ./...
 cd integration
 GOCACHE=/tmp/gocache GOMODCACHE=/tmp/gomodcache go test -tags=integration ./all -count=1
@@ -121,10 +121,10 @@ Recent `storage` lessons:
 
 In practice:
 
-- use the repo release script that rewrites internal module references
-- then push `main`
-- then push all module tags
-- then confirm with `git ls-remote --tags origin` or `go list -m` against the released versions
+- follow the repository's release guide and scripts for rewriting sibling requirements and publishing tags
+- respect dependency order when modules require unpublished sibling versions
+- verify every published module independently with `GOWORK=off`, without local replacements
+- confirm that all required checks pass on the final default-branch commit
 
 ## For `cache`
 
@@ -157,3 +157,9 @@ Recent practical lesson:
 - pseudo-versions and local replaces are fine while work is stabilizing
 - but once `web` becomes a real dependency boundary, cut a real tag and move GoForj onto it
 - this avoids CI failures from repo-local `replace ../web` assumptions
+
+## Public Release Notes
+
+Describe what changes for a library or CLI user. Keep notes concise and concrete: useful fixes, new behavior, upgrade commands, supported Go versions, and any required migration or deployment changes. Explain a compatibility limit in terms of what the user needs to do.
+
+Keep CI details, review activity, temporary paths, and internal dependency-management mechanics out of public notes. Put that evidence in the pull request or maintainer documentation. Read the published notes back after release and verify their links and commands.
