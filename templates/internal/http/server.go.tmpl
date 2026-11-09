@@ -644,10 +644,7 @@ func (s *Server) traceHTTPExecution(r web.Context, next web.Handler) error {
 	ctx = s.inspectManager.BeginHTTP(ctx, name)
 	web.BindContext(r, ctx)
 	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(attribute.String("http.request.method", r.Method()))
-	if route != "" {
-		span.SetAttributes(attribute.String("http.route", route))
-	}
+	method := r.Method()
 	var err error
 	defer func() {
 		panicValue := recover()
@@ -655,7 +652,12 @@ func (s *Server) traceHTTPExecution(r web.Context, next web.Handler) error {
 			err = fmt.Errorf("HTTP handler panic: %v", panicValue)
 		}
 		status := httpSpanStatus(r.Response().Committed(), r.StatusCode(), err)
-		span.SetAttributes(attribute.Int("http.response.status_code", status))
+		// Finalize HTTP attributes together to avoid repeatedly growing the SDK's attribute slice.
+		if route == "" {
+			span.SetAttributes(attribute.String("http.request.method", method), attribute.Int("http.response.status_code", status))
+		} else {
+			span.SetAttributes(attribute.String("http.request.method", method), attribute.String("http.route", route), attribute.Int("http.response.status_code", status))
+		}
 		spanErr := err
 		if status >= 400 && status < 500 {
 			spanErr = nil
@@ -755,8 +757,7 @@ func httpBodyForInspectWithOptions(contentType string, body []byte, redact bool)
 	return string(body)
 }
 
-// httpBodyForInspectFastPath handles the common lower-case JSON/form cases
-// without paying the generic content-type normalization and inspectability path.
+// httpBodyForInspectFastPath avoids generic content-type normalization for common text, JSON, and form responses.
 func httpBodyForInspectFastPath(contentType string, body []byte, redact bool, maxBodyBytes int) (string, bool) {
 	if len(body) == 0 {
 		return "", true
@@ -766,6 +767,8 @@ func httpBodyForInspectFastPath(contentType string, body []byte, redact bool, ma
 		return "", true
 	}
 	switch {
+	case contentType == "text/plain" || contentType == "text/plain; charset=UTF-8" || contentType == "text/plain; charset=utf-8":
+		return formatInspectBodyString(bytes.TrimSpace(body), maxBodyBytes), true
 	case hasCommonJSONInspectContentType(contentType):
 		if redact && mayContainSensitiveJSONInspectField(body) {
 			body = redactJSONBodyForInspect(body)

@@ -1550,8 +1550,30 @@ func appendHTTPHeaders(out []HTTPHeader, headers http.Header) []HTTPHeader {
 	return out
 }
 
-// sensitiveHTTPHeaderForInspect prevents authentication material from entering persisted or published diagnostics.
+// sensitiveHTTPHeaderForInspect redacts credential segments without allocating normalized ASCII header names.
 func sensitiveHTTPHeaderForInspect(name string) bool {
+	start := 0
+	for end := 0; end <= len(name); end++ {
+		if end < len(name) {
+			if name[end] >= 128 {
+				return sensitiveUnicodeHTTPHeaderForInspect(name)
+			}
+			if name[end] != '-' && name[end] != '_' {
+				continue
+			}
+		}
+		for _, sensitive := range [...]string{"authorization", "authentication", "cookie", "key", "password", "secret", "token"} {
+			if strings.EqualFold(name[start:end], sensitive) {
+				return true
+			}
+		}
+		start = end + 1
+	}
+	return false
+}
+
+// sensitiveUnicodeHTTPHeaderForInspect preserves normalization for non-ASCII names supplied outside normal HTTP parsing.
+func sensitiveUnicodeHTTPHeaderForInspect(name string) bool {
 	for _, segment := range strings.FieldsFunc(strings.ToLower(name), func(character rune) bool {
 		return character == '-' || character == '_'
 	}) {

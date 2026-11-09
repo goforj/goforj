@@ -693,3 +693,31 @@ func TestInspectPerformanceBudget(t *testing.T) {
 		t.Fatalf("inspect begin/finish bytes budget exceeded: got %d want <=200000", bytes)
 	}
 }
+
+// TestSensitiveHTTPHeaderSegments preserves credential redaction, separators, and Unicode normalization on the allocation-free ASCII path.
+func TestSensitiveHTTPHeaderSegments(t *testing.T) {
+	for _, item := range []struct {
+		name string
+		want bool
+	}{
+		{"", false}, {"Content-Type", false}, {"X-Request-ID", false},
+		{"AUTHORIZATION", true}, {"x_AUTHENTICATION", true}, {"Set-Cookie", true},
+		{"X--Api__Key", true}, {"Password-Policy", true}, {"X-SECRET", true}, {"X-Token", true},
+		{"--__", false}, {"X-Monkey", false}, {"Tokenization", false},
+		{"X-Key", true}, {"Authentİcation", true}, {"X-ſecret", false},
+		{"X-値", false}, {"X-値-Token", true}, {"X-\xff-Key", true},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			if got := sensitiveHTTPHeaderForInspect(item.name); got != item.want {
+				t.Fatalf("sensitiveHTTPHeaderForInspect(%q) = %t, want %t", item.name, got, item.want)
+			}
+		})
+	}
+	if got := testing.AllocsPerRun(100, func() {
+		if sensitiveHTTPHeaderForInspect("Content-Type") || !sensitiveHTTPHeaderForInspect("X-Api-Key") {
+			t.Fatal("header classification changed")
+		}
+	}); got != 0 {
+		t.Fatalf("ASCII header classification allocated %g times", got)
+	}
+}

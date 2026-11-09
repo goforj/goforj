@@ -309,3 +309,30 @@ func TestSourceContextMiddlewareSetsAdapterSourceName(t *testing.T) {
 	assert.NoError(t, handler(ctx))
 	assert.Equal(t, runtime.SourceHTTP.String(), ctx.AppSourceName())
 }
+
+// TestHTTPBodyForInspectFastPathText preserves plain-text trimming and truncation without content-type normalization.
+func TestHTTPBodyForInspectFastPathText(t *testing.T) {
+	for _, contentType := range []string{"text/plain", "text/plain; charset=UTF-8", "text/plain; charset=utf-8"} {
+		for _, redact := range []bool{false, true} {
+			for _, item := range []struct {
+				body string
+				limit int
+				want string
+			}{
+				{" Hello ", 1024, "Hello"},
+				{"\u2003Hello\u2003", 1024, "Hello"},
+				{"\u2003", 1024, ""},
+				{"Hello", 3, "Hel\n...[truncated]"},
+				{`{"password":"plain-text"}`, 1024, `{"password":"plain-text"}`},
+			} {
+				got, ok := httpBodyForInspectFastPath(contentType, []byte(item.body), redact, item.limit)
+				if !ok || got != item.want {
+					t.Fatalf("plain text (%q, redact=%t) = %q, %t; want %q", contentType, redact, got, ok, item.want)
+				}
+			}
+		}
+	}
+	if _, ok := httpBodyForInspectFastPath("text/plain; profile=application/json", []byte(`{"password":"secret"}`), true, 1024); ok {
+		t.Fatal("unrecognized content type bypassed the existing redaction path")
+	}
+}
