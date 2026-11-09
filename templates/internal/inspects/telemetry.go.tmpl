@@ -188,7 +188,12 @@ func executionSpanKind(source runtime.Source) trace.SpanKind {
 // trackSpan always reserves the root capture; child associations have a separate bounded allowance.
 func (m *Manager) trackSpan(spanContext trace.SpanContext, recorder *Recorder) {
 	m.tracing.mu.Lock()
-	m.tracing.owners[identityForSpan(spanContext)] = recorder
+	id := identityForSpan(spanContext)
+	// Nested executions take ownership of their span instead of remaining a child projection of the outer inspect.
+	if previous := m.tracing.owners[id]; previous != nil {
+		delete(previous.childSpans, id)
+	}
+	m.tracing.owners[id] = recorder
 	m.tracing.mu.Unlock()
 }
 
@@ -209,15 +214,24 @@ func (p *lighthouseProcessor) OnStart(ctx context.Context, span sdktrace.ReadWri
 	if len(state.owners) >= p.manager.config.MaxInflight*(p.manager.config.MaxEvents+1) {
 		return
 	}
-	state.owners[identityForSpan(span.SpanContext())] = recorder
+	id := identityForSpan(span.SpanContext())
+	if recorder.childSpans == nil {
+		recorder.childSpans = make(map[spanIdentity]struct{})
+	}
+	recorder.childSpans[id] = struct{}{}
+	state.owners[id] = recorder
 }
 
 // OnEnd derives Lighthouse timing, identity, status, and application-span details from the shared SDK contract.
 func (p *lighthouseProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 	state := p.manager.tracing
 	state.mu.Lock()
-	recorder := state.owners[identityForSpan(span.SpanContext())]
-	delete(state.owners, identityForSpan(span.SpanContext()))
+	id := identityForSpan(span.SpanContext())
+	recorder := state.owners[id]
+	delete(state.owners, id)
+	if recorder != nil {
+		delete(recorder.childSpans, id)
+	}
 	state.mu.Unlock()
 	if recorder == nil {
 		return
@@ -264,11 +278,10 @@ func (p *lighthouseProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 	recorder.state = nil
 	// Detached application spans may outlive the inspect, so release their projection associations now.
 	state.mu.Lock()
-	for id, owner := range state.owners {
-		if owner == recorder {
-			delete(state.owners, id)
-		}
+	for id := range recorder.childSpans {
+		delete(state.owners, id)
 	}
+	recorder.childSpans = nil
 	state.mu.Unlock()
 }
 

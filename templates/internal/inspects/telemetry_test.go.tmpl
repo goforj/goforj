@@ -427,3 +427,92 @@ func TestTelemetrySkipsInactiveLighthouse(t *testing.T) {
 		t.Fatal("inactive capture replaced context")
 	}
 }
+
+// TestTelemetryCleanupKeepsOtherCaptures verifies finishing one inspect only detaches its own outstanding children.
+func TestTelemetryCleanupKeepsOtherCaptures(t *testing.T) {
+	manager := newTestManager(t)
+	first := manager.Begin(context.Background(), runtime.SourceHTTP, "first", nil)
+	second := manager.Begin(context.Background(), runtime.SourceHTTP, "second", nil)
+	tracer := manager.TracerProvider().Tracer("app")
+	_, late := tracer.Start(first, "late")
+	_, retained := tracer.Start(second, "retained")
+	manager.Finish(first, "ok", nil)
+	if len(manager.tracing.owners) != 2 || len(RecorderFromContext(first).childSpans) != 0 {
+		t.Fatal("cleanup retained finished associations or detached another capture")
+	}
+	late.End()
+	retained.End()
+	if len(RecorderFromContext(second).childSpans) != 0 {
+		t.Fatal("completed child association was retained")
+	}
+	manager.Finish(second, "ok", nil)
+	record, ok, err := manager.ByID(context.Background(), InspectIDFromContext(second))
+	if err != nil || !ok || len(record.Events) != 1 || record.Events[0].Name != "retained" || len(manager.tracing.owners) != 0 {
+		t.Fatalf("unrelated capture lost its child: %+v, %v", record, err)
+	}
+}
+
+// TestTelemetryNestedOwnershipTransfer prevents nested executions from accumulating associations on their outer inspect.
+func TestTelemetryNestedOwnershipTransfer(t *testing.T) {
+	manager := newTestManager(t)
+	outer := manager.Begin(context.Background(), runtime.SourceHTTP, "outer", nil)
+	for range 100 {
+		inner := manager.Begin(outer, runtime.SourceJobs, "inner", nil)
+		if len(RecorderFromContext(outer).childSpans) != 0 {
+			t.Fatal("nested execution retained its former projection owner")
+		}
+		manager.Finish(inner, "ok", nil)
+	}
+	inner := manager.Begin(outer, runtime.SourceJobs, "outlives outer", nil)
+	manager.Finish(outer, "ok", nil)
+	manager.Finish(inner, "ok", nil)
+	if _, ok, err := manager.ByID(context.Background(), InspectIDFromContext(inner)); err != nil || !ok || len(manager.tracing.owners) != 0 {
+		t.Fatalf("outer cleanup detached nested execution: %v", err)
+	}
+}
+
+// TestTelemetryChildAssociationCapacity keeps rejected child projections out of the per-inspect cleanup index.
+func TestTelemetryChildAssociationCapacity(t *testing.T) {
+	manager := newTestManager(t)
+	manager.config.MaxInflight = 1
+	manager.config.MaxEvents = 1
+	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "root", nil)
+	tracer := manager.TracerProvider().Tracer("app")
+	_, first := tracer.Start(ctx, "first")
+	_, rejected := tracer.Start(ctx, "rejected")
+	if len(RecorderFromContext(ctx).childSpans) != 1 || len(manager.tracing.owners) != 2 {
+		t.Fatal("child association limit was exceeded")
+	}
+	manager.Finish(ctx, "ok", nil)
+	first.End()
+	rejected.End()
+	if len(manager.tracing.owners) != 0 {
+		t.Fatal("finished capture retained child associations")
+	}
+}
+
+// TestTelemetryChildStartsDuringFinish protects the cleanup index when application work races with request completion.
+func TestTelemetryChildStartsDuringFinish(t *testing.T) {
+	manager := newTestManager(t)
+	tracer := manager.TracerProvider().Tracer("app")
+	for range 100 {
+		ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", nil)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				_, child := tracer.Start(ctx, "child")
+				child.End()
+			}()
+		}
+		close(start)
+		manager.Finish(ctx, "ok", nil)
+		wg.Wait()
+		if len(manager.tracing.owners) != 0 || len(RecorderFromContext(ctx).childSpans) != 0 {
+			t.Fatal("concurrent completion retained span associations")
+		}
+	}
+}

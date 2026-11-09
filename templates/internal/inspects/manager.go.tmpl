@@ -323,6 +323,7 @@ var inflightInspectPool = sync.Pool{
 // Recorder is the lightweight execution-scoped inspect handle.
 type Recorder struct {
 	projectionMu   sync.Mutex
+	childSpans     map[spanIdentity]struct{} // childSpans shares the tracing ownership lock so cleanup and reassignment are atomic.
 	span           trace.Span
 	spanContext    context.Context
 	terminalStatus string

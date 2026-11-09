@@ -282,3 +282,26 @@ The commands still integrate with the root CLI, but their code and helpers live 
 - the namespace is explicit
 - the maintenance surface is easier to find
 - benchmark-specific helpers do not clutter unrelated command code
+
+## OpenTelemetry acceptance
+
+`scripts/bench-otel-acceptance.py` compares two rendered HTTP runtimes with the same fixture, alternating binary order and retaining every sample. Use two isolated renders with module `example.com/otelperf`, components `[cli, web_api, metrics]`, and starter kit `none`:
+
+```sh
+python3 scripts/bench-otel-acceptance.py \
+  --base "$BASE_RENDER" --candidate "$CANDIDATE_RENDER" \
+  --base-ref "$BASE_REF" --candidate-ref "$CANDIDATE_REF" \
+  --runs 7 --benchtime 1s --output results.json
+```
+
+The dispatch workloads follow the published Web text, path-parameter JSON, and middleware contracts. The live HTTP workload measures loopback keep-alive separately. Export delivery is reported alongside OTLP throughput because a saturated batch queue can drop spans.
+
+Generated apps also include `BenchmarkTelemetryCleanupWithActiveCaptures` in `internal/inspects/manager_bench_test.go`. It holds 0, 128, or 1,024 unrelated captures open while measuring an execution with either zero or four application child spans. This exposes cleanup work that grows with unrelated active requests. Run inside each rendered app:
+
+```sh
+GOMAXPROCS=1 go test ./internal/inspects -run '^$' \
+  -bench '^BenchmarkTelemetryCleanupWithActiveCaptures$' \
+  -benchmem -benchtime=1s -count=7
+```
+
+For comparisons against an older revision without that benchmark, copy the candidate's generated `manager_bench_test.go` to the baseline render before compiling. Compile both binaries before timing, alternate their execution order, and compare medians. Record allocation changes as well as time so reduced cleanup work does not hide additional child-span bookkeeping.
