@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,10 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/runtime"
 	"github.com/goforj/web"
+	"github.com/goforj/web/webtest"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestHTTPInspectCapturesChildEvents(t *testing.T) {
@@ -54,7 +59,9 @@ func TestHTTPInspectCapturesChildEvents(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/probe", nil))
+	request := httptest.NewRequest(http.MethodGet, "/probe", nil)
+ request.Header.Set("traceparent", "00-01000000000000000000000000000000-0200000000000000-01")
+ handler.ServeHTTP(rec, request)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
@@ -73,7 +80,10 @@ func TestHTTPInspectCapturesChildEvents(t *testing.T) {
 	if !ok {
 		t.Fatalf("inspect %q not found", recent[0].TraceID)
 	}
-	if len(record.Events) != 2 {
+	if record.Summary.OTelTraceID != "01000000000000000000000000000000" || record.Summary.ParentSpanID != "0200000000000000" {
+  t.Fatalf("incoming W3C trace context not preserved: %+v", record.Summary)
+ }
+ if len(record.Events) != 2 {
 		t.Fatalf("event count = %d, want 2: %#v", len(record.Events), record.Events)
 	}
 	if record.Events[0].Kind != inspects.EventKindLog {
@@ -81,5 +91,92 @@ func TestHTTPInspectCapturesChildEvents(t *testing.T) {
 	}
 	if record.Events[1].Kind != inspects.EventKindHTTP {
 		t.Fatalf("second event kind = %q, want %q", record.Events[1].Kind, inspects.EventKindHTTP)
+	}
+}
+
+// testHTTPStatusError models adapter-independent errors with an explicit HTTP response status.
+type testHTTPStatusError int
+
+// Error supplies a stable message for wrapped status-code tests.
+func (e testHTTPStatusError) Error() string { return "HTTP failure" }
+
+// StatusCode allows the adapter and instrumentation to agree on the eventual response status.
+func (e testHTTPStatusError) StatusCode() int { return int(e) }
+
+// TestHTTPSpanStatusMatchesEventualResponse covers errors before the adapter writes their response.
+func TestHTTPSpanStatusMatchesEventualResponse(t *testing.T) {
+	for _, item := range []struct {
+		committed bool
+		status    int
+		err       error
+		want      int
+	}{
+		{false, 0, nil, 200}, {false, 204, nil, 204}, {true, 201, errors.New("write failed"), 201},
+		{false, 200, errors.New("handler failed"), 500},
+		{false, 200, errors.Join(errors.New("wrapped"), testHTTPStatusError(404)), 404},
+		{false, 200, testHTTPStatusError(12), 500},
+	} {
+		if got := httpSpanStatus(item.committed, item.status, item.err); got != item.want {
+			t.Fatalf("status=%d, want %d", got, item.want)
+		}
+	}
+}
+
+// TestHTTPSpansHandleClientErrorsAndPanics preserves HTTP server span semantics and ends spans during stack unwinding.
+func TestHTTPSpansHandleClientErrorsAndPanics(t *testing.T) {
+	for _, scenario := range []string{"client-error", "server-error", "panic"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+			manager := inspects.NewManager()
+			exporter := tracetest.NewInMemoryExporter()
+			manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+			server := &Server{inspectManager: manager}
+			handler := server.inspectContextMiddleware()(func(web.Context) error {
+				if scenario == "panic" {
+					panic("handler panic")
+				}
+				if scenario == "client-error" {
+					return testHTTPStatusError(404)
+				}
+				return errors.New("handler failed")
+			})
+			recovered := false
+			func() {
+				defer func() {
+					if recover() != nil {
+						recovered = true
+					}
+				}()
+				request := httptest.NewRequest(http.MethodGet, "/users/42", nil)
+				response := httptest.NewRecorder()
+				response.Code = 0
+				_ = handler(webtest.NewContext(request, response, "/users/:id", nil))
+			}()
+			if recovered != (scenario == "panic") {
+				t.Fatal("panic behavior changed")
+			}
+			spans := exporter.GetSpans()
+			if len(spans) != 1 {
+				t.Fatalf("span not finalized: %d", len(spans))
+			}
+			wantStatus := 500
+			if scenario == "client-error" {
+				wantStatus = 404
+				if spans[0].Status.Code != codes.Unset {
+					t.Fatal("4xx server span marked failed")
+				}
+			} else if spans[0].Status.Code != codes.Error {
+				t.Fatal("failed handler span not marked failed")
+			}
+			found := false
+			for _, attribute := range spans[0].Attributes {
+				if attribute.Key == "http.response.status_code" {
+					found = attribute.Value.AsInt64() == int64(wantStatus)
+				}
+			}
+			if !found {
+				t.Fatal("eventual HTTP status was not recorded")
+			}
+		})
 	}
 }

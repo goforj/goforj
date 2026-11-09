@@ -112,7 +112,7 @@ func newHTTPRuntimeBenchmarkServer(b *testing.B, mode httpRuntimeBenchmarkMode) 
 	}
 {{- end }}
 
-	var inspectManager *inspects.Manager
+	inspectManager := inspects.NewManager()
 	if mode.inspect {
 		inspectManager = inspects.NewManager()
 		inspectManager.SetPublisher(noopRuntimeBenchmarkPublisher{})

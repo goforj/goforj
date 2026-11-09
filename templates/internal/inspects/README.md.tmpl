@@ -1,6 +1,72 @@
 # Inspects
 
-`internal/inspects` provides execution-scoped inspection records for Lighthouse.
+`internal/inspects` owns the app's OpenTelemetry tracing SDK and projects its execution spans into bounded Lighthouse inspect records. One span lifecycle supplies both standard OTLP export and Lighthouse debugging.
+
+## OpenTelemetry
+
+Tracing support is included in every app. Export is off until configured, so local development does not require a collector. To export through OTLP HTTP/protobuf:
+
+```env
+OTEL_SERVICE_NAME=photodrop-api
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+The generic endpoint receives traces at `/v1/traces`. A signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is a complete URL, including its trace path. The Go SDK's exporter handles endpoint, header, certificate, compression, timeout, and TLS settings. Use HTTPS for remote collectors.
+
+For gRPC, select the protocol and its endpoint:
+
+```env
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=grpc
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+```
+
+Setting either OTLP endpoint implicitly selects `otlp` when `OTEL_TRACES_EXPORTER` is unset. Explicit `OTEL_TRACES_EXPORTER=none` disables external export while allowing Lighthouse capture. Supported exporter selections are `otlp` and `none`. Unsupported exporter, protocol, and sampler selections fail during app construction.
+
+`OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` supply standard resource identity. The default service name is the Project's Go module path followed by the current app name. `goforj.app` identifies the app, and `goforj.source` identifies each execution's runtime role.
+
+`OTEL_TRACES_SAMPLER` supports `always_on`, `always_off`, `parentbased_always_on`, `parentbased_always_off`, `traceidratio`, and `parentbased_traceidratio`. Ratio samplers accept `OTEL_TRACES_SAMPLER_ARG` between 0 and 1. When tracing or Lighthouse capture is enabled, the default is `parentbased_always_on`; otherwise it is `always_off`. `OTEL_SDK_DISABLED=true` disables span recording for both outputs. Lighthouse's existing sample rate and capture gate only reduce its own detail capture; they never disable configured external export.
+
+The App installs the provider and W3C Trace Context propagator before runtime startup. HTTP requests extract `traceparent` and `tracestate`. HTTP span names use registered route patterns, and framework Lighthouse/metrics transport endpoints are excluded. Lifecycle shutdown flushes the SDK within the App shutdown budget. An unreachable collector affects telemetry delivery and does not prevent the app from serving requests.
+
+### Application Spans
+
+Use standard OTel APIs and pass the current context through application calls:
+
+```go
+ctx, span := otel.Tracer("photodrop/reports").Start(ctx, "reports.generate")
+defer span.End()
+err := reports.Generate(ctx)
+if err != nil {
+    span.RecordError(err)
+    span.SetStatus(codes.Error, "report generation failed")
+}
+```
+
+This is a fragment using `go.opentelemetry.io/otel` and `go.opentelemetry.io/otel/codes`. Spans created during a captured execution appear in the Lighthouse timeline and in the configured exporter. Inject `*inspects.Manager` and use `TracerProvider()` when a library accepts an explicit provider. Additional standard SDK processors can be registered on that provider before work starts.
+
+For outbound HTTP, inject a client built with `manager.HTTPClient(http.DefaultClient)`, then use `http.NewRequestWithContext` with the execution context. The helper wraps a copy of the client, creates client spans, and injects W3C context without modifying the process-wide default client. Other clients can use their standard OTel instrumentation with the app's provider.
+
+### Lighthouse Projection and Compatibility
+
+The existing `trace_id` field remains the unique inspect lookup ID for compatibility. `otel_trace_id`, `span_id`, and `parent_span_id` carry standard OTel identity. Multiple executions can share one OTel trace without overwriting each other's inspect records. Lighthouse displays the OTel trace and span IDs alongside its lookup ID.
+
+Application span events and completed child spans are projected into the bounded timeline. A child that ends after its owning execution is finalized is still eligible for OTLP export but does not reopen the finished inspect. Active child associations and retained events are bounded.
+
+Cache, storage, mail, and database completion observations produce timed child spans. Because these hooks run after completion, those spans cannot become active parents of work that already happened inside the operation. Queue/event observations become span events. Rich request/response bodies, arbitrary logs, job payloads, cache keys, object paths, and raw SQL remain Lighthouse-only enrichment; framework instrumentation does not automatically send them to OTLP. Explicit attributes and events added by application or third-party OTel instrumentation follow that instrumentation's own capture policy.
+
+### Current Boundaries
+
+This integration covers tracing. Existing Prometheus metrics, dashboards, and logging contracts remain available independently.
+
+Generated queue handlers emit consumer spans. The current queue Job contract has no general propagation metadata carrier, so broker-backed jobs do not yet preserve a dispatching request's parent context across processes. They produce their own execution traces. Event transport propagation is also driver-specific and is not installed by this integration. Do not infer distributed propagation from local context sharing.
+
+### Verification
+
+Start an OTLP-compatible collector, apply the environment settings above, and run `forj dev`. Request an application route, then verify a server span with that route's pattern in your collector or tracing backend. Enable Lighthouse inspects to compare the displayed OTel trace ID with the exported span. Run `go test ./internal/inspects ./internal/http ./app/wire` to exercise local OTLP HTTP and gRPC receivers, identity, propagation, capture limits, and shutdown flushing.
+
+## Inspect Records
 
 An inspect is a bounded record of one unit of work, such as:
 
@@ -22,7 +88,7 @@ Lighthouse uses this package to power its runtime inspect views.
 
 ## What Gets Captured
 
-The package captures normalized operational events rather than arbitrary logs or spans.
+The package captures normalized operational events and projects application-created OpenTelemetry spans into the same execution timeline.
 
 Common event kinds include:
 
@@ -291,35 +357,7 @@ It reports two scenarios:
 - a tiny minimal request handler
 - a more realistic JSON request/response path
 
-Recent numbers were roughly:
-
-- minimal request:
-  - baseline around `0.6µs/op`
-  - inspect-enabled around `1.3µs/op`
-  - delta around `+0.7µs/op`
-- JSON request/response path:
-  - baseline around `1.8µs/op`
-  - inspect-enabled around `5.4µs/op`
-  - delta around `+3.5µs/op`
-
-Those absolute numbers are the important part.
-
-Even with inspect capture on, we are still talking about microseconds per request in these benchmark shapes, not milliseconds.
-
-Two important caveats:
-
-- very small handlers make the percentage overhead look worse than it feels in real workloads
-- richer request/response capture increases overhead materially
-
-So the short version is:
-
-- the inspect pipeline itself is fairly lightweight
-- most of what is left is HTTP request/response detail capture
-- if you need to bring the cost down further, the next lever is capturing less detail by default
-
-Sampling is still the main production control knob when you want visibility without paying the full cost on every request.
-
-If you change capture richness or delivery behavior, rerun the overhead benchmark rather than assuming cost stayed flat.
+The SDK and Lighthouse projection change capture costs. Measure the current generated composition with the benchmark above instead of reusing earlier inspect-only numbers. Compare capture disabled, Lighthouse only, OTLP only, and both outputs for the deployment's actual payload sizes and sampling policy.
 
 ## Current Caveat
 

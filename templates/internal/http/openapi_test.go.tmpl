@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"{{.GoModuleName}}/internal/logger"
+ "{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/runtime"
 {{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -169,7 +170,7 @@ func TestOpenAPIRoutesRespectsLegacyEnvWhenNewEnvMissing(t *testing.T) {
 // bootstrapOpenAPITestServer centralizes framework setup so route assertions stay focused on OpenAPI behavior.
 func bootstrapOpenAPITestServer(t *testing.T) http.Handler {
 	t.Helper()
-	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} nil{{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} inspects.NewManager(){{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	require.NoError(t, err)
 	return e

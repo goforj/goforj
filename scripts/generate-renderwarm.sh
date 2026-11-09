@@ -22,6 +22,9 @@ fi
 
 module_for_import() {
   case "$1" in
+    go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc) echo "$1" ;;
+    go.opentelemetry.io/otel/sdk/*) echo "go.opentelemetry.io/otel/sdk" ;;
+    go.opentelemetry.io/proto/otlp/*) echo "go.opentelemetry.io/proto/otlp" ;;
     charm.land/lipgloss/v2/*) echo "charm.land/lipgloss/v2" ;;
     github.com/goforj/events/eventscore) echo "github.com/goforj/events/eventscore" ;;
     github.com/goforj/events/eventscore/*) echo "github.com/goforj/events/eventscore" ;;
@@ -138,6 +141,8 @@ generated_version_for_module() {
 
 override_version_for_module() {
   case "$1" in
+    go.opentelemetry.io/proto/otlp) echo "v1.11.0" ;;
+    go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc|go.opentelemetry.io/otel/sdk) echo "v1.45.0" ;;
     github.com/charmbracelet/x/cellbuf) echo "v0.0.15" ;;
     github.com/goforj/cache) echo "v0.4.0" ;;
     github.com/goforj/cache/cachecore) echo "v0.4.3" ;;
@@ -223,17 +228,17 @@ while IFS= read -r path; do
       /^[[:space:]]*import[[:space:]]+/ {
         print
       }
-    ' "$path" | grep -hEo '"(charm\.land/[^"]+|github\.com/[^"]+|golang\.org/x/[^"]+|gorm\.io/[^"]+|gopkg\.in/[^"]+)"' >> "$raw_imports_file" || true
+    ' "$path" | grep -hEo '"(charm\.land/[^"]+|github\.com/[^"]+|go\.opentelemetry\.io/[^"]+|golang\.org/x/[^"]+|gorm\.io/[^"]+|gopkg\.in/[^"]+)"' >> "$raw_imports_file" || true
     continue
   fi
-  grep -hEo '"(charm\.land/[^"]+|github\.com/[^"]+|golang\.org/x/[^"]+|gorm\.io/[^"]+|gopkg\.in/[^"]+)"' "$path" >> "$raw_imports_file" || true
+  grep -hEo '"(charm\.land/[^"]+|github\.com/[^"]+|go\.opentelemetry\.io/[^"]+|golang\.org/x/[^"]+|gorm\.io/[^"]+|gopkg\.in/[^"]+)"' "$path" >> "$raw_imports_file" || true
 done < "$go_files_file"
 
 {
   sed 's/^"//' "$raw_imports_file" \
     | sed 's/"$//' \
     | grep -Ev '^$' \
-    | grep -E '^(charm\.land|github\.com|golang\.org/x|gorm\.io|gopkg\.in)/[A-Za-z0-9._/~+-]+(/[A-Za-z0-9._/~+-]+)*$' \
+    | grep -E '^(charm\.land|github\.com|go\.opentelemetry\.io|golang\.org/x|gorm\.io|gopkg\.in)/[A-Za-z0-9._/~+-]+(/[A-Za-z0-9._/~+-]+)*$' \
     | grep -Ev '^github\.com/goforj/goforj(/|$)'
   # Scheduler's module graph otherwise seeds the older driver used only by its examples.
   echo "github.com/goforj/cache/driver/rediscache"

@@ -5,6 +5,7 @@ package wire
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -182,9 +183,10 @@ func (a *App) Startup(ctx context.Context) error {
 	return nil
 }
 
-// Shutdown gracefully releases background app resources.
+// Shutdown stops runtime resources before flushing telemetry, including after failed startup.
 func (a *App) Shutdown(ctx context.Context) error {
-	return a.lifecycle.Stop(ctx)
+	lifecycleErr := a.lifecycle.Stop(ctx)
+	return errors.Join(lifecycleErr, a.inspects.Shutdown(ctx))
 }
 
 // Run starts app lifecycle, executes CLI args, and performs graceful shutdown.
@@ -223,14 +225,14 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	})
 	parseCtx.BindTo(ctx, (*context.Context)(nil))
 	shutdownTimeout := a.shutdownTimeoutForOrigin(origin)
+	defer func() {
+		a.inspects.Finish(ctx, "", nil)
+		a.shutdownAfterRun(ctx, command, args, origin, shutdownTimeout)
+	}()
 	if err := a.Startup(ctx); err != nil {
 		a.inspects.Finish(ctx, "error", err)
 		return err
 	}
-	defer func() {
-		a.shutdownAfterRun(ctx, command, args, origin, shutdownTimeout)
-		a.inspects.Finish(ctx, "", nil)
-	}()
 	if err := parseCtx.Run(); err != nil {
 		a.inspects.Finish(ctx, "error", err)
 		return err

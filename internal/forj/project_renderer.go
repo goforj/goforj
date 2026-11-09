@@ -586,6 +586,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/logger/wire.go.tmpl",
 				"internal/inspects/README.md.tmpl",
 				"internal/inspects/manager.go.tmpl",
+				"internal/inspects/telemetry.go.tmpl",
+				"internal/inspects/telemetry_test.go.tmpl",
 				"internal/inspects/store.go.tmpl",
 				"internal/inspects/store_test.go.tmpl",
 				"internal/inspects/manager_test.go.tmpl",

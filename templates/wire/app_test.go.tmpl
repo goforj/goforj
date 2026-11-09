@@ -9,7 +9,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/runtime"
 )
 
@@ -77,7 +80,7 @@ func TestAppStartupIsIdempotent(t *testing.T) {
 		return nil
 	})
 
-	app := App{lifecycle: manager}
+	app := App{inspects: inspects.NewManager(), lifecycle: manager}
 	if err := app.Startup(context.Background()); err != nil {
 		t.Fatalf("first startup failed: %v", err)
 	}
@@ -97,7 +100,7 @@ func TestAppShutdownIsIdempotent(t *testing.T) {
 		return nil
 	})
 
-	app := App{lifecycle: manager}
+	app := App{inspects: inspects.NewManager(), lifecycle: manager}
 	if err := app.Startup(context.Background()); err != nil {
 		t.Fatalf("startup failed: %v", err)
 	}
@@ -120,7 +123,7 @@ func TestAppShutdownAggregatesErrors(t *testing.T) {
 	manager.On(runtime.Shutdown, func(context.Context) error { return errA })
 	manager.On(runtime.Shutdown, func(context.Context) error { return errB })
 
-	app := App{lifecycle: manager}
+	app := App{inspects: inspects.NewManager(), lifecycle: manager}
 	if err := app.Startup(context.Background()); err != nil {
 		t.Fatalf("startup failed: %v", err)
 	}
@@ -152,7 +155,7 @@ func TestAppCleanupRunsAfterExecutionDeadline(t *testing.T) {
 		}
 		return nil
 	})
-	app := App{logger: logger.NewAppLogger(), lifecycle: manager}
+	app := App{inspects: inspects.NewManager(), logger: logger.NewAppLogger(), lifecycle: manager}
 	if err := app.Startup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -166,3 +169,33 @@ func TestAppCleanupRunsAfterExecutionDeadline(t *testing.T) {
 		t.Fatalf("cleanup grace = %s, want 1s", got)
 	}
 }
+
+// TestAppShutdownFlushesTelemetryAfterStartupFailure protects bounded command exports when lifecycle startup never completes.
+func TestAppShutdownFlushesTelemetryAfterStartupFailure(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	inspectManager := inspects.NewManager()
+	exporter := &shutdownSpanExporter{InMemoryExporter: tracetest.NewInMemoryExporter()}
+	inspectManager.TracerProvider().RegisterSpanProcessor(sdktrace.NewBatchSpanProcessor(exporter, sdktrace.WithBatchTimeout(time.Hour)))
+	lifecycle := runtime.NewLifecycle(runtime.NewTimeouts())
+	failure := errors.New("startup failed")
+	lifecycle.On(runtime.BeforeStartup, func(context.Context) error { return failure })
+	app := App{inspects: inspectManager, lifecycle: lifecycle, logger: logger.NewSilentLogger()}
+	if err := app.Startup(context.Background()); !errors.Is(err, failure) {
+		t.Fatalf("startup error = %v", err)
+	}
+	if len(exporter.GetSpans()) != 0 {
+		t.Fatal("batch exported before shutdown")
+	}
+	if err := app.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(exporter.GetSpans()) != 1 {
+		t.Fatal("startup error span was not flushed")
+	}
+}
+
+// shutdownSpanExporter retains exported spans so shutdown flushing can be asserted after the SDK closes it.
+type shutdownSpanExporter struct{ *tracetest.InMemoryExporter }
+
+// Shutdown preserves test evidence instead of resetting the in-memory exporter.
+func (e *shutdownSpanExporter) Shutdown(context.Context) error { return nil }

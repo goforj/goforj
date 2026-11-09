@@ -25,6 +25,12 @@ func TestSyncCoreLibrariesIncludesStr(t *testing.T) {
 // TestSyncCoreLibrariesIncludesBaseModules verifies generated Apps pin every always-rendered GoForj dependency explicitly.
 func TestSyncCoreLibrariesIncludesBaseModules(t *testing.T) {
 	modules := []string{
+		"go.opentelemetry.io/otel",
+		"go.opentelemetry.io/otel/trace",
+		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
+		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc",
+		"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp",
+		"go.opentelemetry.io/otel/sdk",
 		"charm.land/bubbles/v2",
 		"charm.land/bubbletea/v2",
 		"charm.land/lipgloss/v2",
@@ -207,7 +213,12 @@ func TestSyncCoreLibrariesGatesWebMinimums(t *testing.T) {
 
 // TestUsesMinimumVersion keeps ecosystem security floors separate from exact framework release pins.
 func TestUsesMinimumVersion(t *testing.T) {
-	for _, module := range []string{"github.com/klauspost/compress", "github.com/labstack/echo/v5", "github.com/rabbitmq/amqp091-go", "golang.org/x/net", "golang.org/x/text", "golang.org/x/tools", "github.com/rclone/rclone", "go.opentelemetry.io/otel/sdk", "go.opentelemetry.io/otel/sdk/metric"} {
+	for _, module := range []string{
+		"go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace",
+		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
+		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc",
+		"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp",
+		"github.com/klauspost/compress", "github.com/labstack/echo/v5", "github.com/rabbitmq/amqp091-go", "golang.org/x/net", "golang.org/x/text", "golang.org/x/tools", "github.com/rclone/rclone", "go.opentelemetry.io/otel/sdk", "go.opentelemetry.io/otel/sdk/metric"} {
 		if !UsesMinimumVersion(module) {
 			t.Fatalf("%s must retain newer consumer versions", module)
 		}

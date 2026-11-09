@@ -1,0 +1,354 @@
+package inspects
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// tracingState owns the SDK and the bounded association of active spans with Lighthouse captures.
+type tracingState struct {
+	provider *sdktrace.TracerProvider
+	mu       sync.Mutex
+	owners   map[spanIdentity]*Recorder
+}
+
+// spanIdentity follows OTel's uniqueness contract, which scopes span IDs to their trace.
+type spanIdentity struct {
+	traceID trace.TraceID
+	spanID  trace.SpanID
+}
+
+// identityForSpan keeps concurrent traces with equal span IDs isolated in Lighthouse.
+func identityForSpan(spanContext trace.SpanContext) spanIdentity {
+	return spanIdentity{traceID: spanContext.TraceID(), spanID: spanContext.SpanID()}
+}
+
+// lighthouseProcessor projects standard spans into bounded Lighthouse inspect records.
+type lighthouseProcessor struct{ manager *Manager }
+
+// initTracing keeps standalone manager usage local and free of network exporters.
+func (m *Manager) initTracing() {
+	m.tracing = &tracingState{owners: make(map[spanIdentity]*Recorder)}
+	sampler := sdktrace.NeverSample()
+	if m.config.Enabled {
+		sampler = sdktrace.ParentBased(sdktrace.AlwaysSample())
+	}
+	m.tracing.provider = sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sampler), sdktrace.WithSpanProcessor(&lighthouseProcessor{manager: m}))
+}
+
+// TracerProvider exposes the standard provider for application spans and client instrumentation.
+func (m *Manager) TracerProvider() *sdktrace.TracerProvider { return m.tracing.provider }
+
+// ConfigureTelemetry installs the app-owned SDK before runtimes start. Export is opt-in through OTEL configuration.
+func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
+	exporterName := strings.TrimSpace(os.Getenv("OTEL_TRACES_EXPORTER"))
+	endpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+	tracesEndpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"))
+	if exporterName == "" {
+		exporterName = "none"
+		if endpoint != "" || tracesEndpoint != "" {
+			exporterName = "otlp"
+		}
+	}
+	if exporterName != "none" && exporterName != "otlp" {
+		return fmt.Errorf("unsupported OTEL_TRACES_EXPORTER %q: use otlp or none", exporterName)
+	}
+	disabled, err := strconv.ParseBool(envDefault("OTEL_SDK_DISABLED", "false"))
+	if err != nil {
+		return fmt.Errorf("OTEL_SDK_DISABLED must be a boolean")
+	}
+	exportEnabled := !disabled && exporterName == "otlp"
+	sampler, err := telemetrySampler(exportEnabled || m.config.Enabled)
+	if err != nil {
+		return err
+	}
+	if disabled {
+		sampler = sdktrace.NeverSample()
+	}
+	res, err := resource.New(ctx, resource.WithFromEnv(), resource.WithTelemetrySDK(), resource.WithAttributes(
+		attribute.String("goforj.app", runtime.CurrentApp().Name),
+	))
+	if err != nil {
+		return fmt.Errorf("configure telemetry resource: %w", err)
+	}
+	if value, ok := res.Set().Value(attribute.Key("service.name")); !ok || value.AsString() == "" {
+		res, err = resource.Merge(res, resource.NewSchemaless(attribute.String("service.name", "{{.GoModuleName}}/"+runtime.CurrentApp().Name)))
+		if err != nil {
+			return fmt.Errorf("configure service identity: %w", err)
+		}
+	}
+	options := []sdktrace.TracerProviderOption{
+		sdktrace.WithResource(res), sdktrace.WithSampler(sampler),
+		sdktrace.WithSpanProcessor(&lighthouseProcessor{manager: m}),
+	}
+	if exportEnabled {
+		protocol := envDefault("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", envDefault("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"))
+		var exporter sdktrace.SpanExporter
+		switch protocol {
+		case "http/protobuf":
+			exporter, err = otlptracehttp.New(ctx)
+		case "grpc":
+			exporter, err = otlptracegrpc.New(ctx)
+		default:
+			return fmt.Errorf("unsupported OTLP trace protocol %q: use http/protobuf or grpc", protocol)
+		}
+		if err != nil {
+			return fmt.Errorf("configure OTLP traces: %w", err)
+		}
+		options = append(options, sdktrace.WithBatcher(exporter))
+	}
+	if err := m.tracing.provider.Shutdown(ctx); err != nil {
+		return err
+	}
+	m.tracing.provider = sdktrace.NewTracerProvider(options...)
+	otel.SetTracerProvider(m.tracing.provider)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	return nil
+}
+
+// Shutdown flushes completed spans within the app's shutdown budget.
+func (m *Manager) Shutdown(ctx context.Context) error { return m.tracing.provider.Shutdown(ctx) }
+
+// envDefault treats an unset or empty optional OTel setting as its documented default.
+func envDefault(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+// telemetrySampler honors standard head-sampling settings independently from Lighthouse retention controls.
+func telemetrySampler(enabled bool) (sdktrace.Sampler, error) {
+	fallback := "always_off"
+	if enabled {
+		fallback = "parentbased_always_on"
+	}
+	name := envDefault("OTEL_TRACES_SAMPLER", fallback)
+	switch name {
+	case "always_on":
+		return sdktrace.AlwaysSample(), nil
+	case "always_off":
+		return sdktrace.NeverSample(), nil
+	case "parentbased_always_on":
+		return sdktrace.ParentBased(sdktrace.AlwaysSample()), nil
+	case "parentbased_always_off":
+		return sdktrace.ParentBased(sdktrace.NeverSample()), nil
+	case "traceidratio", "parentbased_traceidratio":
+		ratio, err := strconv.ParseFloat(envDefault("OTEL_TRACES_SAMPLER_ARG", "1"), 64)
+		if err != nil || !(ratio >= 0 && ratio <= 1) {
+			return nil, fmt.Errorf("OTEL_TRACES_SAMPLER_ARG must be between 0 and 1")
+		}
+		sampler := sdktrace.TraceIDRatioBased(ratio)
+		if name == "parentbased_traceidratio" {
+			sampler = sdktrace.ParentBased(sampler)
+		}
+		return sampler, nil
+	default:
+		return nil, fmt.Errorf("unsupported OTEL_TRACES_SAMPLER %q", name)
+	}
+}
+
+// executionSpanKind distinguishes incoming requests from local execution boundaries.
+func executionSpanKind(source runtime.Source) trace.SpanKind {
+	if source == runtime.SourceHTTP {
+		return trace.SpanKindServer
+	}
+	if source == runtime.SourceJobs {
+		return trace.SpanKindConsumer
+	}
+	return trace.SpanKindInternal
+}
+
+// trackSpan always reserves the root capture; child associations have a separate bounded allowance.
+func (m *Manager) trackSpan(spanContext trace.SpanContext, recorder *Recorder) {
+	m.tracing.mu.Lock()
+	m.tracing.owners[identityForSpan(spanContext)] = recorder
+	m.tracing.mu.Unlock()
+}
+
+// OnStart associates application-created child spans with their current inspect without changing their context.
+func (p *lighthouseProcessor) OnStart(ctx context.Context, span sdktrace.ReadWriteSpan) {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return
+	}
+	recorder.projectionMu.Lock()
+	defer recorder.projectionMu.Unlock()
+	if recorder.state == nil {
+		return
+	}
+	state := p.manager.tracing
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.owners) >= p.manager.config.MaxInflight*(p.manager.config.MaxEvents+1) {
+		return
+	}
+	state.owners[identityForSpan(span.SpanContext())] = recorder
+}
+
+// OnEnd derives Lighthouse timing, identity, status, and application-span details from the shared SDK contract.
+func (p *lighthouseProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
+	state := p.manager.tracing
+	state.mu.Lock()
+	recorder := state.owners[identityForSpan(span.SpanContext())]
+	delete(state.owners, identityForSpan(span.SpanContext()))
+	state.mu.Unlock()
+	if recorder == nil {
+		return
+	}
+	recorder.projectionMu.Lock()
+	defer recorder.projectionMu.Unlock()
+	if recorder.state == nil {
+		return
+	}
+	root := identityForSpan(recorder.span.SpanContext()) == identityForSpan(span.SpanContext())
+	for _, event := range span.Events() {
+		if isInspectEvent(event.Attributes) || (root && recorder.terminalError != nil && event.Name == "exception") {
+			continue
+		}
+		p.manager.appendEvent(recorder.state, InspectEvent{
+			Kind: EventKindAnnotation, Name: event.Name, At: event.Time,
+			SpanID: span.SpanContext().SpanID().String(), Attributes: telemetryAttributes(event.Attributes),
+		})
+	}
+	if !root {
+		if isInspectEvent(span.Attributes()) {
+			return
+		}
+		p.manager.appendEvent(recorder.state, InspectEvent{
+			Kind: EventKindAnnotation, Name: span.Name(), At: span.StartTime(),
+			SpanID: span.SpanContext().SpanID().String(), ParentSpanID: span.Parent().SpanID().String(),
+			Status: span.Status().Code.String(), Attributes: telemetryAttributes(append(span.Attributes(),
+				attribute.Int64("duration_ns", span.EndTime().Sub(span.StartTime()).Nanoseconds()))),
+		})
+		return
+	}
+	recorder.state.mu.Lock()
+	recorder.state.record.Summary.Name = span.Name()
+	recorder.state.record.Summary.StartedAt = span.StartTime()
+	if span.Parent().IsValid() {
+		recorder.state.record.Summary.ParentSpanID = span.Parent().SpanID().String()
+	}
+	recorder.state.mu.Unlock()
+	status := recorder.terminalStatus
+	if span.Status().Code == codes.Error {
+		status = statusError
+	}
+	_ = p.manager.finishStateAt(context.Background(), recorder.inspectID, recorder.state, status, recorder.terminalError, span.EndTime())
+	recorder.state = nil
+	// Detached application spans may outlive the inspect, so release their projection associations now.
+	state.mu.Lock()
+	for id, owner := range state.owners {
+		if owner == recorder {
+			delete(state.owners, id)
+		}
+	}
+	state.mu.Unlock()
+}
+
+// Shutdown leaves provider and publisher lifecycle ownership with the App.
+func (p *lighthouseProcessor) Shutdown(context.Context) error { return nil }
+
+// ForceFlush is synchronous because projection happens when a span ends.
+func (p *lighthouseProcessor) ForceFlush(context.Context) error { return nil }
+
+// isInspectEvent avoids adding a second copy of a Lighthouse-enriched event during projection.
+func isInspectEvent(attributes []attribute.KeyValue) bool {
+	for _, value := range attributes {
+		if value.Key == "goforj.inspect.event" && value.Value.AsBool() {
+			return true
+		}
+	}
+	return false
+}
+
+// telemetryAttributes preserves standard SDK attribute values in the Lighthouse JSON projection.
+func telemetryAttributes(attributes []attribute.KeyValue) map[string]any {
+	values := make(map[string]any, len(attributes))
+	for _, value := range attributes {
+		values[string(value.Key)] = value.Value.AsInterface()
+	}
+	return values
+}
+
+// recordTelemetryEvent exports bounded operational metadata while keeping rich inspect payloads local.
+func (r *Recorder) recordTelemetryEvent(ctx context.Context, event InspectEvent) trace.SpanContext {
+	attributes := []attribute.KeyValue{
+		attribute.Bool("goforj.inspect.event", true),
+		attribute.String("goforj.operation.kind", string(event.Kind)),
+		attribute.String("goforj.operation.status", event.Status),
+	}
+	for _, key := range []string{"cache", "disk", "driver", "operation", "queue", "job_name", "attempt", "topic", "bus", "handler", "connection", "duration_ns", "hit"} {
+		switch value := event.Attributes[key].(type) {
+		case string:
+			attributes = append(attributes, attribute.String("goforj."+key, value))
+		case int:
+			attributes = append(attributes, attribute.Int("goforj."+key, value))
+		case int64:
+			attributes = append(attributes, attribute.Int64("goforj."+key, value))
+		case bool:
+			attributes = append(attributes, attribute.Bool("goforj."+key, value))
+		}
+	}
+	at := event.At
+	if at.IsZero() {
+		at = r.manager.now()
+	}
+	switch event.Kind {
+	case EventKindCache, EventKindStorage, EventKindMail, EventKindQuery:
+		duration, _ := event.Attributes["duration_ns"].(int64)
+		if duration < 0 {
+			duration = 0
+		}
+		_, span := r.manager.TracerProvider().Tracer("github.com/goforj/goforj").Start(ctx,
+			string(event.Kind)+" "+event.Name, trace.WithTimestamp(at.Add(-time.Duration(duration))),
+			trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attributes...))
+		if event.Status == statusError {
+			span.SetStatus(codes.Error, "operation failed")
+		}
+		span.End(trace.WithTimestamp(at))
+		return span.SpanContext()
+	default:
+		span := trace.SpanFromContext(ctx)
+		span.AddEvent("goforj."+string(event.Kind), trace.WithTimestamp(at), trace.WithAttributes(attributes...))
+		return span.SpanContext()
+	}
+}
+
+// HTTPClient creates an instrumented client without changing the process-wide default transport.
+func (m *Manager) HTTPClient(client *http.Client) *http.Client {
+	copy := *client
+	copy.Transport = otelhttp.NewTransport(client.Transport, otelhttp.WithTracerProvider(m.TracerProvider()),
+		otelhttp.WithPropagators(propagation.TraceContext{}))
+	return &copy
+}
+
+// Capturing reports whether rich Lighthouse payloads are enabled for this execution.
+func (m *Manager) Capturing(ctx context.Context) bool {
+	recorder := RecorderFromContext(ctx)
+	if recorder == nil {
+		return false
+	}
+	recorder.projectionMu.Lock()
+	defer recorder.projectionMu.Unlock()
+	return recorder.state != nil
+}

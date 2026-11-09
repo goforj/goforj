@@ -192,7 +192,7 @@ func TestManagerRespectsMaxInflight(t *testing.T) {
 	}
 
 	second := manager.Begin(context.Background(), "http", "second", nil)
-	if RecorderFromContext(second) != nil {
+	if manager.Capturing(second) {
 		t.Fatal("expected second inspect to be rejected by max inflight")
 	}
 }
@@ -204,7 +204,7 @@ func TestManagerRespectsSampleRate(t *testing.T) {
 	manager := NewManager()
 
 	manager.config.SampleRate = 0
-	if recorder := RecorderFromContext(manager.Begin(context.Background(), "http", "sampled-out", nil)); recorder != nil {
+	if manager.Capturing(manager.Begin(context.Background(), "http", "sampled-out", nil)) {
 		t.Fatal("expected inspect to be skipped when sample rate is 0")
 	}
 
@@ -355,8 +355,8 @@ func TestManagerCaptureGateSkipsNewInspect(t *testing.T) {
 	})
 
 	inactive := manager.Begin(context.Background(), "http", "request", nil)
-	if recorder := RecorderFromContext(inactive); recorder != nil {
-		t.Fatalf("expected inactive capture gate to skip recorder, got %q", recorder.InspectID())
+	if manager.Capturing(inactive) {
+		t.Fatal("expected inactive capture gate to skip rich capture")
 	}
 
 	active = true

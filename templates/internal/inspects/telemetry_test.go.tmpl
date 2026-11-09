@@ -1,0 +1,399 @@
+package inspects
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/grpc"
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// TestTelemetrySharesIdentityAndApplicationSpans proves Lighthouse projects the same spans seen by a standard exporter.
+func TestTelemetrySharesIdentityAndApplicationSpans(t *testing.T) {
+	manager := newTestManager(t)
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+	parent := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}, TraceFlags: trace.FlagsSampled, Remote: true,
+	})
+	ctx := manager.Begin(trace.ContextWithRemoteSpanContext(context.Background(), parent), runtime.SourceHTTP, "GET /users/:id", nil)
+	recorder := RecorderFromContext(ctx)
+	_, child := manager.TracerProvider().Tracer("example/app").Start(ctx, "load user")
+	child.AddEvent("cache miss", trace.WithAttributes(attribute.Bool("miss", true)))
+	child.End()
+	manager.RecordCacheEvent(ctx, CacheOperationInspectEvent{Name: "users", Operation: "get", Key: "private-user-key"})
+	manager.RecordHTTPExchange(ctx, HTTPExchangeInspectEvent{RequestBody: "private-body"})
+	manager.Finish(ctx, "ok", nil)
+	manager.Finish(ctx, "ok", nil)
+	spans := exporter.GetSpans()
+	if len(spans) != 3 {
+		t.Fatalf("exported spans = %d, want application, cache, and request spans", len(spans))
+	}
+	root := spans[2]
+	record, ok, err := manager.ByID(context.Background(), recorder.InspectID())
+	if err != nil || !ok {
+		t.Fatalf("inspect missing: %v", err)
+	}
+	if record.Summary.OTelTraceID != parent.TraceID().String() || record.Summary.SpanID != root.SpanContext.SpanID().String() || record.Summary.ParentSpanID != parent.SpanID().String() {
+		t.Fatalf("Lighthouse and OTel identities differ: %+v", record.Summary)
+	}
+	found := false
+	for _, event := range record.Events {
+		if event.Name == "load user" && event.SpanID == spans[0].SpanContext.SpanID().String() {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("application span missing from Lighthouse")
+	}
+	for _, event := range root.Events {
+		for _, attr := range event.Attributes {
+			if strings.Contains(attr.Value.Emit(), "private-") {
+				t.Fatalf("rich payload exported: %v", attr)
+			}
+		}
+	}
+}
+
+// TestTelemetryExportIndependentFromLighthouse protects export when capture is disabled, gated, sampled out, or at capacity.
+func TestTelemetryExportIndependentFromLighthouse(t *testing.T) {
+	for _, mode := range []string{"disabled", "gated", "sampled-out", "capacity"} {
+		t.Run(mode, func(t *testing.T) {
+			manager := newTestManager(t)
+			exporter := tracetest.NewInMemoryExporter()
+			manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+			switch mode {
+			case "disabled":
+				manager.config.Enabled = false
+			case "gated":
+				manager.SetCaptureGate(func() bool { return false })
+			case "sampled-out":
+				manager.config.SampleRate = 0
+			case "capacity":
+				manager.config.MaxInflight = 1
+				held := manager.Begin(context.Background(), runtime.SourceHTTP, "held", nil)
+				defer manager.Finish(held, "ok", nil)
+			}
+			ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", nil)
+			if manager.Capturing(ctx) {
+				t.Fatal("unexpected rich capture")
+			}
+			manager.Finish(ctx, "error", errors.New("failed"))
+			spans := exporter.GetSpans()
+			if len(spans) != 1 || spans[0].Status.Code != codes.Error {
+				t.Fatalf("independent export failed: %+v", spans)
+			}
+		})
+	}
+}
+
+// TestTelemetryChildFinishesAfterRoot verifies late child spans cannot mutate a finished or reused capture.
+func TestTelemetryChildFinishesAfterRoot(t *testing.T) {
+	manager := newTestManager(t)
+	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "root", nil)
+	var wg sync.WaitGroup
+	for range 20 {
+		_, child := manager.TracerProvider().Tracer("app").Start(ctx, "child")
+		wg.Add(1)
+		go func() { defer wg.Done(); child.End() }()
+	}
+	manager.Finish(ctx, "ok", nil)
+	next := manager.Begin(context.Background(), runtime.SourceHTTP, "next", nil)
+	wg.Wait()
+	manager.Finish(next, "ok", nil)
+	record, ok, err := manager.ByID(context.Background(), InspectIDFromContext(next))
+	if err != nil || !ok || len(record.Events) != 0 {
+		t.Fatalf("late span contaminated next capture: %+v, %v", record, err)
+	}
+}
+
+// TestTelemetryHTTPClientPropagates verifies outgoing requests use the execution's standard W3C identity.
+func TestTelemetryHTTPClientPropagates(t *testing.T) {
+	manager := newTestManager(t)
+	var received trace.SpanContext
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		received = trace.SpanContextFromContext((propagation.TraceContext{}).Extract(req.Context(), propagation.HeaderCarrier(req.Header)))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	ctx := manager.Begin(context.Background(), runtime.SourceCLI, "fetch", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := manager.HTTPClient(http.DefaultClient)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	manager.Finish(ctx, "ok", nil)
+	if !received.IsValid() || received.TraceID() != trace.SpanContextFromContext(ctx).TraceID() {
+		t.Fatal("outgoing trace context lost")
+	}
+	if http.DefaultClient.Transport != nil {
+		t.Fatal("default client was modified")
+	}
+}
+
+// TestTelemetryConfigurationRejectsInvalidSettings covers every explicit configuration validation failure.
+func TestTelemetryConfigurationRejectsInvalidSettings(t *testing.T) {
+	for _, settings := range []map[string]string{
+		{"OTEL_TRACES_EXPORTER": "unknown"}, {"OTEL_SDK_DISABLED": "invalid"},
+		{"OTEL_TRACES_SAMPLER": "unknown"}, {"OTEL_TRACES_SAMPLER": "traceidratio", "OTEL_TRACES_SAMPLER_ARG": "invalid"},
+		{"OTEL_TRACES_SAMPLER": "traceidratio", "OTEL_TRACES_SAMPLER_ARG": "NaN"},
+		{"OTEL_TRACES_SAMPLER": "traceidratio", "OTEL_TRACES_SAMPLER_ARG": "-0.1"},
+		{"OTEL_TRACES_SAMPLER": "traceidratio", "OTEL_TRACES_SAMPLER_ARG": "1.1"},
+		{"OTEL_TRACES_EXPORTER": "otlp", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "invalid"},
+	} {
+		t.Run("invalid", func(t *testing.T) {
+			clearTelemetryEnv(t)
+			for key, value := range settings {
+				t.Setenv(key, value)
+			}
+			manager := newTestManager(t)
+			defer manager.Shutdown(context.Background())
+			if err := manager.ConfigureTelemetry(context.Background()); err == nil {
+				t.Fatalf("accepted invalid settings: %v", settings)
+			}
+		})
+	}
+}
+
+// TestTelemetryOTLPHTTPExportsWithoutLighthouse exercises real OTLP transport and shutdown flushing against a local receiver.
+func TestTelemetryOTLPHTTPExportsWithoutLighthouse(t *testing.T) {
+	clearTelemetryEnv(t)
+	previous, propagator := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+	t.Cleanup(func() { otel.SetTracerProvider(previous); otel.SetTextMapPropagator(propagator) })
+	received := make(chan []byte, 2)
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1/traces" {
+			t.Errorf("OTLP path = %s", req.URL.Path)
+		}
+		if req.Header.Get("Content-Type") != "application/x-protobuf" {
+			t.Errorf("unexpected content type")
+		}
+		body, _ := io.ReadAll(req.Body)
+		received <- body
+		w.Header().Set("Content-Type", "application/x-protobuf")
+	}))
+	defer receiver.Close()
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", receiver.URL)
+	t.Setenv("OTEL_SERVICE_NAME", "test-service")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "false")
+	manager := NewManager()
+	if err := manager.ConfigureTelemetry(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx := manager.Begin(context.Background(), runtime.SourceCLI, "reports:generate", nil)
+	_, span := otel.Tracer("application").Start(ctx, "custom-work")
+	span.End()
+	manager.Finish(ctx, "ok", nil)
+	if err := manager.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case body := <-received:
+		if !strings.Contains(string(body), "reports:generate") || !strings.Contains(string(body), "custom-work") || !strings.Contains(string(body), "test-service") {
+			t.Fatal("OTLP payload missing shared spans or resource")
+		}
+	default:
+		t.Fatal("no OTLP request received before shutdown returned")
+	}
+}
+
+// clearTelemetryEnv prevents the developer's exporter configuration from affecting isolated tests.
+func clearTelemetryEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"OTEL_TRACES_EXPORTER", "OTEL_SDK_DISABLED", "OTEL_TRACES_SAMPLER", "OTEL_TRACES_SAMPLER_ARG", "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_PROTOCOL", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "OTEL_RESOURCE_ATTRIBUTES", "OTEL_SERVICE_NAME"} {
+		t.Setenv(key, "")
+	}
+}
+
+// TestTelemetrySamplersPreserveParentDecisions exercises all supported standard sampling modes.
+func TestTelemetrySamplersPreserveParentDecisions(t *testing.T) {
+	for _, name := range []string{"always_on", "always_off", "parentbased_always_on", "parentbased_always_off", "traceidratio", "parentbased_traceidratio"} {
+		t.Run(name, func(t *testing.T) {
+			clearTelemetryEnv(t)
+			t.Setenv("OTEL_TRACES_SAMPLER", name)
+			t.Setenv("OTEL_TRACES_SAMPLER_ARG", "0.5")
+			sampler, err := telemetrySampler(true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.HasPrefix(name, "parentbased_") {
+				for _, sampled := range []bool{false, true} {
+					flags := trace.TraceFlags(0)
+					if sampled {
+						flags = trace.FlagsSampled
+					}
+					parent := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{1}, TraceFlags: flags, Remote: true})
+					result := sampler.ShouldSample(sdktrace.SamplingParameters{ParentContext: trace.ContextWithRemoteSpanContext(context.Background(), parent), TraceID: parent.TraceID()})
+					if (result.Decision == sdktrace.RecordAndSample) != sampled {
+						t.Fatal("parent sampling decision changed")
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestTelemetrySDKDisabledDisablesBothViews verifies the standard SDK switch also governs Lighthouse projection.
+func TestTelemetrySDKDisabledDisablesBothViews(t *testing.T) {
+	clearTelemetryEnv(t)
+	previous, propagator := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+	t.Cleanup(func() { otel.SetTracerProvider(previous); otel.SetTextMapPropagator(propagator) })
+	t.Setenv("OTEL_SDK_DISABLED", "true")
+	t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
+	manager := newTestManager(t)
+	if err := manager.ConfigureTelemetry(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Shutdown(context.Background())
+	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", nil)
+	if trace.SpanFromContext(ctx).IsRecording() || manager.Capturing(ctx) {
+		t.Fatal("disabled SDK recorded execution")
+	}
+	manager.Finish(ctx, "ok", nil)
+}
+
+// TestTelemetryOTLPGRPCExportsWithoutLighthouse verifies the alternate standard transport flushes to a local receiver.
+func TestTelemetryOTLPGRPCExportsWithoutLighthouse(t *testing.T) {
+	clearTelemetryEnv(t)
+	previous, propagator := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+	t.Cleanup(func() { otel.SetTracerProvider(previous); otel.SetTextMapPropagator(propagator) })
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	receiver := &otlpReceiver{received: make(chan *v1.ExportTraceServiceRequest, 2)}
+	v1.RegisterTraceServiceServer(server, receiver)
+	go server.Serve(listener)
+	defer server.Stop()
+	t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "grpc")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://"+listener.Addr().String())
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "false")
+	manager := NewManager()
+	if err := manager.ConfigureTelemetry(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx := manager.Begin(context.Background(), runtime.SourceCLI, "grpc-command", nil)
+	manager.Finish(ctx, "ok", nil)
+	if err := manager.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case request := <-receiver.received:
+		if len(request.ResourceSpans) != 1 || request.ResourceSpans[0].ScopeSpans[0].Spans[0].Name != "grpc-command" {
+			t.Fatal("missing exported execution span")
+		}
+	default:
+		t.Fatal("gRPC shutdown returned without exporting")
+	}
+}
+
+// otlpReceiver checks standard wire compatibility independently from Lighthouse transport.
+type otlpReceiver struct {
+	v1.UnimplementedTraceServiceServer
+	received chan *v1.ExportTraceServiceRequest
+}
+
+// Export accepts complete OTLP trace batches for transport assertions.
+func (r *otlpReceiver) Export(_ context.Context, request *v1.ExportTraceServiceRequest) (*v1.ExportTraceServiceResponse, error) {
+	r.received <- request
+	return &v1.ExportTraceServiceResponse{}, nil
+}
+
+// TestTelemetryMultipleExecutionsShareTraceWithoutOverwrite protects inspect lookup identity in distributed traces.
+func TestTelemetryMultipleExecutionsShareTraceWithoutOverwrite(t *testing.T) {
+	manager := newTestManager(t)
+	parent := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{1}, TraceFlags: trace.FlagsSampled, Remote: true})
+	var ids []string
+	for range 2 {
+		ctx := manager.Begin(trace.ContextWithRemoteSpanContext(context.Background(), parent), runtime.SourceHTTP, "GET /probe", nil)
+		ids = append(ids, InspectIDFromContext(ctx))
+		manager.Finish(ctx, "ok", nil)
+	}
+	if ids[0] == ids[1] {
+		t.Fatal("inspect lookup IDs collided")
+	}
+	summaries, err := manager.Recent(context.Background(), RecentQuery{})
+	if err != nil || len(summaries) != 2 {
+		t.Fatalf("shared trace overwrote an execution: %v, %v", summaries, err)
+	}
+	for _, summary := range summaries {
+		if summary.OTelTraceID != parent.TraceID().String() {
+			t.Fatal("trace identity changed")
+		}
+	}
+}
+
+// fixedSpanIDGenerator exercises the OTel contract that span IDs need only be unique within a trace.
+type fixedSpanIDGenerator struct{}
+
+// NewIDs supplies a valid root identity for the generator interface.
+func (fixedSpanIDGenerator) NewIDs(context.Context) (trace.TraceID, trace.SpanID) {
+	return trace.TraceID{9}, trace.SpanID{3}
+}
+
+// NewSpanID deliberately reuses an ID across different incoming traces.
+func (fixedSpanIDGenerator) NewSpanID(context.Context, trace.TraceID) trace.SpanID {
+	return trace.SpanID{3}
+}
+
+// TestTelemetryProjectionScopesSpanIdentityToTrace protects concurrent incoming traces using equal span IDs.
+func TestTelemetryProjectionScopesSpanIdentityToTrace(t *testing.T) {
+	manager := newTestManager(t)
+	if err := manager.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	manager.tracing.provider = sdktrace.NewTracerProvider(sdktrace.WithIDGenerator(fixedSpanIDGenerator{}), sdktrace.WithSpanProcessor(&lighthouseProcessor{manager: manager}))
+	defer manager.Shutdown(context.Background())
+	var contexts []context.Context
+	for _, id := range []byte{1, 2} {
+		parent := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{id}, SpanID: trace.SpanID{2}, TraceFlags: trace.FlagsSampled, Remote: true})
+		contexts = append(contexts, manager.Begin(trace.ContextWithRemoteSpanContext(context.Background(), parent), runtime.SourceHTTP, "request", nil))
+	}
+	for index, ctx := range contexts {
+		manager.Finish(ctx, "ok", nil)
+		record, ok, err := manager.ByID(context.Background(), InspectIDFromContext(ctx))
+		expected := trace.TraceID{byte(index + 1)}
+		if err != nil || !ok || record.Summary.OTelTraceID != expected.String() {
+			t.Fatalf("trace identity collision: %+v, %v", record, err)
+		}
+	}
+}
+
+// TestTelemetryNestedExecutionsHaveIndependentLifecycles preserves sync job and nested schedule boundaries.
+func TestTelemetryNestedExecutionsHaveIndependentLifecycles(t *testing.T) {
+	manager := newTestManager(t)
+	outer := manager.Begin(context.Background(), runtime.SourceJobs, "outer", nil)
+	inner := manager.Begin(outer, runtime.SourceJobs, "inner", nil)
+	if InspectIDFromContext(outer) == InspectIDFromContext(inner) {
+		t.Fatal("nested executions share one lifecycle")
+	}
+	manager.Finish(inner, "ok", nil)
+	manager.Finish(outer, "ok", nil)
+	outerRecord, _, _ := manager.ByID(context.Background(), InspectIDFromContext(outer))
+	innerRecord, _, _ := manager.ByID(context.Background(), InspectIDFromContext(inner))
+	if outerRecord.Summary.OTelTraceID != innerRecord.Summary.OTelTraceID || innerRecord.Summary.ParentSpanID != outerRecord.Summary.SpanID {
+		t.Fatal("nested execution lost its OTel parent")
+	}
+}

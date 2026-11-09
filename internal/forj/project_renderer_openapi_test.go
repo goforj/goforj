@@ -260,7 +260,7 @@ func TestRenderOnlyOpenAPIUsesSharedCapabilities(t *testing.T) {
 	if err := renderOpenAPI(root); err != nil {
 		t.Fatal(err)
 	}
-	assertProjectRendererFileContains(t, filepath.Join(root, "internal/http/openapi_test.go"), `"example.com/scoped/internal/metrics"`, "metrics.NewManager()", "newTestMaintenanceState(t), nil, nil")
+	assertProjectRendererFileContains(t, filepath.Join(root, "internal/http/openapi_test.go"), `"example.com/scoped/internal/metrics"`, "metrics.NewManager()", "newTestMaintenanceState(t), nil, inspects.NewManager()")
 }
 
 // TestRenderOnlyOpenAPISupportsWebUI retains the same documentation surface that full rendering gives browser-only Apps.
