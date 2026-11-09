@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -437,12 +438,12 @@ func TestTelemetryCleanupKeepsOtherCaptures(t *testing.T) {
 	_, late := tracer.Start(first, "late")
 	_, retained := tracer.Start(second, "retained")
 	manager.Finish(first, "ok", nil)
-	if len(manager.tracing.owners) != 2 || len(RecorderFromContext(first).childSpans) != 0 {
+	if len(manager.tracing.owners) != 2 || len(RecorderFromContext(first).childSpans) != 0 || RecorderFromContext(first).childSpan != (spanIdentity{}) {
 		t.Fatal("cleanup retained finished associations or detached another capture")
 	}
 	late.End()
 	retained.End()
-	if len(RecorderFromContext(second).childSpans) != 0 {
+	if len(RecorderFromContext(second).childSpans) != 0 || RecorderFromContext(second).childSpan != (spanIdentity{}) {
 		t.Fatal("completed child association was retained")
 	}
 	manager.Finish(second, "ok", nil)
@@ -458,7 +459,7 @@ func TestTelemetryNestedOwnershipTransfer(t *testing.T) {
 	outer := manager.Begin(context.Background(), runtime.SourceHTTP, "outer", nil)
 	for range 100 {
 		inner := manager.Begin(outer, runtime.SourceJobs, "inner", nil)
-		if len(RecorderFromContext(outer).childSpans) != 0 {
+		if len(RecorderFromContext(outer).childSpans) != 0 || RecorderFromContext(outer).childSpan != (spanIdentity{}) {
 			t.Fatal("nested execution retained its former projection owner")
 		}
 		manager.Finish(inner, "ok", nil)
@@ -480,7 +481,7 @@ func TestTelemetryChildAssociationCapacity(t *testing.T) {
 	tracer := manager.TracerProvider().Tracer("app")
 	_, first := tracer.Start(ctx, "first")
 	_, rejected := tracer.Start(ctx, "rejected")
-	if len(RecorderFromContext(ctx).childSpans) != 1 || len(manager.tracing.owners) != 2 {
+	if RecorderFromContext(ctx).childSpan == (spanIdentity{}) || len(RecorderFromContext(ctx).childSpans) != 0 || len(manager.tracing.owners) != 2 {
 		t.Fatal("child association limit was exceeded")
 	}
 	manager.Finish(ctx, "ok", nil)
@@ -511,8 +512,279 @@ func TestTelemetryChildStartsDuringFinish(t *testing.T) {
 		close(start)
 		manager.Finish(ctx, "ok", nil)
 		wg.Wait()
-		if len(manager.tracing.owners) != 0 || len(RecorderFromContext(ctx).childSpans) != 0 {
+		if len(manager.tracing.owners) != 0 || len(RecorderFromContext(ctx).childSpans) != 0 || RecorderFromContext(ctx).childSpan != (spanIdentity{}) {
 			t.Fatal("concurrent completion retained span associations")
+		}
+	}
+}
+
+// TestTelemetrySkippedNestedExecutionPreservesOuter prevents skipped executions from completing an inherited recorder.
+func TestTelemetrySkippedNestedExecutionPreservesOuter(t *testing.T) {
+	for _, mode := range []string{"capture-gate", "disabled", "sampler"} {
+		t.Run(mode, func(t *testing.T) {
+			manager := newTestManager(t)
+			outer := manager.Begin(runtime.WithSource(context.Background(), runtime.SourceHTTP), runtime.SourceHTTP, "outer", nil)
+			t.Cleanup(func() { manager.Finish(outer, "ok", nil) })
+			type metadataKey struct{}
+			parent, cancel := context.WithCancel(context.WithValue(outer, metadataKey{}, "retained"))
+			defer cancel()
+			innerManager := manager
+			switch mode {
+			case "capture-gate":
+				manager.SetCaptureGate(func() bool { return false })
+			case "disabled":
+				innerManager = newTestManager(t)
+				innerManager.config.Enabled = false
+			case "sampler":
+				clearTelemetryEnv(t)
+				previous, propagator := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+				t.Cleanup(func() { otel.SetTracerProvider(previous); otel.SetTextMapPropagator(propagator) })
+				t.Setenv("OTEL_TRACES_SAMPLER", "always_off")
+				innerManager = newTestManager(t)
+				if err := innerManager.ConfigureTelemetry(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			inner := innerManager.Begin(parent, runtime.SourceJobs, "skipped", nil)
+			if RecorderFromContext(inner) != nil || InspectIDFromContext(inner) != "" {
+				t.Fatal("skipped execution inherited outer inspect identity")
+			}
+			if inner.Value(metadataKey{}) != "retained" || runtime.SourceFromContext(inner) != runtime.SourceHTTP {
+				t.Fatal("skipped execution lost context metadata or runtime source")
+			}
+			if !trace.SpanContextFromContext(inner).IsValid() {
+				t.Fatal("skipped execution lost its SDK span context")
+			}
+			if mode == "sampler" && trace.SpanFromContext(inner).IsRecording() {
+				t.Fatal("always_off sampler unexpectedly recorded nested execution")
+			}
+			cancel()
+			if inner.Done() != parent.Done() || !errors.Is(inner.Err(), context.Canceled) {
+				t.Fatal("skipped execution lost parent cancellation")
+			}
+			innerManager.Finish(inner, "ok", nil)
+			if !manager.Capturing(outer) || !trace.SpanFromContext(outer).IsRecording() {
+				t.Fatal("finishing skipped execution finished outer execution")
+			}
+		})
+	}
+}
+
+// TestTelemetryFinishRejectsForeignManager keeps completion scoped to the manager that owns the recorder.
+func TestTelemetryFinishRejectsForeignManager(t *testing.T) {
+	owner := newTestManager(t)
+	other := newTestManager(t)
+	ctx := owner.Begin(context.Background(), runtime.SourceHTTP, "owned", nil)
+	defer owner.Finish(ctx, "ok", nil)
+	other.Finish(ctx, "error", errors.New("foreign finish"))
+	if !owner.Capturing(ctx) || !trace.SpanFromContext(ctx).IsRecording() {
+		t.Fatal("foreign manager finished another manager's execution")
+	}
+}
+
+// TestTelemetryNativeEndConcurrentFinish protects terminal state when callers also use the native SDK span handle.
+func TestTelemetryNativeEndConcurrentFinish(t *testing.T) {
+	manager := newTestManager(t)
+	for range 200 {
+		ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", nil)
+		span := trace.SpanFromContext(ctx)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			span.End()
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			manager.Finish(ctx, "canceled", context.Canceled)
+		}()
+		close(start)
+		wg.Wait()
+		if manager.Capturing(ctx) || len(manager.tracing.owners) != 0 {
+			t.Fatal("concurrent completion retained an active capture")
+		}
+	}
+}
+
+// TestTelemetryCanceledStatusPreserved keeps cancellation distinct from failures in the Lighthouse summary.
+func TestTelemetryCanceledStatusPreserved(t *testing.T) {
+	for _, mode := range []string{"explicit", "error", "wrapped-error"} {
+		t.Run(mode, func(t *testing.T) {
+			manager := newTestManager(t)
+			exporter := tracetest.NewInMemoryExporter()
+			manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+			ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "canceled", nil)
+			var terminalError error
+			switch mode {
+			case "error":
+				terminalError = context.Canceled
+			case "wrapped-error":
+				terminalError = errors.Join(errors.New("request stopped"), context.Canceled)
+			}
+			manager.Finish(ctx, "canceled", terminalError)
+			record, ok, err := manager.ByID(context.Background(), InspectIDFromContext(ctx))
+			if err != nil || !ok || record.Summary.Status != "canceled" {
+				t.Fatalf("canceled execution status = %q, found = %v, error = %v", record.Summary.Status, ok, err)
+			}
+			spans := exporter.GetSpans()
+			if len(spans) != 1 {
+				t.Fatalf("exported spans = %d, want 1", len(spans))
+			}
+			if terminalError == nil && spans[0].Status.Code != codes.Unset {
+				t.Fatalf("explicit cancellation SDK status = %v, want Unset", spans[0].Status.Code)
+			}
+		})
+	}
+}
+
+// TestTelemetryInlineChildRefill preserves outstanding overflow children when the inline slot is reused.
+func TestTelemetryInlineChildRefill(t *testing.T) {
+	manager := newTestManager(t)
+	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", nil)
+	recorder := RecorderFromContext(ctx)
+	tracer := manager.TracerProvider().Tracer("app")
+	_, first := tracer.Start(ctx, "first")
+	_, overflow := tracer.Start(ctx, "overflow")
+	if recorder.childSpan != identityForSpan(first.SpanContext()) || len(recorder.childSpans) != 1 {
+		t.Fatal("overlapping children did not use both ownership indexes")
+	}
+	first.End()
+	_, reused := tracer.Start(ctx, "reused")
+	if recorder.childSpan != identityForSpan(reused.SpanContext()) || len(recorder.childSpans) != 1 {
+		t.Fatal("vacant inline slot was not reused alongside overflow")
+	}
+	overflow.End()
+	manager.Finish(ctx, "ok", nil)
+	reused.End()
+	record, ok, err := manager.ByID(context.Background(), InspectIDFromContext(ctx))
+	if err != nil || !ok || len(record.Events) != 2 || len(manager.tracing.owners) != 0 || recorder.childSpan != (spanIdentity{}) || recorder.childSpans != nil {
+		t.Fatalf("inline cleanup lost events or retained children: %+v, %v", record, err)
+	}
+}
+
+// TestTelemetryNestedTransferFromBothChildIndexes protects independent nested execution lifetimes in either ownership representation.
+func TestTelemetryNestedTransferFromBothChildIndexes(t *testing.T) {
+	manager := newTestManager(t)
+	outer := manager.Begin(context.Background(), runtime.SourceHTTP, "outer", nil)
+	_, held := manager.TracerProvider().Tracer("app").Start(outer, "held")
+	overflow := manager.Begin(outer, runtime.SourceJobs, "overflow execution", nil)
+	held.End()
+	inline := manager.Begin(outer, runtime.SourceJobs, "inline execution", nil)
+	recorder := RecorderFromContext(outer)
+	if recorder.childSpan != (spanIdentity{}) || len(recorder.childSpans) != 0 {
+		t.Fatal("nested executions retained their previous ownership indexes")
+	}
+	manager.Finish(outer, "ok", nil)
+	for _, ctx := range []context.Context{overflow, inline} {
+		if !manager.Capturing(ctx) {
+			t.Fatal("outer cleanup detached a nested execution")
+		}
+		manager.Finish(ctx, "ok", nil)
+		if _, ok, err := manager.ByID(context.Background(), InspectIDFromContext(ctx)); err != nil || !ok {
+			t.Fatalf("nested capture missing after transfer: %v", err)
+		}
+	}
+	if len(manager.tracing.owners) != 0 {
+		t.Fatal("nested completion retained ownership")
+	}
+}
+
+// telemetryEventAnnotator represents a third-party processor enriching framework operation spans.
+type telemetryEventAnnotator struct{}
+
+// OnStart adds an application event even when the framework already owns the rich operation observation.
+func (telemetryEventAnnotator) OnStart(_ context.Context, span sdktrace.ReadWriteSpan) {
+	span.AddEvent("processor annotation")
+}
+
+// OnEnd leaves delivery to the provider's other processors.
+func (telemetryEventAnnotator) OnEnd(sdktrace.ReadOnlySpan) {}
+
+// Shutdown has no resources to release for this synchronous processor.
+func (telemetryEventAnnotator) Shutdown(context.Context) error { return nil }
+
+// ForceFlush has no queued work for this synchronous processor.
+func (telemetryEventAnnotator) ForceFlush(context.Context) error { return nil }
+
+// TestTelemetrySequentialOperationsKeepProcessorEvents preserves annotations without allocating child overflow storage.
+func TestTelemetrySequentialOperationsKeepProcessorEvents(t *testing.T) {
+	manager := newTestManager(t)
+	manager.TracerProvider().RegisterSpanProcessor(telemetryEventAnnotator{})
+	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", nil)
+	recorder := RecorderFromContext(ctx)
+	for range 4 {
+		manager.RecordCacheEvent(ctx, CacheOperationInspectEvent{Name: "users", Operation: "get"})
+		if recorder.childSpan != (spanIdentity{}) || recorder.childSpans != nil {
+			t.Fatal("sequential operation retained child ownership or allocated overflow")
+		}
+	}
+	manager.Finish(ctx, "ok", nil)
+	record, ok, err := manager.ByID(context.Background(), InspectIDFromContext(ctx))
+	if err != nil || !ok {
+		t.Fatalf("capture missing: %v", err)
+	}
+	annotations, operations := 0, 0
+	for _, event := range record.Events {
+		if event.Name == "processor annotation" {
+			annotations++
+		}
+		if event.Kind == EventKindCache {
+			operations++
+		}
+	}
+	if annotations != 5 || operations != 4 {
+		t.Fatalf("processor events or operations lost: annotations=%d, operations=%d", annotations, operations)
+	}
+}
+
+// TestTelemetryForeignProviderCannotOwnCapture keeps providers from modifying another manager's ownership index.
+func TestTelemetryForeignProviderCannotOwnCapture(t *testing.T) {
+	owner := newTestManager(t)
+	foreign := newTestManager(t)
+	exporter := tracetest.NewInMemoryExporter()
+	foreign.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+	for range 100 {
+		ctx := owner.Begin(context.Background(), runtime.SourceHTTP, "owned", nil)
+		_, child := foreign.TracerProvider().Tracer("foreign").Start(ctx, "foreign child")
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); owner.Finish(ctx, "ok", nil) }()
+		go func() { defer wg.Done(); child.End() }()
+		wg.Wait()
+		if len(owner.tracing.owners) != 0 || len(foreign.tracing.owners) != 0 {
+			t.Fatal("cross-provider child retained a foreign association")
+		}
+	}
+	if got := len(exporter.GetSpans()); got != 100 {
+		t.Fatalf("foreign SDK export lost spans: %d", got)
+	}
+}
+
+// TestTelemetryNativeChildAttributesRemainComplete preserves application attributes and authoritative projected duration.
+func TestTelemetryNativeChildAttributesRemainComplete(t *testing.T) {
+	manager := newTestManager(t)
+	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", nil)
+	attributes := []attribute.KeyValue{attribute.Int64("duration_ns", -1)}
+	for index := range 16 {
+		attributes = append(attributes, attribute.Int("attribute."+strconv.Itoa(index), index))
+	}
+	_, child := manager.TracerProvider().Tracer("app").Start(ctx, "attributed child", trace.WithAttributes(attributes...))
+	child.End()
+	manager.Finish(ctx, "ok", nil)
+	record, ok, err := manager.ByID(context.Background(), InspectIDFromContext(ctx))
+	if err != nil || !ok || len(record.Events) != 1 {
+		t.Fatalf("native child missing: %+v, %v", record, err)
+	}
+	got := record.Events[0].Attributes
+	if len(got) != 17 || got["duration_ns"].(int64) < 0 {
+		t.Fatalf("native projection lost attributes or duration: %v", got)
+	}
+	for index := range 16 {
+		if got["attribute."+strconv.Itoa(index)] != int64(index) {
+			t.Fatalf("native attribute %d changed: %v", index, got)
 		}
 	}
 }

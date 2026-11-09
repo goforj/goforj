@@ -191,16 +191,37 @@ func (m *Manager) trackSpan(spanContext trace.SpanContext, recorder *Recorder) {
 	id := identityForSpan(spanContext)
 	// Nested executions take ownership of their span instead of remaining a child projection of the outer inspect.
 	if previous := m.tracing.owners[id]; previous != nil {
-		delete(previous.childSpans, id)
+		previous.forgetChildSpan(id)
 	}
 	m.tracing.owners[id] = recorder
 	m.tracing.mu.Unlock()
 }
 
+// trackChildSpan avoids a map allocation for sequential children; callers hold the tracing ownership lock.
+func (r *Recorder) trackChildSpan(id spanIdentity) {
+	if r.childSpan == (spanIdentity{}) {
+		r.childSpan = id
+		return
+	}
+	if r.childSpans == nil {
+		r.childSpans = make(map[spanIdentity]struct{})
+	}
+	r.childSpans[id] = struct{}{}
+}
+
+// forgetChildSpan preserves a reusable inline slot even while other children occupy overflow storage.
+func (r *Recorder) forgetChildSpan(id spanIdentity) {
+	if r.childSpan == id {
+		r.childSpan = spanIdentity{}
+		return
+	}
+	delete(r.childSpans, id)
+}
+
 // OnStart associates application-created child spans with their current inspect without changing their context.
 func (p *lighthouseProcessor) OnStart(ctx context.Context, span sdktrace.ReadWriteSpan) {
 	recorder := RecorderFromContext(ctx)
-	if recorder == nil {
+	if recorder == nil || recorder.manager != p.manager {
 		return
 	}
 	recorder.projectionMu.Lock()
@@ -215,10 +236,7 @@ func (p *lighthouseProcessor) OnStart(ctx context.Context, span sdktrace.ReadWri
 		return
 	}
 	id := identityForSpan(span.SpanContext())
-	if recorder.childSpans == nil {
-		recorder.childSpans = make(map[spanIdentity]struct{})
-	}
-	recorder.childSpans[id] = struct{}{}
+	recorder.trackChildSpan(id)
 	state.owners[id] = recorder
 }
 
@@ -230,7 +248,7 @@ func (p *lighthouseProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 	recorder := state.owners[id]
 	delete(state.owners, id)
 	if recorder != nil {
-		delete(recorder.childSpans, id)
+		recorder.forgetChildSpan(id)
 	}
 	state.mu.Unlock()
 	if recorder == nil {
@@ -255,11 +273,16 @@ func (p *lighthouseProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 		if isInspectEvent(span.Attributes()) {
 			return
 		}
+		spanAttributes := span.Attributes()
+		attributes := make(map[string]any, len(spanAttributes)+1)
+		for _, value := range spanAttributes {
+			attributes[string(value.Key)] = value.Value.AsInterface()
+		}
+		attributes["duration_ns"] = span.EndTime().Sub(span.StartTime()).Nanoseconds()
 		p.manager.appendEvent(recorder.state, InspectEvent{
 			Kind: EventKindAnnotation, Name: span.Name(), At: span.StartTime(),
 			SpanID: span.SpanContext().SpanID().String(), ParentSpanID: span.Parent().SpanID().String(),
-			Status: span.Status().Code.String(), Attributes: telemetryAttributes(append(span.Attributes(),
-				attribute.Int64("duration_ns", span.EndTime().Sub(span.StartTime()).Nanoseconds()))),
+			Status: span.Status().Code.String(), Attributes: attributes,
 		})
 		return
 	}
@@ -271,13 +294,15 @@ func (p *lighthouseProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 	}
 	recorder.state.mu.Unlock()
 	status := recorder.terminalStatus
-	if span.Status().Code == codes.Error {
+	if span.Status().Code == codes.Error && status != statusCanceled {
 		status = statusError
 	}
 	_ = p.manager.finishStateAt(context.Background(), recorder.inspectID, recorder.state, status, recorder.terminalError, span.EndTime())
 	recorder.state = nil
 	// Detached application spans may outlive the inspect, so release their projection associations now.
 	state.mu.Lock()
+	delete(state.owners, recorder.childSpan)
+	recorder.childSpan = spanIdentity{}
 	for id := range recorder.childSpans {
 		delete(state.owners, id)
 	}

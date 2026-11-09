@@ -181,6 +181,40 @@ func TestHTTPSpansHandleClientErrorsAndPanics(t *testing.T) {
 	}
 }
 
+// TestHTTPTimeoutKeepsServerStatusUnset preserves Lighthouse cancellation without counting a client response as a server failure.
+func TestHTTPTimeoutKeepsServerStatusUnset(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	manager := inspects.NewManager()
+	defer manager.Shutdown(context.Background())
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+	server := &Server{inspectManager: manager}
+	handler := server.inspectContextMiddleware()(func(r web.Context) error {
+		return r.NoContent(http.StatusRequestTimeout)
+	})
+	request := httptest.NewRequest(http.MethodGet, "/timeout", nil)
+	if err := handler(webtest.NewContext(request, httptest.NewRecorder(), "/timeout", nil)); err != nil {
+		t.Fatal(err)
+	}
+	spans := exporter.GetSpans()
+	if len(spans) != 1 || spans[0].Status.Code != codes.Unset {
+		t.Fatalf("408 server span must retain unset status: %+v", spans)
+	}
+	foundStatus := false
+	for _, attribute := range spans[0].Attributes {
+		if attribute.Key == "http.response.status_code" {
+			foundStatus = attribute.Value.AsInt64() == http.StatusRequestTimeout
+		}
+	}
+	if !foundStatus {
+		t.Fatal("408 response status was not recorded")
+	}
+	summaries, err := manager.Recent(context.Background(), inspects.RecentQuery{})
+	if err != nil || len(summaries) != 1 || summaries[0].Status != "canceled" {
+		t.Fatalf("Lighthouse timeout must retain canceled status: %+v, %v", summaries, err)
+	}
+}
+
 // TestHTTPSpanFinalAttributes preserves method, registered route, and status when attributes are finalized together.
 func TestHTTPSpanFinalAttributes(t *testing.T) {
 	for _, route := range []string{"", "/users/:id"} {

@@ -148,6 +148,36 @@ func (c *inspectContext) Value(key any) any {
 	}
 }
 
+// unrecordedInspectContext isolates skipped executions from their parent's recorder while preserving propagation.
+type unrecordedInspectContext struct {
+	context.Context
+	source runtime.Source
+}
+
+// AppSource preserves the runtime identity across the standard SDK context wrapper.
+func (c unrecordedInspectContext) AppSource() runtime.Source { return c.source }
+
+// InspectRecorder prevents a skipped nested execution from completing its parent.
+func (c unrecordedInspectContext) InspectRecorder() *Recorder { return nil }
+
+// Value hides inspect lookup state while forwarding application values and the SDK span.
+func (c unrecordedInspectContext) Value(key any) any {
+	switch key {
+	case recorderContextKey{}, inspectIDContextKey{}:
+		return nil
+	default:
+		return c.Context.Value(key)
+	}
+}
+
+// withoutInspectRecorder keeps the common inactive path allocation-free and isolates nested execution boundaries.
+func withoutInspectRecorder(ctx context.Context, source runtime.Source) context.Context {
+	if RecorderFromContext(ctx) == nil {
+		return ctx
+	}
+	return unrecordedInspectContext{Context: ctx, source: source}
+}
+
 type recorderContextProvider interface {
 	InspectRecorder() *Recorder
 }
@@ -323,7 +353,8 @@ var inflightInspectPool = sync.Pool{
 // Recorder is the lightweight execution-scoped inspect handle.
 type Recorder struct {
 	projectionMu   sync.Mutex
-	childSpans     map[spanIdentity]struct{} // childSpans shares the tracing ownership lock so cleanup and reassignment are atomic.
+	childSpan      spanIdentity // childSpan and childSpans share the tracing ownership lock.
+	childSpans     map[spanIdentity]struct{}
 	span           trace.Span
 	spanContext    context.Context
 	terminalStatus string
@@ -331,11 +362,7 @@ type Recorder struct {
 	manager        *Manager
 	inspectID      string
 	state          *inflightInspect
-	source         runtime.Source
-	name           string
-	labels         map[string]string
 	once           sync.Once
-	owner          *inspectContext
 }
 
 var inspectIDSeed = strconv.FormatInt(time.Now().UnixNano(), 36)
@@ -511,7 +538,7 @@ func (m *Manager) Begin(ctx context.Context, source runtime.Source, name string,
 		ctx = context.Background()
 	}
 	if !m.TracingEnabled() {
-		return ctx
+		return withoutInspectRecorder(ctx, runtime.SourceFromContext(ctx))
 	}
 	previousSource := runtime.SourceFromContext(ctx)
 	if source == "" {
@@ -520,20 +547,19 @@ func (m *Manager) Begin(ctx context.Context, source runtime.Source, name string,
 	if source == "" {
 		source = runtime.SourceApp
 	}
-	ctx, span := m.tracing.tracer.Start(ctx, normalizeInspectName(name), executionStartOptions(source)...)
+	name = normalizeInspectName(name)
+	ctx, span := m.tracing.tracer.Start(ctx, name, executionStartOptions(source)...)
 	if !span.IsRecording() {
-		return ctx
+		return withoutInspectRecorder(ctx, previousSource)
 	}
 	inspectCtx := acquireInspectContext()
 	inspectCtx.Context = ctx
 	inspectCtx.source = source
 	inspectCtx.recorder = Recorder{
-		manager: m, inspectID: newInspectID(), source: source,
-		name: normalizeInspectName(name), labels: labels, owner: inspectCtx,
-		span: span, spanContext: ctx,
+		manager: m, inspectID: newInspectID(), span: span, spanContext: ctx,
 	}
 	if m.Enabled() && m.captureAllowed() && m.shouldSample() && m.tryAcquireInflight() {
-		inspectCtx.recorder.state = m.beginRecord(&inspectCtx.recorder)
+		inspectCtx.recorder.state = m.beginRecord(&inspectCtx.recorder, source, name, labels)
 		m.trackSpan(span.SpanContext(), &inspectCtx.recorder)
 	} else {
 		inspectCtx.source = previousSource
@@ -554,7 +580,7 @@ func (m *Manager) BeginHTTPRecorder(ctx context.Context, name string) *Recorder 
 // Finish finalizes the active inspect in ctx when one exists.
 func (m *Manager) Finish(ctx context.Context, status string, err error) {
 	recorder := RecorderFromContext(ctx)
-	if recorder == nil {
+	if recorder == nil || recorder.manager != m {
 		return
 	}
 	recorder.Finish(status, err)
@@ -926,15 +952,20 @@ func (r *Recorder) recordEvent(ctx context.Context, event InspectEvent) {
 	if r == nil {
 		return
 	}
+	var identity trace.SpanContext
 	if r.span != nil {
-		identity := r.recordTelemetryEvent(ctx, event)
-		if identity.IsValid() {
-			event.SpanID = identity.SpanID().String()
-		}
+		identity = r.recordTelemetryEvent(ctx, event)
 	}
 	r.projectionMu.Lock()
 	defer r.projectionMu.Unlock()
 	if r.state != nil {
+		if identity.IsValid() {
+			if event.Kind == EventKindHTTP {
+				event.SpanID = r.state.record.Summary.SpanID
+			} else {
+				event.SpanID = identity.SpanID().String()
+			}
+		}
 		r.manager.appendEvent(r.state, event)
 	}
 }
@@ -945,42 +976,38 @@ func (r *Recorder) Finish(status string, err error) {
 		return
 	}
 	r.once.Do(func() {
-		r.terminalStatus = normalizeStatus(status, err)
+		terminalStatus := normalizeStatus(status, err)
+		r.projectionMu.Lock()
+		r.terminalStatus = terminalStatus
 		r.terminalError = err
+		r.projectionMu.Unlock()
 		if r.span != nil {
 			if err != nil {
 				r.span.RecordError(err)
 			}
-			if r.terminalStatus == statusError || r.terminalStatus == statusCanceled {
-				r.span.SetStatus(codes.Error, r.terminalStatus)
+			if terminalStatus == statusError || (terminalStatus == statusCanceled && err != nil) {
+				r.span.SetStatus(codes.Error, terminalStatus)
 			}
 			r.span.End()
 		}
-		r.releaseOwner()
 	})
 }
 
-func (r *Recorder) releaseOwner() {
-	if r == nil || r.owner == nil {
-		return
-	}
-	releaseInspectContext(r.owner)
-	r.owner = nil
-}
-
-func (m *Manager) beginRecord(recorder *Recorder) *inflightInspect {
+// beginRecord materializes capture-only metadata without retaining construction inputs on the recorder.
+func (m *Manager) beginRecord(recorder *Recorder, source runtime.Source, name string, labels map[string]string) *inflightInspect {
 	now := m.now()
+	spanContext := recorder.span.SpanContext()
 	record := Record{
 		Summary: InspectSummary{
 			TraceID:     recorder.inspectID,
-			OTelTraceID: recorder.span.SpanContext().TraceID().String(),
-			SpanID:      recorder.span.SpanContext().SpanID().String(),
-			Source:      recorder.source.String(),
-			Name:        recorder.name,
+			OTelTraceID: spanContext.TraceID().String(),
+			SpanID:      spanContext.SpanID().String(),
+			Source:      source.String(),
+			Name:        name,
 			Status:      statusRunning,
 			StartedAt:   now,
 			UpdatedAt:   now,
-			Labels:      cloneStringMap(recorder.labels),
+			Labels:      cloneStringMap(labels),
 		},
 		Events: nil,
 	}
@@ -992,7 +1019,7 @@ func (m *Manager) beginRecord(recorder *Recorder) *inflightInspect {
 	state.eventLen = 0
 	state.maxEvents = m.config.MaxEvents
 	state.finished = false
-	state.indexed = recorder.source != runtime.SourceHTTP
+	state.indexed = source != runtime.SourceHTTP
 	if state.indexed {
 		m.inflightMu.Lock()
 		m.inflight[recorder.inspectID] = state
@@ -1437,11 +1464,9 @@ func releaseInflightInspect(state *inflightInspect) {
 	inflightInspectPool.Put(state)
 }
 
+// acquireInspectContext preserves distinct lifetimes because downstream spans may retain completed contexts.
 func acquireInspectContext() *inspectContext {
 	return &inspectContext{}
-}
-
-func releaseInspectContext(inspectCtx *inspectContext) {
 }
 
 func acquireHTTPHeaders(capHint int) []HTTPHeader {
