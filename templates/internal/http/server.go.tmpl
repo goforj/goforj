@@ -441,8 +441,12 @@ func (s *Server) routerMounts() []web.RouterMount {
 
 // mountRuntimeMiddleware activates only middleware backed by dependencies enabled for this App.
 func (s *Server) mountRuntimeMiddleware(router web.Router) error {
-	router.Use(s.sourceContextMiddleware(runtime.SourceHTTP))
-	router.Use(s.inspectContextMiddleware())
+ if s.inspectEnabled {
+  router.Use(s.inspectContextMiddleware())
+ } else {
+  router.Use(s.sourceContextMiddleware(runtime.SourceHTTP))
+  if s.inspectManager.TracingEnabled() { router.Use(s.inspectContextMiddleware()) }
+ }
 {{- if .ProjectComponents.Metrics }}
 	if s.metrics != nil && s.metrics.HTTPEnabled() {
 		router.Use(s.metrics.HTTPMiddleware())
@@ -611,13 +615,16 @@ func (s *Server) sourceContextMiddleware(source runtime.Source) web.Middleware {
 func (s *Server) inspectContextMiddleware() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			if strings.HasPrefix(r.URI(), "/lighthouse/") || r.Path() == "/metrics" {
+			if !s.inspectManager.TracingEnabled() { return next(r) }
+   if strings.HasPrefix(r.URI(), "/lighthouse/") || r.Path() == "/metrics" {
 				return next(r)
 			}
 			ctx := r.Context()
+   source := runtime.SourceFromContext(ctx)
 			if req := web.RawRequest(r); req != nil {
 				ctx = (propagation.TraceContext{}).Extract(ctx, propagation.HeaderCarrier(req.Header))
 			}
+   if source != "" { ctx = runtime.WithSource(ctx, source) }
 			route := r.Path()
 			name := r.Method()
 			if route != "" {

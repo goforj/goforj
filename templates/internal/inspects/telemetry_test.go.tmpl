@@ -75,6 +75,7 @@ func TestTelemetryExportIndependentFromLighthouse(t *testing.T) {
 	for _, mode := range []string{"disabled", "gated", "sampled-out", "capacity"} {
 		t.Run(mode, func(t *testing.T) {
 			manager := newTestManager(t)
+			manager.tracing.external = true
 			exporter := tracetest.NewInMemoryExporter()
 			manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
 			switch mode {
@@ -365,6 +366,7 @@ func TestTelemetryProjectionScopesSpanIdentityToTrace(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.tracing.provider = sdktrace.NewTracerProvider(sdktrace.WithIDGenerator(fixedSpanIDGenerator{}), sdktrace.WithSpanProcessor(&lighthouseProcessor{manager: manager}))
+	manager.tracing.tracer = manager.tracing.provider.Tracer("github.com/goforj/goforj")
 	defer manager.Shutdown(context.Background())
 	var contexts []context.Context
 	for _, id := range []byte{1, 2} {
@@ -395,5 +397,33 @@ func TestTelemetryNestedExecutionsHaveIndependentLifecycles(t *testing.T) {
 	innerRecord, _, _ := manager.ByID(context.Background(), InspectIDFromContext(inner))
 	if outerRecord.Summary.OTelTraceID != innerRecord.Summary.OTelTraceID || innerRecord.Summary.ParentSpanID != outerRecord.Summary.SpanID {
 		t.Fatal("nested execution lost its OTel parent")
+	}
+}
+
+// TestTelemetryPreservesRuntimeSourceWithoutCapture keeps OTel enablement from changing existing metric labels.
+func TestTelemetryPreservesRuntimeSourceWithoutCapture(t *testing.T) {
+	for _, source := range []runtime.Source{"", runtime.SourceHTTP} {
+		manager := newTestManager(t)
+		manager.tracing.external = true
+		manager.SetCaptureGate(func() bool { return false })
+		original := runtime.WithSource(context.Background(), source)
+		ctx := manager.Begin(original, runtime.SourceHTTP, "request", nil)
+		if got := runtime.SourceFromContext(ctx); got != source {
+			t.Fatalf("runtime source changed from %q to %q", source, got)
+		}
+		manager.Finish(ctx, "ok", nil)
+	}
+}
+
+// TestTelemetrySkipsInactiveLighthouse keeps disconnected local inspection off the request hot path.
+func TestTelemetrySkipsInactiveLighthouse(t *testing.T) {
+	manager := newTestManager(t)
+	manager.SetCaptureGate(func() bool { return false })
+	original := context.Background()
+	if manager.TracingEnabled() {
+		t.Fatal("inactive Lighthouse requires no trace capture")
+	}
+	if got := manager.Begin(original, runtime.SourceHTTP, "request", nil); got != original {
+		t.Fatal("inactive capture replaced context")
 	}
 }

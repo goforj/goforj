@@ -14,7 +14,6 @@ import (
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str/v2"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"{{.GoModuleName}}/internal/runtime"
@@ -510,15 +509,17 @@ func (m *Manager) Begin(ctx context.Context, source runtime.Source, name string,
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if !m.TracingEnabled() {
+		return ctx
+	}
+	previousSource := runtime.SourceFromContext(ctx)
 	if source == "" {
-		source = runtime.SourceFromContext(ctx)
+		source = previousSource
 	}
 	if source == "" {
 		source = runtime.SourceApp
 	}
-	ctx, span := m.TracerProvider().Tracer("github.com/goforj/goforj").Start(ctx, normalizeInspectName(name),
-		trace.WithTimestamp(m.now()), trace.WithSpanKind(executionSpanKind(source)),
-		trace.WithAttributes(attribute.String("goforj.source", source.String())))
+	ctx, span := m.tracing.tracer.Start(ctx, normalizeInspectName(name), executionStartOptions(source)...)
 	if !span.IsRecording() {
 		return ctx
 	}
@@ -533,6 +534,8 @@ func (m *Manager) Begin(ctx context.Context, source runtime.Source, name string,
 	if m.Enabled() && m.captureAllowed() && m.shouldSample() && m.tryAcquireInflight() {
 		inspectCtx.recorder.state = m.beginRecord(&inspectCtx.recorder)
 		m.trackSpan(span.SpanContext(), &inspectCtx.recorder)
+	} else {
+		inspectCtx.source = previousSource
 	}
 	return inspectCtx
 }
@@ -950,7 +953,7 @@ func (r *Recorder) Finish(status string, err error) {
 			if r.terminalStatus == statusError || r.terminalStatus == statusCanceled {
 				r.span.SetStatus(codes.Error, r.terminalStatus)
 			}
-			r.span.End(trace.WithTimestamp(r.manager.now()))
+			r.span.End()
 		}
 		r.releaseOwner()
 	})

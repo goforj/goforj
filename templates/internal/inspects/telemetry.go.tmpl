@@ -26,6 +26,9 @@ import (
 // tracingState owns the SDK and the bounded association of active spans with Lighthouse captures.
 type tracingState struct {
 	provider *sdktrace.TracerProvider
+	tracer   trace.Tracer
+	enabled  bool
+	external bool
 	mu       sync.Mutex
 	owners   map[spanIdentity]*Recorder
 }
@@ -46,13 +49,14 @@ type lighthouseProcessor struct{ manager *Manager }
 
 // initTracing keeps standalone manager usage local and free of network exporters.
 func (m *Manager) initTracing() {
-	m.tracing = &tracingState{owners: make(map[spanIdentity]*Recorder)}
+	m.tracing = &tracingState{owners: make(map[spanIdentity]*Recorder), enabled: m.config.Enabled}
 	sampler := sdktrace.NeverSample()
 	if m.config.Enabled {
 		sampler = sdktrace.ParentBased(sdktrace.AlwaysSample())
 	}
 	m.tracing.provider = sdktrace.NewTracerProvider(
 		sdktrace.WithSampler(sampler), sdktrace.WithSpanProcessor(&lighthouseProcessor{manager: m}))
+	m.tracing.tracer = m.tracing.provider.Tracer("github.com/goforj/goforj")
 }
 
 // TracerProvider exposes the standard provider for application spans and client instrumentation.
@@ -120,6 +124,9 @@ func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
 		return err
 	}
 	m.tracing.provider = sdktrace.NewTracerProvider(options...)
+	m.tracing.tracer = m.tracing.provider.Tracer("github.com/goforj/goforj")
+	m.tracing.external = exportEnabled || strings.TrimSpace(os.Getenv("OTEL_TRACES_SAMPLER")) != ""
+	m.tracing.enabled = !disabled && (m.config.Enabled || m.tracing.external)
 	otel.SetTracerProvider(m.tracing.provider)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	return nil
@@ -292,6 +299,9 @@ func telemetryAttributes(attributes []attribute.KeyValue) map[string]any {
 
 // recordTelemetryEvent exports bounded operational metadata while keeping rich inspect payloads local.
 func (r *Recorder) recordTelemetryEvent(ctx context.Context, event InspectEvent) trace.SpanContext {
+	if event.Kind == EventKindHTTP {
+		return r.span.SpanContext()
+	}
 	attributes := []attribute.KeyValue{
 		attribute.Bool("goforj.inspect.event", true),
 		attribute.String("goforj.operation.kind", string(event.Kind)),
@@ -319,7 +329,7 @@ func (r *Recorder) recordTelemetryEvent(ctx context.Context, event InspectEvent)
 		if duration < 0 {
 			duration = 0
 		}
-		_, span := r.manager.TracerProvider().Tracer("github.com/goforj/goforj").Start(ctx,
+		_, span := r.manager.tracing.tracer.Start(ctx,
 			string(event.Kind)+" "+event.Name, trace.WithTimestamp(at.Add(-time.Duration(duration))),
 			trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attributes...))
 		if event.Status == statusError {
@@ -352,3 +362,27 @@ func (m *Manager) Capturing(ctx context.Context) bool {
 	defer recorder.projectionMu.Unlock()
 	return recorder.state != nil
 }
+
+// TracingEnabled skips span work when neither an external consumer nor active Lighthouse capture needs it.
+func (m *Manager) TracingEnabled() bool {
+	return m.tracing.enabled && (m.tracing.external || m.CaptureAllowed())
+}
+
+// executionStartOptions reuses immutable SDK options for the framework's bounded runtime roles.
+func executionStartOptions(source runtime.Source) []trace.SpanStartOption {
+	if options, ok := executionOptions[source]; ok {
+		return options
+	}
+	return []trace.SpanStartOption{trace.WithSpanKind(executionSpanKind(source)), trace.WithAttributes(attribute.String("goforj.source", source.String()))}
+}
+
+// newExecutionOptions prepares runtime span contracts once instead of allocating option wrappers per request.
+func newExecutionOptions() map[runtime.Source][]trace.SpanStartOption {
+	options := make(map[runtime.Source][]trace.SpanStartOption)
+	for _, source := range []runtime.Source{runtime.SourceHTTP, runtime.SourceJobs, runtime.SourceScheduler, runtime.SourceCLI, runtime.SourceStartup, runtime.SourceApp, runtime.SourceLighthouse} {
+		options[source] = []trace.SpanStartOption{trace.WithSpanKind(executionSpanKind(source)), trace.WithAttributes(attribute.String("goforj.source", source.String()))}
+	}
+	return options
+}
+
+var executionOptions = newExecutionOptions()

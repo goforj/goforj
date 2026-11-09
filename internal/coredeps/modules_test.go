@@ -25,6 +25,7 @@ func TestSyncCoreLibrariesIncludesStr(t *testing.T) {
 // TestSyncCoreLibrariesIncludesBaseModules verifies generated Apps pin every always-rendered GoForj dependency explicitly.
 func TestSyncCoreLibrariesIncludesBaseModules(t *testing.T) {
 	modules := []string{
+		"google.golang.org/grpc", "github.com/andybalholm/brotli",
 		"go.opentelemetry.io/otel",
 		"go.opentelemetry.io/otel/trace",
 		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
@@ -214,6 +215,7 @@ func TestSyncCoreLibrariesGatesWebMinimums(t *testing.T) {
 // TestUsesMinimumVersion keeps ecosystem security floors separate from exact framework release pins.
 func TestUsesMinimumVersion(t *testing.T) {
 	for _, module := range []string{
+		"google.golang.org/grpc", "github.com/andybalholm/brotli",
 		"go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace",
 		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
 		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc",

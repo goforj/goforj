@@ -141,6 +141,8 @@ generated_version_for_module() {
 
 override_version_for_module() {
   case "$1" in
+    google.golang.org/grpc) echo "v1.83.2" ;;
+    github.com/andybalholm/brotli) echo "v1.2.7" ;;
     go.opentelemetry.io/proto/otlp) echo "v1.11.0" ;;
     go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc|go.opentelemetry.io/otel/sdk) echo "v1.45.0" ;;
     github.com/charmbracelet/x/cellbuf) echo "v0.0.15" ;;
@@ -259,6 +261,8 @@ fi
   echo "github.com/goforj/godump"
   # Lip Gloss v1 remains in generated framework graphs and needs the cell buffer compatible with ANSI v0.11.
   echo "github.com/charmbracelet/x/cellbuf"
+  echo "google.golang.org/grpc"
+  echo "github.com/andybalholm/brotli"
   # Template dependencies can otherwise select transitive releases with known archive and TLS defects.
   echo "filippo.io/edwards25519"
   echo "github.com/jackc/pgx/v5"

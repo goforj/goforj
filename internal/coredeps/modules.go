@@ -8,6 +8,8 @@ import (
 
 // pinnedModuleVersions records validated framework releases and ecosystem security minimums for rendered projects.
 var pinnedModuleVersions = map[string]string{
+	"google.golang.org/grpc":                                          "v1.83.2",
+	"github.com/andybalholm/brotli":                                   "v1.2.7",
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp":   "v0.69.0",
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc": "v1.45.0",
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp": "v1.45.0",
@@ -90,6 +92,8 @@ var pinnedModuleVersions = map[string]string{
 // UsesMinimumVersion identifies ecosystem fixes that must not downgrade a caller-selected newer version.
 func UsesMinimumVersion(module string) bool {
 	switch module {
+	case "google.golang.org/grpc", "github.com/andybalholm/brotli":
+		return true
 	case "go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace",
 		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
 		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc",
@@ -108,6 +112,8 @@ var webRendererSyncModules = []string{
 }
 
 var rendererSyncModules = []string{
+	"google.golang.org/grpc",
+	"github.com/andybalholm/brotli",
 	"go.opentelemetry.io/otel",
 	"go.opentelemetry.io/otel/trace",
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
