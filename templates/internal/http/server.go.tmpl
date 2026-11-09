@@ -615,49 +615,58 @@ func (s *Server) sourceContextMiddleware(source runtime.Source) web.Middleware {
 func (s *Server) inspectContextMiddleware() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			if !s.inspectManager.TracingEnabled() { return next(r) }
-   if strings.HasPrefix(r.URI(), "/lighthouse/") || r.Path() == "/metrics" {
+			if !s.inspectManager.TracingEnabled() {
 				return next(r)
 			}
-			ctx := r.Context()
-   source := runtime.SourceFromContext(ctx)
-			if req := web.RawRequest(r); req != nil {
-				ctx = (propagation.TraceContext{}).Extract(ctx, propagation.HeaderCarrier(req.Header))
+			if strings.HasPrefix(r.URI(), "/lighthouse/") || r.Path() == "/metrics" {
+				return next(r)
 			}
-   if source != "" { ctx = runtime.WithSource(ctx, source) }
-			route := r.Path()
-			name := r.Method()
-			if route != "" {
-				name += " " + route
-			}
-			ctx = s.inspectManager.BeginHTTP(ctx, name)
-			web.BindContext(r, ctx)
-			span := trace.SpanFromContext(ctx)
-			span.SetAttributes(attribute.String("http.request.method", r.Method()))
-			if route != "" {
-				span.SetAttributes(attribute.String("http.route", route))
-			}
-			var err error
-			defer func() {
-				panicValue := recover()
-				if panicValue != nil {
-					err = fmt.Errorf("HTTP handler panic: %v", panicValue)
-				}
-				status := httpSpanStatus(r.Response().Committed(), r.StatusCode(), err)
-				span.SetAttributes(attribute.Int("http.response.status_code", status))
-				spanErr := err
-				if status >= 400 && status < 500 {
-					spanErr = nil
-				}
-				s.inspectManager.Finish(ctx, httpInspectStatus(status, spanErr), spanErr)
-				if panicValue != nil {
-					panic(panicValue)
-				}
-			}()
-			err = next(r)
-			return err
+			return s.traceHTTPExecution(r, next)
 		}
 	}
+}
+
+// traceHTTPExecution keeps SDK setup and deferred cleanup out of the inactive middleware stack frame.
+func (s *Server) traceHTTPExecution(r web.Context, next web.Handler) error {
+	ctx := r.Context()
+	source := runtime.SourceFromContext(ctx)
+	if req := web.RawRequest(r); req != nil {
+		ctx = (propagation.TraceContext{}).Extract(ctx, propagation.HeaderCarrier(req.Header))
+	}
+	if source != "" {
+		ctx = runtime.WithSource(ctx, source)
+	}
+	route := r.Path()
+	name := r.Method()
+	if route != "" {
+		name += " " + route
+	}
+	ctx = s.inspectManager.BeginHTTP(ctx, name)
+	web.BindContext(r, ctx)
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(attribute.String("http.request.method", r.Method()))
+	if route != "" {
+		span.SetAttributes(attribute.String("http.route", route))
+	}
+	var err error
+	defer func() {
+		panicValue := recover()
+		if panicValue != nil {
+			err = fmt.Errorf("HTTP handler panic: %v", panicValue)
+		}
+		status := httpSpanStatus(r.Response().Committed(), r.StatusCode(), err)
+		span.SetAttributes(attribute.Int("http.response.status_code", status))
+		spanErr := err
+		if status >= 400 && status < 500 {
+			spanErr = nil
+		}
+		s.inspectManager.Finish(ctx, httpInspectStatus(status, spanErr), spanErr)
+		if panicValue != nil {
+			panic(panicValue)
+		}
+	}()
+	err = next(r)
+	return err
 }
 
 // httpSpanStatus resolves the eventual response before the adapter renders a returned handler error.
