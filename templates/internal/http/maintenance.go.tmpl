@@ -81,13 +81,13 @@ func (s *Server) maintenanceMode() web.Middleware {
 
 // maintenanceControlPath recognizes the exact control paths before router method handling can reveal them.
 func maintenanceControlPath(r web.Context) bool {
-	request := r.Request()
+	request := web.RawRequest(r)
 	return request.URL.Path == "/-/maintenance/enable" || request.URL.Path == "/-/maintenance/disable"
 }
 
 // maintenanceControlRequest restricts mutation routing to the CLI's POST contract.
 func maintenanceControlRequest(r web.Context) bool {
-	request := r.Request()
+	request := web.RawRequest(r)
 	return maintenanceControlPath(r) && request.Method == http.MethodPost
 }
 
