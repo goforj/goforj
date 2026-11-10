@@ -19,9 +19,9 @@ func TestTraceEndpointForRuntime(t *testing.T) {
 		host, invalid                                                   bool
 	}{
 		{name: "host", environment: "local", profiles: "grafana", host: true, want: "http://127.0.0.1:14318"},
-		{name: "container", environment: "local", profiles: "grafana", want: "http://tempo:4318"},
+		{name: "container", environment: "local", profiles: "grafana", want: "http://alloy:4318"},
 		{name: "grpc host", environment: "local", profiles: "grafana", protocol: "grpc", host: true, want: "http://127.0.0.1:14317"},
-		{name: "grpc container", environment: "local", profiles: "grafana", protocol: "grpc", want: "http://tempo:4317"},
+		{name: "grpc container", environment: "local", profiles: "grafana", protocol: "grpc", want: "http://alloy:4317"},
 		{name: "custom http", environment: "local", profiles: "other, grafana ", httpPort: "15418", host: true, want: "http://127.0.0.1:15418"},
 		{name: "custom grpc", environment: "local", profiles: "*", protocol: "grpc", grpcPort: "15417", host: true, want: "http://127.0.0.1:15417"},
 		{name: "production", environment: "production", profiles: "grafana", httpPort: "invalid", host: true},
@@ -31,7 +31,7 @@ func TestTraceEndpointForRuntime(t *testing.T) {
 		{name: "invalid port", environment: "local", profiles: "grafana", httpPort: "invalid", host: true, invalid: true},
 		{name: "zero port", environment: "local", profiles: "grafana", httpPort: "0", host: true, invalid: true},
 		{name: "large port", environment: "local", profiles: "grafana", grpcPort: "65536", protocol: "grpc", host: true, invalid: true},
-		{name: "container ignores host port", environment: "local", profiles: "grafana", httpPort: "invalid", want: "http://tempo:4318"},
+		{name: "container ignores host port", environment: "local", profiles: "grafana", httpPort: "invalid", want: "http://alloy:4318"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("IP_ADDRESS", "")

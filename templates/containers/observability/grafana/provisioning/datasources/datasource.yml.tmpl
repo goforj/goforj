@@ -17,8 +17,33 @@ datasources:
     isDefault: false
     editable: false
     jsonData:
+      tracesToLogsV2:
+        datasourceUid: goforj-loki
+        spanStartTimeShift: '-1m'
+        spanEndTimeShift: '1m'
+        tags:
+          - key: service.name
+            value: service_name
+        customQuery: true
+        query: '{$${__tags}} | trace_id="$${__span.traceId}"'
       httpMethod: GET
       nodeGraph:
         enabled: true
       streamingEnabled:
         search: false
+
+  - name: Loki
+    uid: goforj-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: false
+    editable: false
+    jsonData:
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: goforj-tempo
+          url: '$${__value.raw}'
+          urlDisplayLabel: Open trace

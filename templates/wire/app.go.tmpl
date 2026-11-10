@@ -190,10 +190,11 @@ func (a *App) Startup(ctx context.Context) error {
 func (a *App) Shutdown(ctx context.Context) error {
 	lifecycleErr := a.lifecycle.Stop(ctx)
 	telemetryErr := a.inspects.Shutdown(ctx)
+	logErr := a.logger.Shutdown(ctx)
 	if a.cleanup != nil {
 		a.cleanup.run()
 	}
-	return errors.Join(lifecycleErr, telemetryErr)
+	return errors.Join(lifecycleErr, telemetryErr, logErr)
 }
 
 // Run starts app lifecycle, executes CLI args, and performs graceful shutdown.

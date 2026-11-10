@@ -5,10 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	appruntime "{{.GoModuleName}}/internal/runtime"
-	"{{.GoModuleName}}/internal/inspects"
 	"github.com/goforj/str/v2"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"os"
 	"runtime"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"{{.GoModuleName}}/internal/inspects"
+	appruntime "{{.GoModuleName}}/internal/runtime"
 )
 
 // AppLogger represents a debug logger.
@@ -32,6 +33,7 @@ type AppLogger struct {
 	contextFields     []eventField
 	sinkMu            sync.RWMutex
 	sinks             []LogSink
+	telemetry         *telemetryState
 	outputDedupe      *sinkDedupe
 	sinkDedupe        *sinkDedupe
 }
@@ -48,8 +50,8 @@ type logConfig struct {
 }
 
 const (
-	logFormatEnv   = "APP_LOG_FORMAT"
-	logFormatJSON  = "json"
+	logFormatEnv      = "APP_LOG_FORMAT"
+	logFormatJSON     = "json"
 	consoleMetaKey    = "__forj_console_meta"
 	consoleCompactKey = "__forj_console_compact"
 )
@@ -118,6 +120,7 @@ func newAppLoggerWithWriters(config logConfig, debugLevel int, outputWriter io.W
 	writerMu := &sync.Mutex{}
 	appLogger := &AppLogger{
 		debugLevel:   debugLevel,
+		telemetry:    &telemetryState{},
 		config:       config,
 		outputDedupe: newSinkDedupe(),
 		sinkDedupe:   newSinkDedupe(),
@@ -603,6 +606,7 @@ func (l *AppLogger) SetDebugLevel(level int) {
 	l.debugLevel = level
 }
 
+// clone shares export ownership while retaining each derived logger's immutable context and fields.
 func (l *AppLogger) clone() *AppLogger {
 	if l == nil {
 		return NewSilentLogger()
@@ -624,6 +628,7 @@ func (l *AppLogger) clone() *AppLogger {
 		outputDebugLogger: l.outputDebugLogger,
 		outputInfoLogger:  l.outputInfoLogger,
 		debugLevel:        l.debugLevel,
+		telemetry:         l.telemetry,
 		silent:            l.silent,
 		config:            l.config,
 		ctx:               l.ctx,
@@ -660,6 +665,7 @@ func (l *AppLogger) WithComponent(component string) *AppLogger {
 		config.prefix = component
 	}
 	rebuilt := newAppLoggerWithConfig(config, l.debugLevel)
+	rebuilt.telemetry = l.telemetry
 	child := l.clone()
 	child.config = config
 	child.debugLogger = rebuilt.debugLogger
@@ -671,7 +677,7 @@ func (l *AppLogger) WithComponent(component string) *AppLogger {
 	return child
 }
 
-// WithContext derives a logger that stamps inspect/source fields from ctx into emitted log entries.
+// WithContext derives a logger with inspect, source, and active OpenTelemetry span identity.
 func (l *AppLogger) WithContext(ctx context.Context) *AppLogger {
 	if l == nil {
 		return NewSilentLogger()
@@ -685,9 +691,12 @@ func (l *AppLogger) WithContext(ctx context.Context) *AppLogger {
 // buildLoggerContextFields resolves context-derived logger metadata once so the
 // hot event path can append stable fields without re-reading context values.
 func buildLoggerContextFields(ctx context.Context) []eventField {
-	fields := make([]eventField, 0, 2)
+	fields := make([]eventField, 0, 4)
 	if inspectID := inspects.InspectIDFromContext(ctx); inspectID != "" {
 		fields = append(fields, eventField{key: "inspect_id", value: inspectID})
+	}
+	if span := trace.SpanContextFromContext(ctx); span.IsValid() {
+		fields = append(fields, eventField{key: "trace_id", value: span.TraceID().String()}, eventField{key: "span_id", value: span.SpanID().String()})
 	}
 	if source := appruntime.SourceFromContext(ctx); source != "" {
 		fields = append(fields, eventField{key: "source", value: source.String()})
@@ -834,6 +843,7 @@ func encodeLogEntry(entry LogEntry, fallbackLevel zerolog.Level) []byte {
 	return append(encoded, '\n')
 }
 
+// WriteLevel exports the structured legacy event before applying local repeat suppression.
 func (w *structuredLogLevelWriter) WriteLevel(level zerolog.Level, p []byte) (int, error) {
 	if w == nil || w.out == nil {
 		return len(p), nil
@@ -844,6 +854,12 @@ func (w *structuredLogLevelWriter) WriteLevel(level zerolog.Level, p []byte) (in
 	entry, ok := parseLogEntryPayload(level, p)
 	if !ok {
 		return w.writeLevel(level, p)
+	}
+	if w.logger != nil {
+		w.logger.emitTelemetry(w.logger.ctx, entry)
+		if level == zerolog.FatalLevel {
+			w.logger.flushFatalTelemetry()
+		}
 	}
 	outputEmit, outputSummary := w.dedupe.filter(entry)
 	if outputSummary != nil {

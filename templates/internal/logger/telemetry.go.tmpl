@@ -1,0 +1,364 @@
+package logger
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/goforj/env/v2"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/log/global"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/resource"
+	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/net/http/httpguts"
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// telemetryState shares the configured provider with component and context loggers, including clones created before configuration.
+type telemetryState struct{ current atomic.Pointer[logTelemetry] }
+
+// logTelemetry owns one bounded batch pipeline for the lifetime of the App.
+type logTelemetry struct {
+	provider  *sdklog.LoggerProvider
+	logger    log.Logger
+	processor *managedLogProcessor
+}
+
+// ConfigureTelemetry enables explicitly selected remote log export or the generated local Grafana receiver.
+func (l *AppLogger) ConfigureTelemetry(ctx context.Context) error {
+	if l.silent {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	name := strings.TrimSpace(os.Getenv("OTEL_LOGS_EXPORTER"))
+	if name != "" && name != "none" && name != "otlp" {
+		return fmt.Errorf("unsupported OTEL_LOGS_EXPORTER: use otlp or none")
+	}
+	disabled, err := strconv.ParseBool(logEnvDefault("OTEL_SDK_DISABLED", "false"))
+	if err != nil {
+		return fmt.Errorf("OTEL_SDK_DISABLED must be a boolean")
+	}
+	if disabled || name == "none" {
+		return nil
+	}
+	endpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+	logsEndpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"))
+	protocol := logEnvDefault("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", logEnvDefault("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"))
+	localEndpoint := ""
+	if name == "" && logsEndpoint == "" {
+		// A preexisting generic trace destination does not authorize sending application logs there.
+		if endpoint != "" {
+			return nil
+		}
+		localEndpoint, err = localLogEndpoint(protocol)
+		if err != nil {
+			return err
+		}
+		if localEndpoint == "" {
+			return nil
+		}
+	} else if endpoint == "" && logsEndpoint == "" {
+		localEndpoint, err = localLogEndpoint(protocol)
+		if err != nil {
+			return err
+		}
+	}
+	if err := validateLogTelemetrySettings(); err != nil {
+		return err
+	}
+	var exporter sdklog.Exporter
+	switch protocol {
+	case "http/protobuf":
+		options := []otlploghttp.Option{}
+		if localEndpoint != "" {
+			options = append(options, otlploghttp.WithEndpointURL(localEndpoint+"/v1/logs"))
+		}
+		exporter, err = otlploghttp.New(ctx, options...)
+	case "grpc":
+		options := []otlploggrpc.Option{}
+		if localEndpoint != "" {
+			options = append(options, otlploggrpc.WithEndpointURL(localEndpoint))
+		}
+		exporter, err = otlploggrpc.New(ctx, options...)
+	default:
+		return fmt.Errorf("unsupported OTLP log protocol: use http/protobuf or grpc")
+	}
+	if err != nil {
+		return logExportError{operation: "configuration", err: err}
+	}
+	res, err := resource.New(ctx, resource.WithFromEnv(), resource.WithTelemetrySDK(), resource.WithAttributes(
+		attribute.String("goforj.app", runtime.CurrentApp().Name),
+		attribute.String("deployment.environment.name", os.Getenv("APP_ENV")),
+	))
+	if err != nil {
+		_ = exporter.Shutdown(ctx)
+		return fmt.Errorf("configure log resource failed")
+	}
+	if value, ok := res.Set().Value(attribute.Key("service.name")); !ok || value.AsString() == "" {
+		res, err = resource.Merge(res, resource.NewSchemaless(attribute.String("service.name", "{{.GoModuleName}}/"+runtime.CurrentApp().Name)))
+		if err != nil {
+			_ = exporter.Shutdown(ctx)
+			return fmt.Errorf("configure log identity failed")
+		}
+	}
+	processor := &managedLogProcessor{Processor: sdklog.NewBatchProcessor(logExporter{Exporter: exporter}, logBatchOptions()...)}
+	provider := sdklog.NewLoggerProvider(sdklog.WithResource(res),
+		sdklog.WithAttributeCountLimit(64), sdklog.WithAttributeValueLengthLimit(4096), sdklog.WithAttributeValueDepthLimit(8),
+		sdklog.WithProcessor(processor))
+	state := &logTelemetry{provider: provider, logger: provider.Logger("github.com/goforj/goforj/logger"), processor: processor}
+	if !l.telemetry.current.CompareAndSwap(nil, state) {
+		_ = provider.Shutdown(ctx)
+		return fmt.Errorf("log telemetry is already configured")
+	}
+	global.SetLoggerProvider(provider)
+	return nil
+}
+
+// logBatchOptions preserves framework delivery defaults while leaving explicit OTEL_BLRP settings to the SDK.
+func logBatchOptions() []sdklog.BatchProcessorOption {
+	var options []sdklog.BatchProcessorOption
+	if os.Getenv("OTEL_BLRP_MAX_EXPORT_BATCH_SIZE") == "" {
+		options = append(options, sdklog.WithExportMaxBatchSize(256))
+	}
+	if os.Getenv("OTEL_BLRP_EXPORT_TIMEOUT") == "" {
+		options = append(options, sdklog.WithExportTimeout(5*time.Second))
+	}
+	return options
+}
+
+// Shutdown flushes log records after runtime resources stop and is safe to repeat through Wire cleanup.
+func (l *AppLogger) Shutdown(ctx context.Context) error {
+	if l.telemetry == nil {
+		return nil
+	}
+	state := l.telemetry.current.Load()
+	if state == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return errors.Join(state.provider.Shutdown(ctx), state.processor.Shutdown(ctx))
+}
+
+// flushFatalTelemetry gives fatal records a short delivery window before the logger exits the process.
+func (l *AppLogger) flushFatalTelemetry() {
+	if l.telemetry == nil {
+		return
+	}
+	state := l.telemetry.current.Load()
+	if state == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	_ = state.provider.ForceFlush(ctx)
+}
+
+// emitTelemetry snapshots structured values synchronously, before console dedupe can merge events from separate executions.
+func (l *AppLogger) emitTelemetry(ctx context.Context, entry LogEntry) {
+	if l.telemetry == nil {
+		return
+	}
+	state := l.telemetry.current.Load()
+	if state == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var record log.Record
+	timestamp := entry.TimeValue
+	if timestamp.IsZero() {
+		timestamp, _ = time.Parse(time.RFC3339Nano, entry.Time)
+	}
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+	record.SetTimestamp(timestamp)
+	record.SetObservedTimestamp(time.Now())
+	record.SetBody(attribute.StringValue(boundedLogString(entry.Message, 65536)))
+	record.SetSeverityText(entry.Level)
+	switch entry.Level {
+	case "trace":
+		record.SetSeverity(log.SeverityTrace)
+	case "debug":
+		record.SetSeverity(log.SeverityDebug)
+	case "info":
+		record.SetSeverity(log.SeverityInfo)
+	case "warn":
+		record.SetSeverity(log.SeverityWarn)
+	case "error":
+		record.SetSeverity(log.SeverityError)
+	case "fatal", "panic":
+		record.SetSeverity(log.SeverityFatal)
+	}
+	spanContext := trace.SpanContextFromContext(ctx)
+	budget := 256
+	count := 0
+	appendField := func(key string, value any) {
+		if count >= 60 || spanContext.IsValid() && (key == "trace_id" || key == "span_id") {
+			return
+		}
+		record.AddAttributes(attribute.KeyValue{Key: attribute.Key(boundedLogString(key, 256)), Value: logAttributeValue(value, 0, &budget)})
+		count++
+	}
+	if entry.Fields != nil {
+		for key, value := range entry.Fields {
+			appendField(key, value)
+		}
+	} else {
+		for _, field := range entry.orderedFields {
+			appendField(field.key, field.value)
+		}
+	}
+	if _, component := splitPrefix(l.config.prefix); component != "" {
+		record.AddAttributes(attribute.String("component", boundedLogString(component, 256)))
+	}
+	if source := runtime.SourceFromContext(ctx); source != "" {
+		record.AddAttributes(attribute.String("source", string(source)))
+	}
+	// The owned BatchProcessor snapshots the record during Emit and does not retain its context.
+	state.logger.Emit(ctx, record)
+}
+
+// localLogEndpoint keeps automatic export inside the generated local stack and outside test processes.
+func localLogEndpoint(protocol string) (string, error) {
+	if "{{ and .ProjectComponents.Grafana .ProjectComponents.Observability .ProjectComponents.Docker }}" != "true" || env.IsAppEnvTesting() || !env.IsAppEnvLocal() {
+		return "", nil
+	}
+	active := false
+	for _, profile := range strings.Split(os.Getenv("COMPOSE_PROFILES"), ",") {
+		if profile = strings.TrimSpace(profile); profile == "grafana" || profile == "*" {
+			active = true
+			break
+		}
+	}
+	if !active {
+		return "", nil
+	}
+	port, setting, published := "4318", "TEMPO_OTLP_HTTP_PORT", "14318"
+	if protocol == "grpc" {
+		port, setting, published = "4317", "TEMPO_OTLP_GRPC_PORT", "14317"
+	}
+	if !env.IsHostEnvironment() && !env.IsDockerInDocker() {
+		return "http://alloy:" + port, nil
+	}
+	value, err := strconv.Atoi(logEnvDefault(setting, published))
+	if err != nil || value < 1 || value > 65535 {
+		return "", fmt.Errorf("%s must be a port between 1 and 65535", setting)
+	}
+	address := logEnvDefault("IP_ADDRESS", "127.0.0.1")
+	if address == "0.0.0.0" {
+		address = "127.0.0.1"
+	} else if address == "::" {
+		address = "::1"
+	}
+	if net.ParseIP(address) == nil {
+		return "", fmt.Errorf("IP_ADDRESS must be an IP address")
+	}
+	return "http://" + net.JoinHostPort(address, strconv.Itoa(value)), nil
+}
+
+// logEnvDefault follows signal-specific overrides without changing process-wide environment settings.
+func logEnvDefault(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+// validateLogTelemetrySettings rejects malformed endpoints and headers before SDK diagnostics can reveal their values.
+func validateLogTelemetrySettings() error {
+	for _, key := range []string{"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			parsed, err := url.Parse(value)
+			if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+				return fmt.Errorf("%s must be an absolute HTTP or HTTPS URL", key)
+			}
+		}
+	}
+	for _, key := range []string{"OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_LOGS_HEADERS"} {
+		for _, header := range strings.Split(os.Getenv(key), ",") {
+			header = strings.TrimSpace(header)
+			if header == "" {
+				continue
+			}
+			name, value, ok := strings.Cut(header, "=")
+			if !ok || !httpguts.ValidHeaderFieldName(strings.TrimSpace(name)) {
+				return fmt.Errorf("%s contains an invalid header", key)
+			}
+			decoded, err := url.PathUnescape(strings.TrimSpace(value))
+			if err != nil || !httpguts.ValidHeaderFieldValue(decoded) {
+				return fmt.Errorf("%s contains an invalid header value", key)
+			}
+		}
+	}
+	return nil
+}
+
+// logExporter redacts collector-controlled errors while retaining their causes for explicit inspection.
+type logExporter struct{ sdklog.Exporter }
+
+// Export prevents backend responses and credential-bearing endpoints from reaching automatic SDK diagnostics.
+func (e logExporter) Export(ctx context.Context, records []sdklog.Record) error {
+	if err := e.Exporter.Export(ctx, records); err != nil {
+		return logExportError{operation: "export", err: err}
+	}
+	return nil
+}
+
+// Shutdown preserves the same diagnostic policy while releasing the transport.
+func (e logExporter) Shutdown(ctx context.Context) error {
+	if err := e.Exporter.Shutdown(ctx); err != nil {
+		return logExportError{operation: "shutdown", err: err}
+	}
+	return nil
+}
+
+// ForceFlush preserves the diagnostic policy for exporters with additional internal buffers.
+func (e logExporter) ForceFlush(ctx context.Context) error {
+	if err := e.Exporter.ForceFlush(ctx); err != nil {
+		return logExportError{operation: "flush", err: err}
+	}
+	return nil
+}
+
+// logExportError keeps secrets out of automatic messages without preventing errors.Is and errors.As inspection.
+type logExportError struct {
+	operation string
+	err       error
+}
+
+// Error returns a stable message that excludes endpoint, header, and collector-response data.
+func (e logExportError) Error() string { return "OTLP log " + e.operation + " failed" }
+
+// Unwrap exposes the original error only to callers that explicitly inspect it.
+func (e logExportError) Unwrap() error { return e.err }
+
+// managedLogProcessor releases the owned batch worker even if provider shutdown skips processors after an expired deadline.
+type managedLogProcessor struct {
+	sdklog.Processor
+	stopped atomic.Bool
+}
+
+// Shutdown prevents recursive SDK error callbacks from waiting on their own batch worker.
+func (p *managedLogProcessor) Shutdown(ctx context.Context) error {
+	if !p.stopped.CompareAndSwap(false, true) {
+		return nil
+	}
+	return p.Processor.Shutdown(ctx)
+}

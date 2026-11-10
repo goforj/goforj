@@ -473,6 +473,10 @@ func TestRenderedObservabilityComposeStartsAndSeedsGrafana(t *testing.T) {
 		"MAILPIT_HTTP_PORT":     mailpitHTTPPort,
 		"DB_MYSQL_PORT":         databasePort,
 		"REDIS_PORT":            redisPort,
+		"TEMPO_HTTP_PORT":       freeTCPPort(t),
+		"TEMPO_OTLP_HTTP_PORT":  freeTCPPort(t),
+		"TEMPO_OTLP_GRPC_PORT":  freeTCPPort(t),
+		"LOKI_HTTP_PORT":        freeTCPPort(t),
 	}
 	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(projectDir, ".env")}, portOverrides); err != nil {
 		t.Fatalf("set observability smoke ports: %v", err)
@@ -487,18 +491,78 @@ func TestRenderedObservabilityComposeStartsAndSeedsGrafana(t *testing.T) {
 	runDockerCompose(t, projectDir, projectName, 3*time.Minute, "up", "-d")
 
 	assertGrafanaComposeAPIStatus(t, projectDir, projectName, "/api/datasources/uid/goforj-victoriametrics", http.StatusOK)
+	assertGrafanaComposeAPIStatus(t, projectDir, projectName, "/api/datasources/uid/goforj-tempo", http.StatusOK)
+	assertGrafanaComposeAPIStatus(t, projectDir, projectName, "/api/datasources/uid/goforj-loki", http.StatusOK)
 	dashboardUIDs := []string{
 		"goforj-platform-overview",
 		"goforj-http-overview",
 		"goforj-database-overview",
 		"goforj-queue-overview",
 		"goforj-scheduler-overview",
+		"goforj-traces-overview",
+		"goforj-logs-overview",
 	}
 	for _, uid := range dashboardUIDs {
 		assertGrafanaComposeAPIStatus(t, projectDir, projectName, "/api/dashboards/uid/"+uid, http.StatusOK)
 		assertGrafanaDashboardStarred(t, projectDir, projectName, uid)
 	}
 	assertGrafanaHomeDashboard(t, projectDir, projectName, "goforj-platform-overview")
+	assertGrafanaLogPayloads(t, projectDir, projectName)
+}
+
+// assertGrafanaLogPayloads exercises metadata shapes that fit the application bridge but exceed Loki's upstream defaults.
+func assertGrafanaLogPayloads(t *testing.T, projectDir, projectName string) {
+	t.Helper()
+	serviceName := fmt.Sprintf("goforj-log-acceptance-%d", time.Now().UnixNano())
+	large := make([]map[string]any, 0, 20)
+	for index := 0; index < 20; index++ {
+		large = append(large, map[string]any{"key": fmt.Sprintf("field%d", index), "value": map[string]any{"stringValue": strings.Repeat("x", 4096)}})
+	}
+	nested := make([]map[string]any, 0, 3)
+	for group := 0; group < 3; group++ {
+		fields := make([]map[string]any, 0, 64)
+		for index := 0; index < 64; index++ {
+			fields = append(fields, map[string]any{"key": fmt.Sprintf("field%d", index), "value": map[string]any{"stringValue": "present"}})
+		}
+		nested = append(nested, map[string]any{"key": fmt.Sprintf("group%d", group), "value": map[string]any{"kvlistValue": map[string]any{"values": fields}}})
+	}
+	now := strconv.FormatInt(time.Now().UnixNano(), 10)
+	payload := map[string]any{"resourceLogs": []any{map[string]any{
+		"resource": map[string]any{"attributes": []any{map[string]any{"key": "service.name", "value": map[string]any{"stringValue": serviceName}}}},
+		"scopeLogs": []any{map[string]any{"logRecords": []any{
+			map[string]any{"timeUnixNano": now, "body": map[string]any{"stringValue": "large metadata"}, "attributes": large},
+			map[string]any{"timeUnixNano": now, "body": map[string]any{"stringValue": "nested metadata"}, "attributes": nested},
+		}}},
+	}}}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dockerComposeOutput(t, projectDir, projectName, "run", "--rm", "--no-deps", "--entrypoint", "curl", "grafana-seed",
+		"-fsS", "-H", "Content-Type: application/json", "--data-binary", string(encoded), "http://alloy:4318/v1/logs")
+	deadline := time.Now().Add(time.Minute)
+	for time.Now().Before(deadline) {
+		output := dockerComposeOutput(t, projectDir, projectName, "run", "--rm", "--no-deps", "--entrypoint", "curl", "grafana-seed",
+			"-sS", "-G", "--data-urlencode", fmt.Sprintf("query={service_name=%q}", serviceName), "http://loki:3100/loki/api/v1/query_range")
+		var response struct {
+			Data struct {
+				Result []struct{ Values [][2]string }
+			}
+		}
+		if json.Unmarshal([]byte(output), &response) == nil {
+			found := map[string]bool{}
+			for _, stream := range response.Data.Result {
+				for _, value := range stream.Values {
+					found[value[1]] = true
+				}
+			}
+			if found["large metadata"] && found["nested metadata"] {
+				return
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("Loki did not retain both bounded metadata payloads; collector logs:\n%s", dockerComposeOutput(t, projectDir, projectName, "logs", "alloy", "loki"))
 }
 
 func TestRenderedObservabilityTargetsIncludeConventionalApps(t *testing.T) {

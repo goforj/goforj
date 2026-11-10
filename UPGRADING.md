@@ -4,6 +4,20 @@ Review the notes for the changes you are adopting before upgrading an existing p
 
 ## Unreleased
 
+### Contextual application logs in Grafana
+
+Grafana projects now include Loki, Alloy, and a provisioned Logs Overview. Updating the CLI, running `forj render`, and rebuilding the app and generated stack enables local log export when `APP_ENV=local` and the `grafana` profile is active. Review scaffold ownership before a full render. Application logging APIs stay available, and existing console and Lighthouse deduplication remain in place.
+
+Use `appLogger.WithContext(ctx)` to associate log records with the active OTel trace and span. HTTP access logs bind their request context automatically. External export happens before presentation deduplication, preserving individual events across executions.
+
+Alloy now receives both signals on the existing host ports `14318` and `14317`, using the same `TEMPO_OTLP_HTTP_PORT` and `TEMPO_OTLP_GRPC_PORT` overrides. Generated container apps use `alloy` as their local receiver. Tempo retains its query API and internal OTLP receiver. Loki adds query port `13100` (`LOKI_HTTP_PORT`) and a separate named volume with seven-day retention.
+
+Explicit `OTEL_LOGS_EXPORTER=none` keeps logs local to existing outputs. Remote logs require `OTEL_LOGS_EXPORTER=otlp` or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`; an existing generic trace endpoint does not silently enable remote log export. Production, staging, and tests have no automatic log destination. `OTEL_SDK_DISABLED=true` disables both signals.
+
+OpenTelemetry API and SDK pins move from 1.45 to 1.47 for the stable Logs API and SDK. Their minimum Go requirement remains compatible with GoForj's Go 1.26 minimum. The generated logging README documents bounded batching, dropped-record behavior, flush deadlines, and the application's responsibility for exported log contents.
+
+Standard `OTEL_BLRP_*` settings tune the queue, batch size, export interval, and timeout without editing generated code. The local Loki configuration leaves room for the bridge's bounded nested metadata, avoiding rejection by Loki's smaller upstream defaults.
+
 ### Grafana receives local traces automatically
 
 Projects with Grafana, Observability, and Docker now render Tempo, a provisioned trace datasource, and Traces Overview. After updating the CLI and reviewing scaffold ownership, run `forj render`, rebuild the app, and start the generated stack with `docker-compose up -d --build`. The existing `grafana` Compose profile includes Tempo. No datasource setup is needed.

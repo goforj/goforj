@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,12 +21,26 @@ import (
 
 // TestRenderedGrafanaTraceDefaults exercises real SDK delivery from a generated non-test binary without requiring Docker.
 func TestRenderedGrafanaTraceDefaults(t *testing.T) {
+	testRenderedGrafanaSignalDefaults(t, "traces")
+}
+
+// TestRenderedGrafanaLogDefaults exercises real SDK delivery from a generated non-test binary without requiring Docker.
+func TestRenderedGrafanaLogDefaults(t *testing.T) {
+	testRenderedGrafanaSignalDefaults(t, "logs")
+}
+
+// testRenderedGrafanaSignalDefaults keeps shared destination rules in one matrix while testing each signal's opt-in policy.
+func testRenderedGrafanaSignalDefaults(t *testing.T, signal string) {
+	t.Helper()
+	signalKey := "OTEL_" + strings.ToUpper(signal) + "_EXPORTER"
+	endpointKey := "OTEL_EXPORTER_OTLP_" + strings.ToUpper(signal) + "_ENDPOINT"
+	path := "/v1/" + signal
 	root := t.TempDir()
 	testkit.RenderProjectWithForj(t, root, testkit.RenderProjectRequest{Config: project.Config{
-		ProjectName: "Grafana Trace Defaults", GoModuleName: "example.com/grafanatraces",
+		ProjectName: "Grafana Signal Defaults", GoModuleName: "example.com/grafana" + signal,
 		Render: project.RenderConfig{Components: project.Components{CLI: true, WebAPI: true, Metrics: true, Observability: true, Grafana: true, Docker: true}},
 	}})
-	binary := filepath.Join(root, "trace-defaults-app")
+	binary := filepath.Join(root, signal+"-defaults-app")
 	build := exec.Command("go", "build", "-o", binary, "./cmd/app")
 	build.Dir = root
 	build.Env = testkit.IntegrationGoProcessEnv(t, nil)
@@ -40,8 +55,9 @@ func TestRenderedGrafanaTraceDefaults(t *testing.T) {
 	}{
 		{name: "automatic local", environment: "local", profiles: "grafana", wantLocal: true},
 		{name: "explicit otlp without endpoint", environment: "local", profiles: "grafana", exporter: "otlp", wantLocal: true},
-		{name: "generic endpoint wins", environment: "local", profiles: "grafana", explicit: true, invalidPort: true, wantExternal: true},
-		{name: "trace endpoint wins", environment: "local", profiles: "grafana", specific: true, invalidPort: true, wantExternal: true},
+		{name: "generic endpoint without signal selection", environment: "local", profiles: "grafana", explicit: true, invalidPort: true, wantExternal: signal == "traces"},
+		{name: "generic endpoint explicitly enabled", environment: "local", profiles: "grafana", exporter: "otlp", explicit: true, invalidPort: true, wantExternal: true},
+		{name: "signal endpoint wins", environment: "local", profiles: "grafana", specific: true, invalidPort: true, wantExternal: true},
 		{name: "explicit none", environment: "local", profiles: "grafana", exporter: "none", invalidPort: true},
 		{name: "sdk disabled", environment: "local", profiles: "grafana", disabled: true, invalidPort: true},
 		{name: "production", environment: "production", profiles: "grafana", invalidPort: true},
@@ -56,7 +72,7 @@ func TestRenderedGrafanaTraceDefaults(t *testing.T) {
 			collector := func(counter *atomic.Int64) *httptest.Server {
 				return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					body, err := io.ReadAll(r.Body)
-					if err != nil || len(body) == 0 || r.Method != http.MethodPost || r.URL.Path != "/v1/traces" || r.Header.Get("Content-Type") != "application/x-protobuf" {
+					if err != nil || len(body) == 0 || r.Method != http.MethodPost || r.URL.Path != path || r.Header.Get("Content-Type") != "application/x-protobuf" {
 						t.Errorf("invalid OTLP request: %s %s, body=%d, err=%v", r.Method, r.URL.Path, len(body), err)
 						w.WriteHeader(http.StatusBadRequest)
 						return
@@ -76,10 +92,11 @@ func TestRenderedGrafanaTraceDefaults(t *testing.T) {
 			settings := map[string]string{
 				"APP_ENV": tc.environment, "COMPOSE_PROFILES": tc.profiles,
 				"TEMPO_OTLP_HTTP_PORT": localURL.Port(), "IP_ADDRESS": "127.0.0.1",
-				"OTEL_TRACES_EXPORTER": tc.exporter, "OTEL_EXPORTER_OTLP_ENDPOINT": "", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "",
+				"OTEL_LOGS_EXPORTER": "none", "OTEL_TRACES_EXPORTER": "none", "OTEL_EXPORTER_OTLP_ENDPOINT": "", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "",
 				"OTEL_SDK_DISABLED": "false", "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
 				"OTEL_TRACES_SAMPLER": "always_on", "LIGHTHOUSE_ENABLED": "false",
 			}
+			settings[signalKey] = tc.exporter
 			if tc.invalidPort {
 				settings["TEMPO_OTLP_HTTP_PORT"] = "invalid"
 			}
@@ -87,7 +104,7 @@ func TestRenderedGrafanaTraceDefaults(t *testing.T) {
 				settings["OTEL_EXPORTER_OTLP_ENDPOINT"] = externalCollector.URL
 			}
 			if tc.specific {
-				settings["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = externalCollector.URL + "/v1/traces"
+				settings[endpointKey] = externalCollector.URL + path
 			}
 			if tc.disabled {
 				settings["OTEL_SDK_DISABLED"] = "true"

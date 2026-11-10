@@ -2,6 +2,7 @@ package logger
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -296,6 +297,7 @@ func (e *Event) Send() {
 	e.emit("")
 }
 
+// emit preserves normal output and gives fatal records a bounded delivery window before exit.
 func (e *Event) emit(msg string) {
 	if e == nil {
 		return
@@ -308,14 +310,25 @@ func (e *Event) emit(msg string) {
 	entry := e.buildEntry(msg)
 	e.logger.emitTypedEntry(e.output, e.level, e.caller, entry)
 	if e.level == zerolog.FatalLevel {
+		e.logger.flushFatalTelemetry()
 		fatalExit(1)
 	}
 }
 
+// emitTypedEntry carries a derived logger's bound context through its existing structured event path.
 func (l *AppLogger) emitTypedEntry(output *zerolog.Logger, level zerolog.Level, caller bool, entry LogEntry) {
+	if l == nil {
+		return
+	}
+	l.emitTypedEntryContext(output, level, caller, entry, l.ctx)
+}
+
+// emitTypedEntryContext preserves the access-log fast path while exporting the request's immutable span identity.
+func (l *AppLogger) emitTypedEntryContext(output *zerolog.Logger, level zerolog.Level, caller bool, entry LogEntry, ctx context.Context) {
 	if l == nil || output == nil {
 		return
 	}
+	l.emitTelemetry(ctx, entry)
 	sinks := l.snapshotSinks()
 	outputEmit, outputSummary := l.outputDedupeDecision(entry)
 	if outputSummary != nil {
@@ -509,6 +522,19 @@ func emitOutputEntry(output *zerolog.Logger, level zerolog.Level, caller bool, e
 // It preserves the normal structured logger behavior and dedupe semantics while
 // avoiding the generic fluent field-builder overhead on the request hot path.
 func (l *AppLogger) HTTPAccess(uri string, status int, method string, latency time.Duration, err error, clientIPs ...string) {
+	if l == nil {
+		return
+	}
+	l.httpAccess(l.ctx, uri, status, method, latency, err, clientIPs...)
+}
+
+// HTTPAccessContext associates framework access logs with the request span without allocating a derived logger.
+func (l *AppLogger) HTTPAccessContext(ctx context.Context, uri string, status int, method string, latency time.Duration, err error, clientIPs ...string) {
+	l.httpAccess(ctx, uri, status, method, latency, err, clientIPs...)
+}
+
+// httpAccess keeps legacy and contextual access logs on the same structured and deduplicated event path.
+func (l *AppLogger) httpAccess(ctx context.Context, uri string, status int, method string, latency time.Duration, err error, clientIPs ...string) {
 	if l == nil || l.silent || l.outputInfoLogger == nil {
 		return
 	}
@@ -541,7 +567,7 @@ func (l *AppLogger) HTTPAccess(uri string, status int, method string, latency ti
 		orderedFields: orderedFields,
 		compact:       true,
 	}
-	l.emitTypedEntry(l.outputInfoLogger, zerolog.InfoLevel, false, entry)
+	l.emitTypedEntryContext(l.outputInfoLogger, zerolog.InfoLevel, false, entry, ctx)
 }
 
 // compactLogFields joins field values in their original emission order.

@@ -1,0 +1,59 @@
+# Application Logging
+
+`AppLogger` writes structured application events to the existing console and Lighthouse sinks. An app-owned OpenTelemetry Logs provider exports those events independently from console repeat suppression.
+
+## Contextual logs
+
+Bind the current execution context when logging:
+
+```go
+log := appLogger.WithContext(ctx)
+log.Info().Str("order_id", "demo-order-42").Msg("Order accepted")
+```
+
+When `ctx` contains an OTel span, exported log records carry its trace ID and span ID. Bind a child span's context to identify that operation. The same IDs appear in contextual Lighthouse log fields, alongside the existing inspect lookup ID. Framework HTTP access logs bind the request context automatically.
+
+Logs outside a trace still export. Logs are independent from trace head sampling, so a log can refer to an unsampled trace that is absent from Tempo. Application spans and log records remain separate OTel signals, joined by their IDs.
+
+## Local Grafana
+
+{{- if and .ProjectComponents.Grafana .ProjectComponents.Observability .ProjectComponents.Docker }}
+The generated `grafana` Compose profile includes Alloy, Loki, and Tempo. Start `forj dev`, make an application request, and open [Logs Overview](http://localhost:13001/d/goforj-logs-overview). Expand a contextual record and select **Open trace** to inspect its Tempo spans. Tempo spans also link back to related Loki logs.
+
+Alloy accepts HTTP/protobuf and gRPC on the existing local OTLP ports, `14318` and `14317`. Container apps use `alloy:4318` or `alloy:4317`. The `TEMPO_OTLP_HTTP_PORT` and `TEMPO_OTLP_GRPC_PORT` overrides continue to select the host receiver ports. Automatic export requires `APP_ENV=local` and the active `grafana` profile, and stays off inside test processes.
+
+Loki persists logs in its own named volume, with seven-day retention. Only service name, app, and deployment environment are indexed; trace IDs, span IDs, and application fields stay structured metadata. The local collector allows up to 2 MiB and 512 metadata entries per record to accommodate nested application fields alongside OTel resource and scope metadata. Its query API defaults to `http://localhost:13100`, configurable through `LOKI_HTTP_PORT`.
+{{- else }}
+Enable the Grafana, Observability, and Docker components to generate the local logging stack, or configure an external OTLP log receiver.
+{{- end }}
+
+## External receivers
+
+Remote export requires an explicit log signal selection or log-specific endpoint:
+
+```env
+OTEL_LOGS_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://collector.example.com/v1/logs
+OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf
+# OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer%20example
+```
+
+`OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` apply to both signals. Service name defaults to the Go module path and current App name. A generic OTLP endpoint is used for logs only after `OTEL_LOGS_EXPORTER=otlp` explicitly enables them. An existing trace-only generic endpoint never silently enables remote application log export. A log-specific endpoint implicitly enables the log signal unless `OTEL_LOGS_EXPORTER=none` is set.
+
+Supported protocols are HTTP/protobuf and gRPC. For HTTP, the generic endpoint is a base URL with `/v1/logs` appended; the log-specific endpoint is the complete URL. Endpoints must be absolute HTTP or HTTPS URLs. Signal-specific protocol and header settings override their generic counterparts through the OTel exporter.
+
+`OTEL_LOGS_EXPORTER=none` disables log export independently from `OTEL_TRACES_EXPORTER`. `OTEL_SDK_DISABLED=true` disables both SDK signals. Production and staging require explicit log export configuration.
+
+Application log messages and fields are application-owned data. Remote log export can include their contents, including explicit error messages. Review what applications log before enabling a remote destination. Collector endpoint, header, and response values are excluded from automatic exporter failure messages.
+
+## Delivery and limits
+
+Log records enter a bounded SDK batch queue; request logging never waits for collector delivery. Defaults are 2,048 queued records, batches of 256, a one-second export interval, and a five-second export timeout. A full queue drops its oldest records and the SDK reports the dropped count. Delivery is best effort during outages.
+
+Standard `OTEL_BLRP_MAX_QUEUE_SIZE`, `OTEL_BLRP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BLRP_SCHEDULE_DELAY`, and `OTEL_BLRP_EXPORT_TIMEOUT` settings override those defaults. Delay and timeout values are milliseconds. The SDK validates these settings and clamps batch size to queue capacity.
+
+The application bridge snapshots mutable fields before enqueueing, with up to 64 SDK attributes, 4,096-byte field strings, 65,536-byte messages, eight nesting levels, and a total nested-value budget of 256 elements. Unsupported values use a marker. Arbitrary application formatters are not invoked by the exporter. Native OTel log records follow their caller's capture policy and the configured SDK attribute limits.
+
+App shutdown flushes logs after runtime resources and traces stop, within the supplied shutdown context. Fatal fluent events get a best-effort flush capped at 250 milliseconds before exit. Process termination cannot guarantee delivery.
+
+The provider is also registered with OTel's standard global log API. Native OTel records reach the configured exporter; Lighthouse's existing streaming path receives `AppLogger` events.

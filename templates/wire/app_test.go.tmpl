@@ -85,7 +85,7 @@ func TestAppStartupIsIdempotent(t *testing.T) {
 		return nil
 	})
 
-	app := App{inspects: inspects.NewManager(), lifecycle: manager}
+	app := App{inspects: inspects.NewManager(), logger: logger.NewSilentLogger(), lifecycle: manager}
 	if err := app.Startup(context.Background()); err != nil {
 		t.Fatalf("first startup failed: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestAppShutdownIsIdempotent(t *testing.T) {
 		return nil
 	})
 
-	app := App{inspects: inspects.NewManager(), lifecycle: manager}
+	app := App{inspects: inspects.NewManager(), logger: logger.NewSilentLogger(), lifecycle: manager}
 	if err := app.Startup(context.Background()); err != nil {
 		t.Fatalf("startup failed: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestAppShutdownAggregatesErrors(t *testing.T) {
 	manager.On(runtime.Shutdown, func(context.Context) error { return errA })
 	manager.On(runtime.Shutdown, func(context.Context) error { return errB })
 
-	app := App{inspects: inspects.NewManager(), lifecycle: manager}
+	app := App{inspects: inspects.NewManager(), logger: logger.NewSilentLogger(), lifecycle: manager}
 	if err := app.Startup(context.Background()); err != nil {
 		t.Fatalf("startup failed: %v", err)
 	}
@@ -340,6 +340,7 @@ func TestAppShutdownSharesWireCleanupAcrossCopies(t *testing.T) {
   t.Fatal(err)
  }
  application := App{
+  logger: logger.NewSilentLogger(),
   inspects: inspectManager,
   lifecycle: lifecycle,
   cleanup: onceCleanup(func() {

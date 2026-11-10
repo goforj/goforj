@@ -200,7 +200,7 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 		return nil
 	}
 
-	s.logger.HTTPAccess(v.URI, v.Status, v.Method, v.Latency, v.Error, r.RealIP())
+	s.logger.HTTPAccessContext(r.Request().Context(), v.URI, v.Status, v.Method, v.Latency, v.Error, r.RealIP())
 
 	return nil
 }
@@ -270,7 +270,7 @@ func (s *Server) recordHTTPErrorResponse(r web.Context, status int, body []byte)
 		return
 	}
 
-	entry := s.logger.Info().
+	entry := s.logger.WithContext(r.Request().Context()).Info().
 		Any("status", status).
 		Any("method", r.Method()).
 		Any("uri", r.URI())

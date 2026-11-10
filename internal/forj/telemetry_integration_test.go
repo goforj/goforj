@@ -25,7 +25,7 @@ func TestRenderedTelemetryContract(t *testing.T) {
 			root := t.TempDir()
 			components := project.Components{CLI: true, WebAPI: true, Metrics: true}
 			apps := map[string]project.AppConfig{}
-			packages := []string{"./internal/inspects", "./internal/http", "./app/wire"}
+			packages := []string{"./internal/logger", "./internal/inspects", "./internal/http", "./app/wire"}
 			if full {
 				components = project.Components{CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true, Metrics: true, Observability: true, Grafana: true, Docker: true, DatabaseSQLite: true, Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true}
 				if err := writeConventionalAppMarker(root, "admin"); err != nil {

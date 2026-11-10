@@ -8,13 +8,17 @@ import (
 
 // pinnedModuleVersions records validated framework releases and ecosystem security minimums for rendered projects.
 var pinnedModuleVersions = map[string]string{
+	"go.opentelemetry.io/otel/log":                                    "v1.47.0",
+	"go.opentelemetry.io/otel/sdk/log":                                "v1.47.0",
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp":     "v0.23.0",
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc":     "v0.23.0",
 	"google.golang.org/grpc":                                          "v1.83.2",
 	"github.com/andybalholm/brotli":                                   "v1.2.7",
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp":   "v0.69.0",
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc": "v1.45.0",
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp": "v1.45.0",
-	"go.opentelemetry.io/otel/trace":                                  "v1.45.0",
-	"go.opentelemetry.io/otel":                                        "v1.45.0",
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp":   "v0.70.0",
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc": "v1.47.0",
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp": "v1.47.0",
+	"go.opentelemetry.io/otel/trace":                                  "v1.47.0",
+	"go.opentelemetry.io/otel":                                        "v1.47.0",
 	"charm.land/bubbles/v2":                                           "v2.2.1",
 	"charm.land/bubbletea/v2":                                         "v2.1.0",
 	"charm.land/lipgloss/v2":                                          "v2.0.6",
@@ -82,8 +86,8 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/nats-io/nats.go":                                      "v1.55.0",
 	"github.com/rabbitmq/amqp091-go":                                  "v1.15.0",
 	"github.com/rclone/rclone":                                        "v1.75.2",
-	"go.opentelemetry.io/otel/sdk":                                    "v1.45.0",
-	"go.opentelemetry.io/otel/sdk/metric":                             "v1.45.0",
+	"go.opentelemetry.io/otel/sdk":                                    "v1.47.0",
+	"go.opentelemetry.io/otel/sdk/metric":                             "v1.47.0",
 	"golang.org/x/net":                                                "v0.62.0",
 	"golang.org/x/text":                                               "v0.41.0",
 	"golang.org/x/tools":                                              "v0.52.0",
@@ -95,6 +99,9 @@ func UsesMinimumVersion(module string) bool {
 	case "google.golang.org/grpc", "github.com/andybalholm/brotli":
 		return true
 	case "go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace",
+		"go.opentelemetry.io/otel/log", "go.opentelemetry.io/otel/sdk/log",
+		"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp",
+		"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc",
 		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
 		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc",
 		"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp":
@@ -114,6 +121,10 @@ var webRendererSyncModules = []string{
 var rendererSyncModules = []string{
 	"google.golang.org/grpc",
 	"github.com/andybalholm/brotli",
+	"go.opentelemetry.io/otel/log",
+	"go.opentelemetry.io/otel/sdk/log",
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp",
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc",
 	"go.opentelemetry.io/otel",
 	"go.opentelemetry.io/otel/trace",
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
