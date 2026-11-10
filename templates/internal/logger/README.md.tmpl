@@ -22,7 +22,7 @@ The generated `grafana` Compose profile includes Alloy, Loki, and Tempo. Start `
 
 Alloy accepts HTTP/protobuf and gRPC on the existing local OTLP ports, `14318` and `14317`. Container apps use `alloy:4318` or `alloy:4317`. The `TEMPO_OTLP_HTTP_PORT` and `TEMPO_OTLP_GRPC_PORT` overrides continue to select the host receiver ports. Automatic export requires `APP_ENV=local` and the active `grafana` profile, and stays off inside test processes.
 
-Loki persists logs in its own named volume, with seven-day retention. Only service name, app, and deployment environment are indexed; trace IDs, span IDs, and application fields stay structured metadata. Its query API defaults to `http://localhost:13100`, configurable through `LOKI_HTTP_PORT`.
+Loki persists logs in its own named volume, with seven-day retention. Only service name, app, and deployment environment are indexed; trace IDs, span IDs, and application fields stay structured metadata. The local collector allows up to 2 MiB and 512 metadata entries per record to accommodate nested application fields alongside OTel resource and scope metadata. Its query API defaults to `http://localhost:13100`, configurable through `LOKI_HTTP_PORT`.
 {{- else }}
 Enable the Grafana, Observability, and Docker components to generate the local logging stack, or configure an external OTLP log receiver.
 {{- end }}
@@ -49,6 +49,8 @@ Application log messages and fields are application-owned data. Remote log expor
 ## Delivery and limits
 
 Log records enter a bounded SDK batch queue; request logging never waits for collector delivery. Defaults are 2,048 queued records, batches of 256, a one-second export interval, and a five-second export timeout. A full queue drops its oldest records and the SDK reports the dropped count. Delivery is best effort during outages.
+
+Standard `OTEL_BLRP_MAX_QUEUE_SIZE`, `OTEL_BLRP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BLRP_SCHEDULE_DELAY`, and `OTEL_BLRP_EXPORT_TIMEOUT` settings override those defaults. Delay and timeout values are milliseconds. The SDK validates these settings and clamps batch size to queue capacity.
 
 The application bridge snapshots mutable fields before enqueueing, with up to 64 SDK attributes, 4,096-byte field strings, 65,536-byte messages, eight nesting levels, and a total nested-value budget of 256 elements. Unsupported values use a marker. Arbitrary application formatters are not invoked by the exporter. Native OTel log records follow their caller's capture policy and the configured SDK attribute limits.
 

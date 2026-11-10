@@ -16,6 +16,8 @@ Explicit `OTEL_LOGS_EXPORTER=none` keeps logs local to existing outputs. Remote 
 
 OpenTelemetry API and SDK pins move from 1.45 to 1.47 for the stable Logs API and SDK. Their minimum Go requirement remains compatible with GoForj's Go 1.26 minimum. The generated logging README documents bounded batching, dropped-record behavior, flush deadlines, and the application's responsibility for exported log contents.
 
+Standard `OTEL_BLRP_*` settings tune the queue, batch size, export interval, and timeout without editing generated code. The local Loki configuration leaves room for the bridge's bounded nested metadata, avoiding rejection by Loki's smaller upstream defaults.
+
 ### Grafana receives local traces automatically
 
 Projects with Grafana, Observability, and Docker now render Tempo, a provisioned trace datasource, and Traces Overview. After updating the CLI and reviewing scaffold ownership, run `forj render`, rebuild the app, and start the generated stack with `docker-compose up -d --build`. The existing `grafana` Compose profile includes Tempo. No datasource setup is needed.

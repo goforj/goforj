@@ -114,9 +114,7 @@ func (l *AppLogger) ConfigureTelemetry(ctx context.Context) error {
 			return fmt.Errorf("configure log identity failed")
 		}
 	}
-	processor := &managedLogProcessor{Processor: sdklog.NewBatchProcessor(logExporter{Exporter: exporter},
-		sdklog.WithMaxQueueSize(2048), sdklog.WithExportMaxBatchSize(256),
-		sdklog.WithExportInterval(time.Second), sdklog.WithExportTimeout(5*time.Second))}
+	processor := &managedLogProcessor{Processor: sdklog.NewBatchProcessor(logExporter{Exporter: exporter}, logBatchOptions()...)}
 	provider := sdklog.NewLoggerProvider(sdklog.WithResource(res),
 		sdklog.WithAttributeCountLimit(64), sdklog.WithAttributeValueLengthLimit(4096), sdklog.WithAttributeValueDepthLimit(8),
 		sdklog.WithProcessor(processor))
@@ -127,6 +125,18 @@ func (l *AppLogger) ConfigureTelemetry(ctx context.Context) error {
 	}
 	global.SetLoggerProvider(provider)
 	return nil
+}
+
+// logBatchOptions preserves framework delivery defaults while leaving explicit OTEL_BLRP settings to the SDK.
+func logBatchOptions() []sdklog.BatchProcessorOption {
+	var options []sdklog.BatchProcessorOption
+	if os.Getenv("OTEL_BLRP_MAX_EXPORT_BATCH_SIZE") == "" {
+		options = append(options, sdklog.WithExportMaxBatchSize(256))
+	}
+	if os.Getenv("OTEL_BLRP_EXPORT_TIMEOUT") == "" {
+		options = append(options, sdklog.WithExportTimeout(5*time.Second))
+	}
+	return options
 }
 
 // Shutdown flushes log records after runtime resources stop and is safe to repeat through Wire cleanup.

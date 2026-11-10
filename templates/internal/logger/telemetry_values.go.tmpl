@@ -1,7 +1,9 @@
 package logger
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"math"
 	"reflect"
 	"strconv"
@@ -52,6 +54,10 @@ func logAttributeValue(value any, depth int, budget *int) attribute.Value {
 		if number, err := typed.Int64(); err == nil {
 			return attribute.Int64Value(number)
 		}
+		// Integers outside OTLP's signed range must retain their exact decimal representation.
+		if !strings.ContainsAny(string(typed), ".eE") {
+			return attribute.StringValue(boundedLogString(string(typed), 4096))
+		}
 		if number, err := typed.Float64(); err == nil {
 			return attribute.Float64Value(number)
 		}
@@ -61,7 +67,12 @@ func logAttributeValue(value any, depth int, budget *int) attribute.Value {
 			return attribute.StringValue("[truncated]")
 		}
 		var decoded any
-		if err := json.Unmarshal(typed, &decoded); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(typed))
+		decoder.UseNumber()
+		if err := decoder.Decode(&decoded); err != nil {
+			return attribute.StringValue("[invalid JSON]")
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
 			return attribute.StringValue("[invalid JSON]")
 		}
 		return logAttributeValue(decoded, depth+1, budget)

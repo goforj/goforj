@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/trace"
@@ -399,6 +400,8 @@ func TestLogValueFailureModes(t *testing.T) {
 		want          string
 	}{
 		{name: "invalid JSON", value: rawJSONField("{"), budget: 256, want: "[invalid JSON]"},
+		{name: "trailing JSON", value: rawJSONField(`{} {}`), budget: 256, want: "[invalid JSON]"},
+		{name: "trailing garbage", value: rawJSONField(`{} trailing`), budget: 256, want: "[invalid JSON]"},
 		{name: "oversized JSON", value: rawJSONField(strings.Repeat("x", 65537)), budget: 256, want: "[truncated]"},
 		{name: "unsupported function", value: func() {}, budget: 256, want: "[unsupported value]"},
 		{name: "exhausted budget", value: "x", want: "[truncated]"},
@@ -413,6 +416,99 @@ func TestLogValueFailureModes(t *testing.T) {
 	}
 	if got := boundedLogString("invalid\xfftext", 4096); strings.Contains(got, "\xff") {
 		t.Fatal("invalid UTF-8 escaped normalization")
+	}
+}
+
+// TestRawJSONLogNumbersRetainPrecision prevents identifiers and large counters from rounding during conversion.
+func TestRawJSONLogNumbersRetainPrecision(t *testing.T) {
+	exporter := &logMemoryExporter{}
+	logger, provider := testLogTelemetry(t, exporter, 16)
+	logger.Info().RawJSON("payload", []byte(`{"id":9007199254740993,"counter":18446744073709551615,"ratio":1.25}`)).Msg("numeric fields")
+	if err := provider.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fields := map[attribute.Key]attribute.Value{}
+	exporter.records[0].WalkAttributes(func(value attribute.KeyValue) bool {
+		if value.Key == "payload" {
+			for _, field := range value.Value.AsMap() {
+				fields[field.Key] = field.Value
+			}
+		}
+		return true
+	})
+	if fields["id"].AsInt64() != 9007199254740993 || fields["counter"].AsString() != "18446744073709551615" || fields["ratio"].AsFloat64() != 1.25 {
+		t.Fatalf("numeric fields lost precision: %v", fields)
+	}
+}
+
+// logBatchProbe observes SDK export deadlines without inspecting private SDK configuration.
+type logBatchProbe struct {
+	logMemoryExporter
+	deadline chan time.Duration
+}
+
+// Export captures the configured transport budget before exercising the ordinary blocked-export path.
+func (e *logBatchProbe) Export(ctx context.Context, records []sdklog.Record) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		select {
+		case e.deadline <- time.Until(deadline):
+		default:
+		}
+	}
+	return e.logMemoryExporter.Export(ctx, records)
+}
+
+// TestLogBatchSettingsHonorEnvironment verifies queue, batch, and timeout overrides through actual delivery behavior.
+func TestLogBatchSettingsHonorEnvironment(t *testing.T) {
+	t.Setenv("OTEL_BLRP_MAX_QUEUE_SIZE", "2")
+	t.Setenv("OTEL_BLRP_MAX_EXPORT_BATCH_SIZE", "2")
+	t.Setenv("OTEL_BLRP_SCHEDULE_DELAY", "3600000")
+	t.Setenv("OTEL_BLRP_EXPORT_TIMEOUT", "1000")
+	unblock := make(chan struct{})
+	exporter := &logBatchProbe{logMemoryExporter: logMemoryExporter{block: unblock, started: make(chan struct{})}, deadline: make(chan time.Duration, 1)}
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter, logBatchOptions()...)))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	release := sync.OnceFunc(func() { close(unblock) })
+	defer release()
+	logger := provider.Logger("batch-settings")
+	var record log.Record
+	logger.Emit(context.Background(), record)
+	logger.Emit(context.Background(), record)
+	select {
+	case <-exporter.started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("configured two-record batch did not trigger export")
+	}
+	if timeout := <-exporter.deadline; timeout <= 0 || timeout > time.Second {
+		t.Fatalf("export deadline = %v; want at most one second", timeout)
+	}
+	for index := 0; index < 8; index++ {
+		logger.Emit(context.Background(), record)
+	}
+	// Release the collector before flushing; only two records should fit behind its active batch.
+	release()
+	if err := provider.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(exporter.records); got != 4 {
+		t.Fatalf("exported %d records; want two active and two queued", got)
+	}
+}
+
+// TestLogBatchScheduleHonorsEnvironment verifies that low-volume logs follow the configured export interval.
+func TestLogBatchScheduleHonorsEnvironment(t *testing.T) {
+	t.Setenv("OTEL_BLRP_MAX_QUEUE_SIZE", "2048")
+	t.Setenv("OTEL_BLRP_MAX_EXPORT_BATCH_SIZE", "256")
+	t.Setenv("OTEL_BLRP_SCHEDULE_DELAY", "1")
+	t.Setenv("OTEL_BLRP_EXPORT_TIMEOUT", "1000")
+	exporter := &logMemoryExporter{started: make(chan struct{})}
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter, logBatchOptions()...)))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	provider.Logger("batch-schedule").Emit(context.Background(), log.Record{})
+	select {
+	case <-exporter.started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("configured schedule did not export a low-volume record")
 	}
 }
 
