@@ -1,0 +1,66 @@
+package observability
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"{{.GoModuleName}}/internal/events"
+	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// TestEventObserverContinuesTransportedTrace checks parentage, consumer source, and failure status on independent receiver context.
+func TestEventObserverContinuesTransportedTrace(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	manager := inspects.NewManager()
+	defer manager.TracerProvider().Shutdown(context.Background())
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(trace.NewSimpleSpanProcessor(exporter))
+	observer := eventObserver{inspects: manager}
+	parentCtx, parent := manager.TracerProvider().Tracer("test").Start(context.Background(), "request")
+	producerCtx, finishProducer := observer.BeginEvent(parentCtx, "send", events.EventDeliveryEvent{Bus: "default", Topic: "orders.finished", Driver: events.DriverNATS})
+	carrier := inspects.MessageContextPropagator{}
+	headers := carrier.Inject(producerCtx)
+	finishProducer(nil)
+	receiver, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	consumerCtx, finishConsumer := observer.BeginEvent(carrier.Extract(receiver, headers), "process", events.EventDeliveryEvent{Bus: "default", Topic: "orders.finished", Driver: events.DriverNATS})
+	if runtime.SourceFromContext(consumerCtx) != runtime.SourceEvents {
+		t.Fatal("consumer source lost")
+	}
+	finishConsumer(errors.New("handler failed"))
+	parent.End()
+	spans := exporter.GetSpans()
+	if len(spans) != 3 {
+		t.Fatalf("spans=%d", len(spans))
+	}
+	producer, consumer := spans[0], spans[1]
+	if producer.SpanKind.String() != "producer" || consumer.SpanKind.String() != "consumer" {
+		t.Fatalf("kinds=%v %v", producer.SpanKind, consumer.SpanKind)
+	}
+	if producer.Parent.SpanID() != parent.SpanContext().SpanID() || consumer.Parent.SpanID() != producer.SpanContext.SpanID() || consumer.SpanContext.TraceID() != parent.SpanContext().TraceID() {
+		t.Fatal("trace continuity lost")
+	}
+	if consumer.Status.Code != codes.Error {
+		t.Fatalf("status=%v", consumer.Status)
+	}
+}
+
+// TestEventObserverDisabledDoesNotCreateCarrier keeps uninstrumented publications on the legacy payload path.
+func TestEventObserverDisabledDoesNotCreateCarrier(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "false")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "false")
+	t.Setenv("OTEL_TRACES_EXPORTER", "none")
+	manager := inspects.NewManager()
+	defer manager.TracerProvider().Shutdown(context.Background())
+	observer := eventObserver{inspects: manager}
+	ctx, finish := observer.BeginEvent(context.Background(), "send", events.EventDeliveryEvent{Topic: "orders.finished"})
+	if finish != nil || len((inspects.MessageContextPropagator{}).Inject(ctx)) != 0 {
+		t.Fatal("disabled tracing created metadata")
+	}
+}

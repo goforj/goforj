@@ -346,7 +346,7 @@ func executionSpanKind(source runtime.Source) trace.SpanKind {
 	if source == runtime.SourceHTTP {
 		return trace.SpanKindServer
 	}
-	if source == runtime.SourceJobs {
+	if source == runtime.SourceJobs || source == runtime.SourceEvents {
 		return trace.SpanKindConsumer
 	}
 	return trace.SpanKindInternal
@@ -655,7 +655,7 @@ func executionStartOptions(source runtime.Source) []trace.SpanStartOption {
 // newExecutionOptions prepares runtime span contracts once instead of allocating option wrappers per request.
 func newExecutionOptions() map[runtime.Source][]trace.SpanStartOption {
 	options := make(map[runtime.Source][]trace.SpanStartOption)
-	for _, source := range []runtime.Source{runtime.SourceHTTP, runtime.SourceJobs, runtime.SourceScheduler, runtime.SourceCLI, runtime.SourceStartup, runtime.SourceApp, runtime.SourceLighthouse} {
+	for _, source := range []runtime.Source{runtime.SourceHTTP, runtime.SourceJobs, runtime.SourceEvents, runtime.SourceScheduler, runtime.SourceCLI, runtime.SourceStartup, runtime.SourceApp, runtime.SourceLighthouse} {
 		options[source] = []trace.SpanStartOption{trace.WithSpanKind(executionSpanKind(source)), trace.WithAttributes(attribute.String("goforj.source", source.String()))}
 	}
 	return options

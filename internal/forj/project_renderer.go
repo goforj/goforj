@@ -597,6 +597,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/inspects/README.md.tmpl",
 				"internal/inspects/manager.go.tmpl",
 				"internal/inspects/telemetry.go.tmpl",
+				"internal/inspects/propagation.go.tmpl",
+				"internal/inspects/propagation_test.go.tmpl",
 				"internal/inspects/telemetry_local.go.tmpl",
 				"internal/inspects/telemetry_local_test.go.tmpl",
 				"internal/inspects/telemetry_test.go.tmpl",
@@ -647,6 +649,8 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/make_subscriber_cmd.go.tmpl",
 				"internal/makecmd/make_subscriber_cmd_test.go.tmpl",
 				"internal/observability/event_observer.go.tmpl",
+				"internal/observability/event_observer_test.go.tmpl",
+				"internal/observability/async_trace_test.go.tmpl",
 				"internal/cmd/test_event_pipeline_cmd.go.tmpl",
 			},
 			raw: []string{

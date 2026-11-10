@@ -145,6 +145,14 @@ import (
 )
 
 type API = goforjevents.API
+
+// messageContextPropagator satisfies the generated constructor while these fixtures test observer composition.
+type messageContextPropagator struct{}
+// Inject leaves these observer-only fixtures without transport metadata.
+func (messageContextPropagator) Inject(context.Context)map[string]string {return nil}
+// Extract preserves the receiving fixture context.
+func (messageContextPropagator) Extract(ctx context.Context,_ map[string]string)context.Context {return ctx}
+
 type Driver = eventscore.Driver
 type Subscription = goforjevents.Subscription
 
@@ -403,6 +411,14 @@ import (
 )
 
 type API = goforjevents.API
+
+// messageContextPropagator satisfies the generated constructor while these fixtures test observer composition.
+type messageContextPropagator struct{}
+// Inject leaves these observer-only fixtures without transport metadata.
+func (messageContextPropagator) Inject(context.Context)map[string]string {return nil}
+// Extract preserves the receiving fixture context.
+func (messageContextPropagator) Extract(ctx context.Context,_ map[string]string)context.Context {return ctx}
+
 type Driver = eventscore.Driver
 type Subscription = goforjevents.Subscription
 
@@ -548,6 +564,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+ "reflect"
+ "github.com/goforj/env/v2"
 )
 
 type userCreated struct {
@@ -654,6 +672,51 @@ func TestGeneratedObserver(t *testing.T) {
 	if !strings.Contains(lifecycle[5], "unsubscribe:audit:users.created:") {
 		t.Fatalf("audit unsubscribe lifecycle = %q", lifecycle[5])
 	}
+}
+`
+
+	testSource += `
+// tracingObserver verifies operation contexts reach handlers and close after both errors and panics.
+type tracingObserver struct { observerRecorder; ended *[]error }
+// BeginEvent preserves incoming correlation and supplies a derived instrumentation context.
+func(o tracingObserver)BeginEvent(ctx context.Context,_ string,_ EventDeliveryEvent)(context.Context,func(error)) {
+ return context.WithValue(ctx,observerKey("scope"),"present"),func(err error){*o.ended=append(*o.ended,err)}
+}
+// observerKey avoids collisions with application context keys.
+type observerKey string
+// concreteHandlerError exercises error results that cannot be compared to nil by reflection.
+type concreteHandlerError struct{}
+// Error identifies the expected handler failure.
+func(concreteHandlerError)Error()string{return "handler failed"}
+
+// TestGeneratedObserverTracingHandlers preserves incoming context for every supported handler shape.
+func TestGeneratedObserverTracingHandlers(t *testing.T) {
+ for _,panicHandler:=range []bool{false,true} {
+  var ended []error
+  finished:=false
+  observer:=tracingObserver{observerRecorder:observerRecorder{onDeliveryFinish:func(ctx context.Context,event EventDeliveryEvent){finished=true;if ctx.Value(observerKey("parent"))!="incoming" || event.Err==nil {t.Error("finish lost context or failure")}}},ended:&ended}
+  var handler any=func(ctx context.Context,_ userCreated)concreteHandlerError{if ctx.Value(observerKey("parent"))!="incoming" || ctx.Value(observerKey("scope"))!="present" {t.Error("handler lost derived context")};return concreteHandlerError{}}
+  if panicHandler {handler=func(userCreated){panic("original panic")}}
+  wrapped,_,_,err:=wrapObservedHandler(handler,observer,"default",DriverInproc)
+  if err!=nil {t.Fatal(err)}
+  func(){defer func(){value:=recover();if panicHandler && value!="original panic" {t.Errorf("panic=%v",value)};if !panicHandler && value!=nil {t.Errorf("unexpected panic=%v",value)}}();reflect.ValueOf(wrapped).Call([]reflect.Value{reflect.ValueOf(context.WithValue(context.Background(),observerKey("parent"),"incoming")),reflect.ValueOf(userCreated{})})}()
+  if !finished || len(ended)!=1 || ended[0]==nil {t.Fatalf("finished=%v endings=%v",finished,ended)}
+ }
+}
+
+// TestGeneratedObserverContextConfiguration supports staged root and named-bus rollouts and rejects invalid configuration.
+func TestGeneratedObserverContextConfiguration(t *testing.T) {
+ for _,value:=range []string{"true","false","invalid"} {
+  t.Setenv("EVENTS_CONTEXT_PROPAGATION_ENABLED",value)
+  options,err:=eventContextOptions(env.WithPrefix("EVENTS").Child("AUDIT"))
+  if value=="invalid" {if err==nil {t.Fatal("invalid boolean accepted")};continue}
+  if err!=nil {t.Fatal(err)}
+  if (len(options)==1)!=(value=="true") {t.Fatalf("value=%s options=%d",value,len(options))}
+ }
+ t.Setenv("EVENTS_CONTEXT_PROPAGATION_ENABLED","false")
+ t.Setenv("EVENTS_AUDIT_CONTEXT_PROPAGATION_ENABLED","true")
+ options,err:=eventContextOptions(env.WithPrefix("EVENTS").Child("AUDIT"))
+ if err!=nil || len(options)!=1 {t.Fatalf("named override options=%d err=%v",len(options),err)}
 }
 `
 	if err := os.WriteFile(filepath.Join(root, "internal", "events", "generated_observer_test.go"), []byte(testSource), 0o644); err != nil {

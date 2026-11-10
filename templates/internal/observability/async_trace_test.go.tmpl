@@ -1,0 +1,119 @@
+package observability
+
+{{- if .ProjectComponents.Jobs }}
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/goforj/queue"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"{{.GoModuleName}}/internal/events"
+	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/queues"
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// asyncTraceEvent supplies a stable destination for the generated queue-to-event contract.
+type asyncTraceEvent struct{ ID string }
+
+// Topic identifies the event destination independently from its Go type name.
+func (asyncTraceEvent) Topic() string { return "orders.finished" }
+
+// TestAsyncTraceContinuity follows a request through enqueue, retry, job execution, event publication, and a contextual handler log.
+func TestAsyncTraceContinuity(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	t.Setenv("QUEUE_DRIVER", "sync")
+	t.Setenv("EVENTS_DRIVER", "inproc")
+	manager := inspects.NewManager()
+	defer manager.TracerProvider().Shutdown(context.Background())
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(trace.NewSimpleSpanProcessor(exporter))
+	jobs, err := queues.NewManagerWithObserver(nil, nil, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, instance := range jobs.Instances() {
+		if err := instance.Queue.StartWorkers(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		defer instance.Queue.Shutdown(context.Background())
+	}
+	buses, err := events.NewManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	buses.WithObserver(eventObserver{inspects: manager})
+	t.Setenv("APP_LOG_FORMAT", "json")
+	t.Setenv("APP_LOG_TIME", "")
+	t.Setenv("APP_LOG_CALLER", "")
+	appLogger := logger.NewAppLogger()
+	var entries []logger.LogEntry
+	appLogger.AddSink(func(entry logger.LogEntry) { entries = append(entries, entry) })
+	handled := false
+	subscription, err := buses.Default().Subscribe(func(ctx context.Context, event asyncTraceEvent) error {
+		handled = true
+		if event.ID != "order-42" || runtime.SourceFromContext(ctx) != runtime.SourceEvents {
+			t.Error("handler lost payload or source")
+		}
+		appLogger.WithContext(ctx).Info().Msg("order finished")
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	attempts := 0
+	jobs.Register("orders.process", func(ctx context.Context, _ queue.Message) error {
+		attempts++
+		if runtime.SourceFromContext(ctx) != runtime.SourceJobs {
+			t.Error("job source lost")
+		}
+		if attempts == 1 {
+			return errors.New("transient failure")
+		}
+		return buses.Default().WithContext(ctx).Publish(asyncTraceEvent{ID: "order-42"})
+	})
+	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "POST /orders", nil)
+	if _, err := jobs.WithContext(ctx).Dispatch(queue.NewJob("orders.process").Payload(map[string]string{"id": "order-42"}).Retry(1)); err != nil {
+		t.Fatal(err)
+	}
+	manager.Finish(ctx, "ok", nil)
+	if !handled || attempts != 2 {
+		t.Fatalf("handled=%v attempts=%d", handled, attempts)
+	}
+	spans := exporter.GetSpans()
+	byName := map[string][]tracetest.SpanStub{}
+	for _, span := range spans {
+		byName[span.Name] = append(byName[span.Name], span)
+	}
+	for name, count := range map[string]int{"POST /orders": 1, "send default": 1, "orders.process": 2, "send orders.finished": 1, "process orders.finished": 1} {
+		if len(byName[name]) != count {
+			t.Fatalf("%s spans=%d want=%d; all=%v", name, len(byName[name]), count, byName)
+		}
+	}
+	request := byName["POST /orders"][0]
+	producer := byName["send default"][0]
+	attemptsSpans := byName["orders.process"]
+	eventProducer := byName["send orders.finished"][0]
+	consumer := byName["process orders.finished"][0]
+	if producer.Parent.SpanID() != request.SpanContext.SpanID() || attemptsSpans[0].Parent.SpanID() != producer.SpanContext.SpanID() || attemptsSpans[1].Parent.SpanID() != producer.SpanContext.SpanID() || eventProducer.Parent.SpanID() != attemptsSpans[1].SpanContext.SpanID() || consumer.Parent.SpanID() != eventProducer.SpanContext.SpanID() {
+		t.Fatal("asynchronous parent relationships changed")
+	}
+	if attemptsSpans[0].Status.Code != codes.Error {
+		t.Fatal("failed attempt was not recorded as an error")
+	}
+	for _, span := range spans {
+		if span.SpanContext.TraceID() != request.SpanContext.TraceID() {
+			t.Fatal("trace identity split")
+		}
+	}
+	if len(entries) != 1 || entries[0].Fields["trace_id"] != request.SpanContext.TraceID().String() || entries[0].Fields["span_id"] != consumer.SpanContext.SpanID().String() {
+		t.Fatalf("contextual log lost correlation: %v", entries)
+	}
+}
+{{- end }}

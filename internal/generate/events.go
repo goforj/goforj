@@ -133,6 +133,7 @@ var eventDriverSpecs = map[string]eventDriverSpec{
 }
 
 var eventRootKeys = []string{
+	"CONTEXT_PROPAGATION_ENABLED",
 	"DRIVER",
 	"ADDR",
 	"REDIS_CHANNEL_PREFIX",
@@ -345,12 +346,13 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+ "strconv"
 	"runtime"
 	"sync"
 	"strings"
 	"time"
 
-	goforjevents "github.com/goforj/events"
+ goforjevents "github.com/goforj/events"
 	eventscore "github.com/goforj/events/eventscore"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str/v2"
@@ -374,6 +376,7 @@ var compiledEventDrivers = []string{
 }
 
 var eventRootKeys = []string{
+ "CONTEXT_PROPAGATION_ENABLED",
 	"DRIVER",
 	"ADDR",
 	"REDIS_CHANNEL_PREFIX",
@@ -631,7 +634,9 @@ func buildBus(ctx context.Context, scope env.Scope) (Bus, error) {
 	if !eventDriverCompiled(driverName) {
 		return nil, fmt.Errorf("events: active driver %q is not built in; compiled choices: %s; run forj generate --events after updating EVENTS_SUPPORTED_DRIVERS", driverName, strings.Join(compiledEventDrivers, ", "))
 	}
-	switch activeDriverForScope(scope) {
+	options,err:=eventContextOptions(scope)
+ if err!=nil {return nil,err}
+ switch activeDriverForScope(scope) {
 {{- range .Drivers }}
 	case {{ .CaseName }}:
 {{- if .NeedsContext }}
@@ -649,7 +654,7 @@ func buildBus(ctx context.Context, scope env.Scope) (Bus, error) {
 		api, err := goforjevents.New(goforjevents.Config{
 			Driver: driverKind({{ .CaseName }}),
 			Transport: driver,
-		})
+		}, options...)
 		if err != nil {
 			return nil, err
 		}
@@ -661,14 +666,14 @@ func buildBus(ctx context.Context, scope env.Scope) (Bus, error) {
 		}), nil
 {{- end }}
 	case DriverNull:
-		api, err := goforjevents.NewNull()
+		api, err := goforjevents.NewNull(options...)
 		if err != nil {
 			return nil, err
 		}
 		return newManagedBus(api, nil, nil), nil
 	default:
 		if activeDriverForScope(scope) == DriverInproc {
-			api, err := goforjevents.NewSync()
+			api, err := goforjevents.NewSync(options...)
 			if err != nil {
 				return nil, err
 			}
@@ -678,6 +683,17 @@ func buildBus(ctx context.Context, scope env.Scope) (Bus, error) {
 	}
 }
 
+// eventContextOptions permits staged Redis consumer upgrades before producers attach context envelopes.
+func eventContextOptions(scope env.Scope) ([]goforjevents.Option, error) {
+	enabled, err := strconv.ParseBool(scope.Get("CONTEXT_PROPAGATION_ENABLED", env.Get("EVENTS_CONTEXT_PROPAGATION_ENABLED", "true")))
+	if err != nil {
+		return nil, fmt.Errorf("events: CONTEXT_PROPAGATION_ENABLED must be a boolean")
+	}
+	if !enabled {
+		return nil, nil
+	}
+	return []goforjevents.Option{goforjevents.WithContextPropagator(messageContextPropagator{})}, nil
+}
 // eventDriverCompiled reports whether driver is selectable in this generated artifact.
 func eventDriverCompiled(driver string) bool {
 	for _, compiled := range compiledEventDrivers {
@@ -831,8 +847,10 @@ func (b *observedBus) WithContext(ctx context.Context) API {
 // Publish reports the delegated publish outcome and duration to the configured observer.
 func (b *observedBus) Publish(event any) error {
 	startedAt := time.Now()
-	ctx := b.context()
-	err := b.inner.WithContext(ctx).Publish(event)
+	ctx,finish:=beginObservedEvent(b.context(),b.observer,"send",EventDeliveryEvent{Bus:eventBusLabel(b.name),Topic:eventTopicLabel(event),Driver:b.inner.Driver()})
+ var err error
+ defer finishObservedEvent(finish,&err)
+ err = b.inner.WithContext(ctx).Publish(event)
 	b.observer.OnEventPublish(ctx, EventPublishEvent{
 		Bus:      eventBusLabel(b.name),
 		Topic:    eventTopicLabel(event),
@@ -980,13 +998,22 @@ func wrapObservedHandler(handler any, observer Observer, busName string, driver 
 	sample := sampleEventValue(eventType)
 	topic := eventTopicLabel(sample.Interface())
 	handlerName := eventHandlerLabel(fn)
-	wrapped := reflect.MakeFunc(typ, func(args []reflect.Value) []reflect.Value {
+	outputs:=make([]reflect.Type,typ.NumOut())
+ for index:=range outputs {outputs[index]=typ.Out(index)}
+ wrappedType:=reflect.FuncOf([]reflect.Type{reflect.TypeOf((*context.Context)(nil)).Elem(),eventType},outputs,typ.IsVariadic())
+ wrapped := reflect.MakeFunc(wrappedType, func(args []reflect.Value) []reflect.Value {
 		callCtx := context.Background()
-		if typ.NumIn() == 2 && len(args) > 0 && !args[0].IsNil() {
+		if len(args) > 0 && !args[0].IsNil() {
 			if ctxArg, ok := args[0].Interface().(context.Context); ok && ctxArg != nil {
 				callCtx = ctxArg
 			}
 		}
+        callCtx,finish:=beginObservedEvent(callCtx,observer,"process",EventDeliveryEvent{Bus:eventBusLabel(busName),Topic:topic,Handler:handlerName,Driver:driver})
+        var callErr error
+        defer finishObservedEvent(finish,&callErr)
+        args[0]=reflect.ValueOf(callCtx)
+ callArgs:=args
+ if typ.NumIn()==1 {callArgs=args[1:]}
 		if observer != nil {
 			observer.OnEventDeliveryStart(callCtx, EventDeliveryEvent{
 				Bus:     eventBusLabel(busName),
@@ -995,22 +1022,11 @@ func wrapObservedHandler(handler any, observer Observer, busName string, driver 
 				Driver:  driver,
 			})
 		}
-		startedAt := time.Now()
-		out := fn.Call(args)
-		var callErr error
-		if typ.NumOut() == 1 && len(out) == 1 && !out[0].IsNil() {
-			callErr = out[0].Interface().(error)
-		}
-		if observer != nil {
-			observer.OnEventDeliveryFinish(callCtx, EventDeliveryEvent{
-				Bus:      eventBusLabel(busName),
-				Topic:    topic,
-				Handler:  handlerName,
-				Err:      callErr,
-				Duration: time.Since(startedAt),
-				Driver:   driver,
-			})
-		}
+        startedAt := time.Now()
+        defer finishEventDelivery(callCtx,observer,EventDeliveryEvent{Bus:eventBusLabel(busName),Topic:topic,Handler:handlerName,Driver:driver},startedAt,&callErr)
+		out := fn.Call(callArgs)
+        callErr=eventHandlerError(out)
+
 		return out
 	})
 	return wrapped.Interface(), topic, handlerName, nil
@@ -1050,6 +1066,80 @@ func eventHandlerLabel(fn reflect.Value) string {
 	}
 	return name
 }
+// eventContextObserver optionally binds instrumentation to an operation before application code runs.
+type eventContextObserver interface {
+	BeginEvent(context.Context, string, EventDeliveryEvent) (context.Context, func(error))
+}
+
+// beginObservedEvent preserves the observer API while allowing context-aware instrumentation to compose.
+func beginObservedEvent(ctx context.Context, observer Observer, operation string, event EventDeliveryEvent) (context.Context, func(error)) {
+	if instrumentation, ok := observer.(eventContextObserver); ok {
+		return instrumentation.BeginEvent(ctx, operation, event)
+	}
+	if chain, ok := observer.(observerChain); ok {
+		var endings []func(error)
+		for _, observer := range chain {
+			var end func(error)
+			ctx, end = beginObservedEvent(ctx, observer, operation, event)
+			if end != nil {
+				endings = append(endings, end)
+			}
+		}
+		if len(endings) > 0 {
+			return ctx, func(err error) {
+				for index := len(endings) - 1; index >= 0; index-- {
+					endings[index](err)
+				}
+			}
+		}
+	}
+	return ctx, nil
+}
+
+// finishObservedEvent closes instrumented operations even when the original handler panics.
+func finishObservedEvent(finish func(error), operationErr *error) {
+	if value := recover(); value != nil {
+		if finish != nil {
+			finish(fmt.Errorf("event operation panicked"))
+		}
+		panic(value)
+	}
+	if finish != nil {
+		finish(*operationErr)
+	}
+}
+
+// finishEventDelivery balances delivery metrics and notifications on errors and panics before tracing ends.
+func finishEventDelivery(ctx context.Context, observer Observer, event EventDeliveryEvent, started time.Time, callErr *error) {
+	value := recover()
+	if value != nil {
+		*callErr = fmt.Errorf("event handler panicked")
+	}
+	if observer != nil {
+		event.Err = *callErr
+		event.Duration = time.Since(started)
+		observer.OnEventDeliveryFinish(ctx, event)
+	}
+	if value != nil {
+		panic(value)
+	}
+}
+
+// eventHandlerError supports concrete error values as well as nil-capable error results.
+func eventHandlerError(out []reflect.Value) error {
+	if len(out) == 0 {
+		return nil
+	}
+	result := out[0]
+	switch result.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if result.IsNil() {
+			return nil
+		}
+	}
+	return result.Interface().(error)
+}
+
 `
 
 const eventsAccessorsTemplate = `// Code generated by forj generate --events. DO NOT EDIT.

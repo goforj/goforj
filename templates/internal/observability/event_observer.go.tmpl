@@ -2,6 +2,10 @@ package observability
 
 import (
 	"context"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"{{.GoModuleName}}/internal/runtime"
 
 	"{{.GoModuleName}}/internal/events"
 	"{{.GoModuleName}}/internal/inspects"
@@ -139,4 +143,31 @@ func (o eventObserver) OnEventDeliveryFinish(ctx context.Context, event events.E
 		})
 	}
 {{- end }}
+}
+
+// BeginEvent scopes producer and consumer tracing without coupling the event bus to a tracing SDK.
+func (o eventObserver) BeginEvent(ctx context.Context, operation string, event events.EventDeliveryEvent) (context.Context, func(error)) {
+	if !o.inspects.TracingEnabled() {
+		return ctx, nil
+	}
+	attributes := []attribute.KeyValue{attribute.String("messaging.system", string(event.Driver)), attribute.String("messaging.destination.name", event.Topic), attribute.String("messaging.operation.name", operation)}
+	if operation == "send" {
+		ctx, span := o.inspects.TracerProvider().Tracer("goforj/events").Start(ctx, "send "+event.Topic, trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attributes...))
+		return ctx, func(err error) {
+			if err != nil {
+				span.SetStatus(codes.Error, "event publication failed")
+			}
+			span.End()
+		}
+	}
+	ctx = runtime.WithSource(ctx, runtime.SourceEvents)
+	ctx = o.inspects.Begin(ctx, runtime.SourceEvents, "process "+event.Topic, map[string]string{"bus": event.Bus, "topic": event.Topic, "handler": event.Handler})
+	trace.SpanFromContext(ctx).SetAttributes(attributes...)
+	return ctx, func(err error) {
+		status := ""
+		if err != nil {
+			status = "error"
+		}
+		o.inspects.Finish(ctx, status, err)
+	}
 }

@@ -432,6 +432,9 @@ package queues
 
 import (
 	"context"
+ "go.opentelemetry.io/otel/attribute"
+ "go.opentelemetry.io/otel/codes"
+ "go.opentelemetry.io/otel/trace"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -671,18 +674,43 @@ func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
 			queueName = defaultQueueName
 		}
 		job = job.OnQueue(queueName)
-		recordQueuedJobPayload(m.ctx, job)
-		return m.defaultQueue.Dispatch(job)
+
+		return m.dispatchJob(m.defaultQueue,job)
 	}
-	recordQueuedJobPayload(m.ctx, job)
+
 	for _, instance := range m.Instances() {
 		if !instance.IsDefault && strings.EqualFold(instance.Name, queueName) {
-			return instance.Queue.Dispatch(job.OnQueue(instance.queueName))
+			return m.dispatchJob(instance.Queue,job.OnQueue(instance.queueName))
 		}
 	}
-	return m.defaultQueue.Dispatch(job)
+	return m.dispatchJob(m.defaultQueue,job)
 }
 
+// dispatchJob scopes one resolved enqueue operation and propagates its producer identity through the queue metadata channel.
+func (m *Manager) dispatchJob(instance *queue.Queue, job queue.Job) (result queue.DispatchResult, err error) {
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if m.inspects == nil || !m.inspects.TracingEnabled() {
+		recordQueuedJobPayload(ctx, job)
+		return instance.WithContext(ctx).Dispatch(job)
+	}
+	ctx, span := m.inspects.TracerProvider().Tracer("goforj/queue").Start(ctx, "send "+queue.DriverOptions(job).QueueName, trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(
+		attribute.String("messaging.system", string(instance.Driver())),
+		attribute.String("messaging.destination.name", queue.DriverOptions(job).QueueName),
+		attribute.String("messaging.operation.name", "send"),
+		attribute.String("goforj.job.type", job.Type),
+	))
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, "job dispatch failed")
+		}
+		span.End()
+	}()
+	recordQueuedJobPayload(ctx, job)
+	return instance.WithContext(ctx).Dispatch(job)
+}
 // WithContext clones the manager so per-call context binding cannot mutate shared queue handles.
 func (m *Manager) WithContext(ctx context.Context) *Manager {
 	clone := *m
@@ -740,6 +768,7 @@ func buildQueue(name string, scope env.Scope, rootScope env.Scope, observer queu
 	}
 {{- end }}
 	options := []queue.Option{
+ queue.WithContextPropagator(inspects.MessageContextPropagator{}),
 		queue.WithWorkers(workerCount),
 		queue.WithHandlerContextDecorator(func(ctx context.Context) context.Context {
 			return runtime.WithSource(ctx, runtime.SourceJobs)

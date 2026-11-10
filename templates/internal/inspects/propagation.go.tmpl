@@ -1,0 +1,61 @@
+package inspects
+
+import (
+	"context"
+	"strings"
+
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// MessageContextPropagator carries W3C trace identity without publishing arbitrary context values or baggage.
+type MessageContextPropagator struct{}
+
+// Inject snapshots valid span identity, including unsampled parents, for transport metadata.
+func (MessageContextPropagator) Inject(ctx context.Context) map[string]string {
+	if !trace.SpanContextFromContext(ctx).IsValid() {
+		return nil
+	}
+	headers := propagation.MapCarrier{}
+	propagation.TraceContext{}.Inject(ctx, headers)
+	return headers
+}
+
+// Extract restores only bounded W3C fields onto the receiver's lifetime and application context.
+func (MessageContextPropagator) Extract(ctx context.Context, headers map[string]string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(headers) > 32 {
+		return ctx
+	}
+	carrier := propagation.MapCarrier{}
+	for key, value := range headers {
+		switch {
+		case strings.EqualFold(key, "traceparent"):
+			if len(value) > 512 {
+				return ctx
+			}
+			if _, exists := carrier["traceparent"]; exists {
+				return ctx
+			}
+			carrier["traceparent"] = value
+		case strings.EqualFold(key, "tracestate"):
+			if len(value) > 512 {
+				return ctx
+			}
+			if _, exists := carrier["tracestate"]; exists {
+				return ctx
+			}
+			carrier["tracestate"] = value
+		}
+	}
+	extracted := propagation.TraceContext{}.Extract(ctx, carrier)
+	parent := trace.SpanContextFromContext(ctx)
+	incoming := trace.SpanContextFromContext(extracted)
+	// A synchronous delivery can retain its local parent instead of treating a same-process hop as remote.
+	if parent.IsValid() && !parent.IsRemote() && incoming.WithRemote(false).Equal(parent) {
+		return ctx
+	}
+	return extracted
+}

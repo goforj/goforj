@@ -1,0 +1,69 @@
+package inspects
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"go.opentelemetry.io/otel/trace"
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// TestMessageContextPropagationRetainsIdentityAndReceiverLifetime covers sampled and unsampled cross-process carriers.
+func TestMessageContextPropagationRetainsIdentityAndReceiverLifetime(t *testing.T) {
+	state, err := trace.ParseTraceState("vendor=value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, flags := range []trace.TraceFlags{0, trace.FlagsSampled} {
+		identity := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}, TraceFlags: flags, TraceState: state})
+		producer := trace.ContextWithSpanContext(context.Background(), identity)
+		propagator := MessageContextPropagator{}
+		headers := propagator.Inject(producer)
+		if len(headers) != 2 {
+			t.Fatalf("carrier=%v", headers)
+		}
+		deadline := time.Now().Add(time.Hour)
+		receiver, cancel := context.WithDeadline(runtime.WithSource(context.Background(), runtime.SourceEvents), deadline)
+		extracted := propagator.Extract(receiver, map[string]string{"TraceParent": headers["traceparent"], "TraceState": headers["tracestate"], "baggage": "must-not-propagate"})
+		actual := trace.SpanContextFromContext(extracted)
+		if !actual.Equal(identity.WithRemote(true)) || runtime.SourceFromContext(extracted) != runtime.SourceEvents {
+			t.Fatal("identity, sampling decision, or receiver values changed")
+		}
+		if got, ok := extracted.Deadline(); !ok || !got.Equal(deadline) {
+			t.Fatal("receiver deadline changed")
+		}
+		cancel()
+		if extracted.Err() != context.Canceled {
+			t.Fatal("receiver cancellation was detached")
+		}
+		if got := propagator.Extract(producer, headers); got != producer {
+			t.Fatal("same-process parent was unnecessarily marked remote")
+		}
+	}
+	if got := executionSpanKind(runtime.SourceEvents); got != trace.SpanKindConsumer {
+		t.Fatalf("event execution kind=%s", got)
+	}
+}
+
+// TestMessageContextPropagationRejectsMalformedMetadata keeps invalid trace input from changing application execution.
+func TestMessageContextPropagationRejectsMalformedMetadata(t *testing.T) {
+	propagator := MessageContextPropagator{}
+	receiver := context.Background()
+	many := map[string]string{}
+	for index := range 33 {
+		many[strings.Repeat("x", index+1)] = "ignored"
+	}
+	for _, headers := range []map[string]string{nil, {}, many, {"traceparent": "invalid"}, {"traceparent": strings.Repeat("x", 513)}, {"tracestate": strings.Repeat("x", 513)}, {"traceparent": "first", "Traceparent": "second"}, {"tracestate": "first", "Tracestate": "second"}} {
+		if got := propagator.Extract(receiver, headers); trace.SpanContextFromContext(got).IsValid() {
+			t.Fatal("invalid metadata created a parent")
+		}
+	}
+	if propagator.Extract(nil, nil) == nil {
+		t.Fatal("nil input was not normalized")
+	}
+	if headers := propagator.Inject(context.Background()); len(headers) != 0 {
+		t.Fatal("untraced publication acquired headers")
+	}
+}
