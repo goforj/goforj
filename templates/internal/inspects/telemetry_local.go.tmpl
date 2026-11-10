@@ -38,7 +38,7 @@ func traceEndpointForRuntime(protocol string, host bool) (string, error) {
 		port, setting, published = "4317", "TEMPO_OTLP_GRPC_PORT", "14317"
 	}
 	if !host {
-		return "http://tempo:" + port, nil
+		return "http://alloy:" + port, nil
 	}
 	if value := strings.TrimSpace(os.Getenv(setting)); value != "" {
 		published = value

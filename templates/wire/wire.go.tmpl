@@ -8,7 +8,6 @@ package wire
 
 import (
 	"github.com/goforj/wire"
-	"{{.GoModuleName}}/internal/logger"
 )
 
 // initializeApplication builds the graph and releases constructed resources if a later provider fails.
@@ -37,7 +36,7 @@ func initializeApplication() (App, func(), error) {
 {{ if .Components.Jobs -}}
 		jobSet,
 {{ end -}}
-		logger.ProvideAppLogger,
+		provideAppLogger,
 		managerSet,
 {{ if .Components.Scheduler -}}
 		schedulerSet,

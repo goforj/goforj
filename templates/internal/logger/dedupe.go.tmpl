@@ -26,17 +26,17 @@ const (
 )
 
 type dedupeWriter struct {
-	out          io.Writer
-	enabled      bool
-	window       time.Duration
-	burst        int
-	summaryEvery int
-	maxKeys      int
-	compactEvery int
+	out           io.Writer
+	enabled       bool
+	window        time.Duration
+	burst         int
+	summaryEvery  int
+	maxKeys       int
+	compactEvery  int
 	opsSinceSweep int
-	mu           sync.Mutex
-	pending      bytes.Buffer
-	entries      map[string]*dedupeEntry
+	mu            sync.Mutex
+	pending       bytes.Buffer
+	entries       map[string]*dedupeEntry
 }
 
 type dedupeEntry struct {
@@ -48,15 +48,15 @@ type dedupeEntry struct {
 }
 
 type sinkDedupe struct {
-	enabled      bool
-	window       time.Duration
-	burst        int
-	summaryEvery int
-	maxKeys      int
-	compactEvery int
+	enabled       bool
+	window        time.Duration
+	burst         int
+	summaryEvery  int
+	maxKeys       int
+	compactEvery  int
 	opsSinceSweep int
-	mu           sync.Mutex
-	entries      map[string]*sinkDedupeEntry
+	mu            sync.Mutex
+	entries       map[string]*sinkDedupeEntry
 }
 
 type sinkDedupeEntry struct {
@@ -80,6 +80,8 @@ var (
 	kvRegexp          = regexp.MustCompile(`^\s*([a-zA-Z0-9_]+)=(.+?)\s*$`)
 	spaceRegexp       = regexp.MustCompile(`\s+`)
 	ignoreKeys        = map[string]struct{}{
+		"trace_id":   {},
+		"span_id":    {},
 		"latency":    {},
 		"duration":   {},
 		"elapsed_ms": {},
@@ -197,7 +199,7 @@ func (d *sinkDedupe) summaryEntryLocked(state *sinkDedupeEntry, now time.Time) *
 		summary.Message = "Log event"
 	}
 	fields := ensureLogEntryFields(&summary)
-	for _, key := range []string{"latency", "duration", "elapsed_ms", "time", "ts"} {
+	for _, key := range []string{"latency", "duration", "elapsed_ms", "time", "ts", "trace_id", "span_id"} {
 		delete(fields, key)
 	}
 	fields["occurred"] = fmt.Sprintf("%dx", state.suppressedSinceSummary)

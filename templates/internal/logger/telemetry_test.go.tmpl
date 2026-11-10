@@ -1,0 +1,417 @@
+package logger
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/log/global"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/trace"
+)
+
+// logMemoryExporter records immutable SDK snapshots for correlation and queue behavior checks.
+type logMemoryExporter struct {
+	mu      sync.Mutex
+	records []sdklog.Record
+	block   <-chan struct{}
+	started chan struct{}
+	once    sync.Once
+}
+
+// Export copies records while allowing tests to simulate a collector that does not make progress.
+func (e *logMemoryExporter) Export(ctx context.Context, records []sdklog.Record) error {
+	if e.started != nil {
+		e.once.Do(func() { close(e.started) })
+	}
+	if e.block != nil {
+		select {
+		case <-e.block:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, record := range records {
+		e.records = append(e.records, record.Clone())
+	}
+	return nil
+}
+
+// Shutdown has no transport resources to release in this in-memory exporter.
+func (e *logMemoryExporter) Shutdown(context.Context) error { return nil }
+
+// ForceFlush has no secondary buffer to flush.
+func (e *logMemoryExporter) ForceFlush(context.Context) error { return nil }
+
+// testLogTelemetry wires the real SDK to a deterministic exporter without global state or a network receiver.
+func testLogTelemetry(t *testing.T, exporter sdklog.Exporter, queue int) (*AppLogger, *sdklog.LoggerProvider) {
+	t.Helper()
+	appLogger := newAppLoggerWithWriters(logConfig{format: logFormatJSON}, 0, io.Discard, io.Discard)
+	processor := &managedLogProcessor{Processor: sdklog.NewBatchProcessor(exporter,
+		sdklog.WithMaxQueueSize(queue), sdklog.WithExportMaxBatchSize(1), sdklog.WithExportInterval(time.Hour), sdklog.WithExportTimeout(time.Second))}
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(processor))
+	appLogger.telemetry.current.Store(&logTelemetry{provider: provider, logger: provider.Logger("test"), processor: processor})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = provider.Shutdown(ctx)
+	})
+	return appLogger, provider
+}
+
+// TestLogTelemetryPreservesEveryRecordAndSpanIdentity prevents console dedupe from suppressing remote events or merging their contexts.
+func TestLogTelemetryPreservesEveryRecordAndSpanIdentity(t *testing.T) {
+	t.Setenv("APP_LOG_DEDUPE_ENABLED", "true")
+	exporter := &logMemoryExporter{}
+	logger, provider := testLogTelemetry(t, exporter, 64)
+	spans := trace.NewTracerProvider()
+	defer spans.Shutdown(context.Background())
+	ctx, parent := spans.Tracer("test").Start(context.Background(), "parent")
+	childCtx, child := spans.Tracer("test").Start(ctx, "child")
+	for index := 0; index < 8; index++ {
+		logger.WithContext(ctx).Info().Int("items", 3).Msg("same message")
+	}
+	logger.WithContext(childCtx).Warn().Msg("child warning")
+	child.End()
+	parent.End()
+	if err := provider.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	exporter.mu.Lock()
+	defer exporter.mu.Unlock()
+	if len(exporter.records) != 9 {
+		t.Fatalf("exported %d records; want 9", len(exporter.records))
+	}
+	for index, record := range exporter.records {
+		want := parent.SpanContext()
+		if index == 8 {
+			want = child.SpanContext()
+		}
+		if record.TraceID() != want.TraceID() || record.SpanID() != want.SpanID() {
+			t.Fatalf("record %d lost span identity", index)
+		}
+		if record.Timestamp().IsZero() {
+			t.Fatal("APP_LOG_TIME must not control OTLP timestamps")
+		}
+	}
+}
+
+// TestLogTelemetryClonesShareConfiguration covers component loggers derived before the provider is installed.
+func TestLogTelemetryClonesShareConfiguration(t *testing.T) {
+	original := newAppLoggerWithWriters(logConfig{format: logFormatJSON}, 0, io.Discard, io.Discard)
+	clone := original.WithContext(context.Background())
+	component := original.WithComponent("HTTP")
+	exporter := &logMemoryExporter{}
+	configured, provider := testLogTelemetry(t, exporter, 16)
+	original.telemetry.current.Store(configured.telemetry.current.Load())
+	clone.Info().Msg("from clone")
+	raw := component.GetWriter()
+	raw.Info().Msg("from component writer")
+	if err := provider.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(exporter.records) != 2 {
+		t.Fatal("clone did not use the configured provider")
+	}
+}
+
+// TestLogTelemetryBlockedCollectorDoesNotBlockProducers verifies bounded queue behavior and shutdown deadlines under an outage.
+func TestLogTelemetryBlockedCollectorDoesNotBlockProducers(t *testing.T) {
+	unblock := make(chan struct{})
+	exporter := &logMemoryExporter{block: unblock, started: make(chan struct{})}
+	logger, provider := testLogTelemetry(t, exporter, 8)
+	logger.Info().Msg("start export")
+	select {
+	case <-exporter.started:
+	case <-time.After(time.Second):
+		t.Fatal("export did not start")
+	}
+	done := make(chan struct{})
+	go func() {
+		for index := 0; index < 1000; index++ {
+			logger.Info().Int("index", index).Msg("during outage")
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		close(unblock)
+		t.Fatal("producer blocked on collector")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := provider.ForceFlush(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		close(unblock)
+		t.Fatalf("flush error = %v", err)
+	}
+	close(unblock)
+	if err := provider.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	exporter.mu.Lock()
+	defer exporter.mu.Unlock()
+	if len(exporter.records) >= 1001 {
+		t.Fatal("queue unexpectedly retained the unbounded outage backlog")
+	}
+}
+
+// TestLogTelemetrySettings keeps generic trace endpoints from implicitly authorizing log export and rejects malformed settings without leaking values.
+func TestLogTelemetrySettings(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		settings   map[string]string
+		wantError  bool
+		wantExport bool
+	}{
+		{name: "disabled by default"},
+		{name: "trace endpoint only", settings: map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://invalid-secret.invalid"}},
+		{name: "explicit none", settings: map[string]string{"OTEL_LOGS_EXPORTER": "none", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "invalid-secret"}},
+		{name: "SDK disabled", settings: map[string]string{"OTEL_SDK_DISABLED": "true", "OTEL_LOGS_EXPORTER": "otlp"}},
+		{name: "invalid SDK flag", settings: map[string]string{"OTEL_SDK_DISABLED": "invalid-secret"}, wantError: true},
+		{name: "unsupported exporter", settings: map[string]string{"OTEL_LOGS_EXPORTER": "invalid-secret"}, wantError: true},
+		{name: "invalid endpoint", settings: map[string]string{"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://%invalid-secret"}, wantError: true},
+		{name: "relative endpoint", settings: map[string]string{"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "invalid-secret"}, wantError: true},
+		{name: "unsupported protocol", settings: map[string]string{"OTEL_LOGS_EXPORTER": "otlp", "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "invalid-secret"}, wantError: true},
+		{name: "invalid header name", settings: map[string]string{"OTEL_LOGS_EXPORTER": "otlp", "OTEL_EXPORTER_OTLP_LOGS_HEADERS": "bad name=invalid-secret"}, wantError: true},
+		{name: "invalid header", settings: map[string]string{"OTEL_LOGS_EXPORTER": "otlp", "OTEL_EXPORTER_OTLP_LOGS_HEADERS": "invalid-secret"}, wantError: true},
+		{name: "invalid header value", settings: map[string]string{"OTEL_LOGS_EXPORTER": "otlp", "OTEL_EXPORTER_OTLP_LOGS_HEADERS": "Authorization=%invalid-secret"}, wantError: true},
+		{name: "header newline", settings: map[string]string{"OTEL_LOGS_EXPORTER": "otlp", "OTEL_EXPORTER_OTLP_LOGS_HEADERS": "Authorization=%0Ainvalid-secret"}, wantError: true},
+		{name: "explicit signal endpoint", wantExport: true},
+		{name: "explicit generic endpoint", settings: map[string]string{"OTEL_LOGS_EXPORTER": "otlp"}, wantExport: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, key := range []string{"OTEL_LOGS_EXPORTER", "OTEL_SDK_DISABLED", "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "OTEL_EXPORTER_OTLP_PROTOCOL", "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_LOGS_HEADERS"} {
+				t.Setenv(key, "")
+			}
+			t.Setenv("APP_ENV", "local")
+			t.Setenv("COMPOSE_PROFILES", "grafana")
+			var received atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/logs" {
+					t.Errorf("log path = %s", r.URL.Path)
+				}
+				received.Add(1)
+				w.Header().Set("Content-Type", "application/x-protobuf")
+			}))
+			defer server.Close()
+			for key, value := range tc.settings {
+				t.Setenv(key, value)
+			}
+			if tc.wantExport {
+				if tc.name == "explicit generic endpoint" {
+					t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", server.URL)
+				} else {
+					t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", server.URL+"/v1/logs")
+				}
+			}
+			previous := global.GetLoggerProvider()
+			t.Cleanup(func() { global.SetLoggerProvider(previous) })
+			logger := newAppLoggerWithWriters(logConfig{format: logFormatJSON}, 0, io.Discard, io.Discard)
+			err := logger.ConfigureTelemetry(context.Background())
+			if (err != nil) != tc.wantError {
+				t.Fatalf("configuration error = %v", err)
+			}
+			if err != nil && strings.Contains(err.Error(), "invalid-secret") {
+				t.Fatal("configuration diagnostic exposed input")
+			}
+			logger.Info().Msg("test")
+			if err := logger.Shutdown(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if (received.Load() > 0) != tc.wantExport {
+				t.Fatalf("received = %d, want export=%v", received.Load(), tc.wantExport)
+			}
+		})
+	}
+}
+
+// TestLogAttributeValuesAreBoundedSnapshots covers nested values, cycles, unsupported keys, and caller mutation after emission.
+func TestLogAttributeValuesAreBoundedSnapshots(t *testing.T) {
+	budget := 256
+	input := map[string]any{"items": []int{1, 2}, "active": true}
+	got := logAttributeValue(input, 0, &budget)
+	input["active"] = false
+	if got.Type() != attribute.MAP {
+		t.Fatal("map type was lost")
+	}
+	for _, field := range got.AsMap() {
+		if field.Key == "active" && !field.Value.AsBool() {
+			t.Fatal("snapshot retained mutable state")
+		}
+	}
+	cycle := map[string]any{}
+	cycle["self"] = cycle
+	budget = 256
+	_ = logAttributeValue(cycle, 0, &budget)
+	if budget < 0 {
+		t.Fatal("conversion exceeded its budget")
+	}
+	budget = 256
+	if value := logAttributeValue(map[int]string{1: "x"}, 0, &budget); value.AsString() != "[unsupported map key]" {
+		t.Fatal(value)
+	}
+	if value := boundedLogString(strings.Repeat("é", 10), 5); value != "éé" {
+		t.Fatalf("invalid UTF-8 truncation: %q", value)
+	}
+}
+
+// TestContextualAccessLogsPreserveCorrelation checks the allocation-conscious framework access path against a real SDK record.
+func TestContextualAccessLogsPreserveCorrelation(t *testing.T) {
+	exporter := &logMemoryExporter{}
+	logger, provider := testLogTelemetry(t, exporter, 16)
+	spans := trace.NewTracerProvider()
+	defer spans.Shutdown(context.Background())
+	ctx, span := spans.Tracer("test").Start(context.Background(), "request")
+	logger.HTTPAccessContext(ctx, "/orders", 200, "GET", time.Millisecond, nil)
+	span.End()
+	if err := provider.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(exporter.records) != 1 || exporter.records[0].SpanID() != span.SpanContext().SpanID() {
+		t.Fatal("access log did not carry its request span")
+	}
+}
+
+// TestFatalLogFlushPrecedesExit verifies that fatal records get a bounded flush before the logger invokes process termination.
+func TestFatalLogFlushPrecedesExit(t *testing.T) {
+	exporter := &logMemoryExporter{}
+	logger, _ := testLogTelemetry(t, exporter, 16)
+	previous := fatalExit
+	t.Cleanup(func() { fatalExit = previous })
+	fatalExit = func(code int) {
+		if code != 1 {
+			t.Fatalf("exit code = %d", code)
+		}
+		exporter.mu.Lock()
+		defer exporter.mu.Unlock()
+		if len(exporter.records) != 1 || exporter.records[0].Body().AsString() != "fatal test" {
+			t.Fatal("fatal exited before flush")
+		}
+	}
+	logger.Fatal().Msg("fatal test")
+}
+
+// TestRawLogWriterExportsBeforeDedupe preserves legacy zerolog logging while allowing the remote stream to retain all events.
+func TestRawLogWriterExportsBeforeDedupe(t *testing.T) {
+	t.Setenv("APP_LOG_DEDUPE_ENABLED", "true")
+	exporter := &logMemoryExporter{}
+	logger, provider := testLogTelemetry(t, exporter, 32)
+	raw := logger.GetWriter()
+	for index := 0; index < 8; index++ {
+		raw.Info().Str("field", "value").Msg("raw repeated")
+	}
+	if err := provider.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(exporter.records) != 8 {
+		t.Fatalf("raw records = %d", len(exporter.records))
+	}
+}
+
+// TestLogExporterDiagnostics preserves typed causes without revealing credential-bearing transport failures.
+func TestLogExporterDiagnostics(t *testing.T) {
+	cause := errors.New("private-header-secret")
+	err := logExportError{operation: "export", err: cause}
+	if strings.Contains(err.Error(), "private-header-secret") || !errors.Is(err, cause) {
+		t.Fatal("unsafe or uninspectable exporter diagnostic")
+	}
+}
+
+// blockingLogProcessor holds a provider operation open so shutdown must use its owned-worker fallback.
+type blockingLogProcessor struct {
+	sdklog.Processor
+	entered chan struct{}
+	release chan struct{}
+}
+
+// OnEmit models an application processor that has not yet returned when the shutdown deadline expires.
+func (p *blockingLogProcessor) OnEmit(ctx context.Context, record *sdklog.Record) error {
+	close(p.entered)
+	<-p.release
+	return p.Processor.OnEmit(ctx, record)
+}
+
+// TestLogShutdownReleasesOwnedWorkerAfterDeadline covers the SDK path that returns before invoking processor shutdown.
+func TestLogShutdownReleasesOwnedWorkerAfterDeadline(t *testing.T) {
+	exporter := &logMemoryExporter{}
+	appLogger, _ := testLogTelemetry(t, exporter, 16)
+	state := appLogger.telemetry.current.Load()
+	blocker := &blockingLogProcessor{Processor: state.processor, entered: make(chan struct{}), release: make(chan struct{})}
+	provider := sdklog.NewLoggerProvider(sdklog.WithProcessor(blocker))
+	appLogger.telemetry.current.Store(&logTelemetry{provider: provider, logger: provider.Logger("blocked"), processor: state.processor})
+	done := make(chan struct{})
+	go func() { appLogger.Info().Msg("blocked operation"); close(done) }()
+	<-blocker.entered
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := appLogger.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+		close(blocker.release)
+		t.Fatalf("shutdown error = %v", err)
+	}
+	if !state.processor.stopped.Load() {
+		close(blocker.release)
+		t.Fatal("owned worker was not signaled")
+	}
+	close(blocker.release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("producer did not finish")
+	}
+	if err := appLogger.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTraceIdentityDoesNotDefeatConsoleGrouping keeps repeat suppression independent from per-execution correlation.
+func TestTraceIdentityDoesNotDefeatConsoleGrouping(t *testing.T) {
+	first := []eventField{
+		{key: "trace_id", value: "trace-a"}, {key: "span_id", value: "span-a"}, {key: "source", value: "http"},
+	}
+	second := []eventField{
+		{key: "trace_id", value: "trace-b"}, {key: "span_id", value: "span-b"}, {key: "source", value: "http"},
+	}
+	if buildEventSignature("info", "same", first, false) != buildEventSignature("info", "same", second, false) {
+		t.Fatal("trace identity changed event grouping")
+	}
+	if buildHTTPAccessSignature("/orders", 200, "GET", first) != buildHTTPAccessSignature("/orders", 200, "GET", second) {
+		t.Fatal("trace identity changed access grouping")
+	}
+}
+
+// TestLogValueFailureModes covers malformed JSON, unsupported values, exhausted budgets, and invalid UTF-8.
+func TestLogValueFailureModes(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		value         any
+		budget, depth int
+		want          string
+	}{
+		{name: "invalid JSON", value: rawJSONField("{"), budget: 256, want: "[invalid JSON]"},
+		{name: "oversized JSON", value: rawJSONField(strings.Repeat("x", 65537)), budget: 256, want: "[truncated]"},
+		{name: "unsupported function", value: func() {}, budget: 256, want: "[unsupported value]"},
+		{name: "exhausted budget", value: "x", want: "[truncated]"},
+		{name: "depth limit", value: "x", budget: 256, depth: 8, want: "[truncated]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			budget := tc.budget
+			if got := logAttributeValue(tc.value, tc.depth, &budget).AsString(); got != tc.want {
+				t.Fatalf("value = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	if got := boundedLogString("invalid\xfftext", 4096); strings.Contains(got, "\xff") {
+		t.Fatal("invalid UTF-8 escaped normalization")
+	}
+}

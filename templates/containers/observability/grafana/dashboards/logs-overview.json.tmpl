@@ -1,0 +1,107 @@
+{
+  "id": null,
+  "uid": "goforj-logs-overview",
+  "title": "Logs Overview",
+  "tags": [
+    "goforj",
+    "logs"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "editable": true,
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "goforj-loki"
+        },
+        "query": {
+          "label": "service_name",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "type": 1
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Application logs",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 3
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Choose a service to inspect application logs. Expand a contextual log record and select Open trace to inspect the operation in Tempo."
+      }
+    },
+    {
+      "id": 2,
+      "type": "logs",
+      "title": "Recent logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "goforj-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 24,
+        "h": 20
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "goforj-loki"
+          },
+          "expr": "{service_name=~`${service:regex}`}",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none",
+        "enableLogDetails": true
+      }
+    }
+  ],
+  "links": [
+    {
+      "title": "Platform Overview",
+      "type": "link",
+      "url": "/d/goforj-platform-overview",
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ]
+}

@@ -52,9 +52,17 @@ func TestGrafanaTraceStackFollowsComponentSelection(t *testing.T) {
 			if !slices.Equal(tempo.Profiles, []string{"grafana"}) || !slices.Contains(tempo.Volumes, "tempo:/var/tempo") {
 				t.Fatalf("Tempo must share the Grafana profile and persist traces: %+v", tempo)
 			}
-			for _, port := range []string{"${IP_ADDRESS:-127.0.0.1}:${TEMPO_HTTP_PORT:-13200}:3200", "${IP_ADDRESS:-127.0.0.1}:${TEMPO_OTLP_GRPC_PORT:-14317}:4317", "${IP_ADDRESS:-127.0.0.1}:${TEMPO_OTLP_HTTP_PORT:-14318}:4318"} {
-				if !slices.Contains(tempo.Ports, port) {
-					t.Fatalf("missing local-only overridable port %q: %v", port, tempo.Ports)
+			alloyNode := compose.Services["alloy"]
+			var receiver service
+			if err := alloyNode.Decode(&receiver); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Contains(tempo.Ports, "${IP_ADDRESS:-127.0.0.1}:${TEMPO_HTTP_PORT:-13200}:3200") {
+				t.Fatal("missing Tempo query port")
+			}
+			for _, port := range []string{"${IP_ADDRESS:-127.0.0.1}:${TEMPO_OTLP_GRPC_PORT:-14317}:4317", "${IP_ADDRESS:-127.0.0.1}:${TEMPO_OTLP_HTTP_PORT:-14318}:4318"} {
+				if !slices.Contains(receiver.Ports, port) {
+					t.Fatalf("missing local-only overridable port %q: %v", port, receiver.Ports)
 				}
 			}
 		})

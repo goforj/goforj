@@ -22,7 +22,8 @@ fi
 
 module_for_import() {
   case "$1" in
-    go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc) echo "$1" ;;
+    go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp|go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc) echo "$1" ;;
+    go.opentelemetry.io/otel/sdk/log|go.opentelemetry.io/otel/sdk/log/*) echo "go.opentelemetry.io/otel/sdk/log" ;;
     go.opentelemetry.io/otel/sdk/*) echo "go.opentelemetry.io/otel/sdk" ;;
     go.opentelemetry.io/proto/otlp/*) echo "go.opentelemetry.io/proto/otlp" ;;
     charm.land/lipgloss/v2/*) echo "charm.land/lipgloss/v2" ;;
@@ -144,7 +145,8 @@ override_version_for_module() {
     google.golang.org/grpc) echo "v1.83.2" ;;
     github.com/andybalholm/brotli) echo "v1.2.7" ;;
     go.opentelemetry.io/proto/otlp) echo "v1.11.0" ;;
-    go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc|go.opentelemetry.io/otel/sdk) echo "v1.45.0" ;;
+    go.opentelemetry.io/otel/log|go.opentelemetry.io/otel/sdk/log|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc|go.opentelemetry.io/otel/sdk) echo "v1.47.0" ;;
+    go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp|go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc) echo "v0.23.0" ;;
     github.com/charmbracelet/x/cellbuf) echo "v0.0.15" ;;
     github.com/goforj/cache) echo "v0.4.0" ;;
     github.com/goforj/cache/cachecore) echo "v0.4.3" ;;

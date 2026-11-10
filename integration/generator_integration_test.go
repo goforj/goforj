@@ -74,8 +74,8 @@ require (
 	github.com/klauspost/compress v1.20.3
 	github.com/goforj/env/v2 v2.6.1
 	golang.org/x/net v0.62.0
-	go.opentelemetry.io/otel/sdk v1.45.0
-	go.opentelemetry.io/otel/sdk/metric v1.45.0
+	go.opentelemetry.io/otel/sdk v1.47.0
+	go.opentelemetry.io/otel/sdk/metric v1.47.0
 	github.com/goforj/storage v0.6.1
 	github.com/goforj/storage/driver/ftpstorage v0.6.1
 	github.com/goforj/storage/driver/gcsstorage v0.6.1

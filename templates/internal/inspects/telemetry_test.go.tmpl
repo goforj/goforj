@@ -1955,25 +1955,16 @@ func TestTelemetryNativeRootExceptionsSurviveFailure(t *testing.T) {
 	}
 }
 
-// TestTelemetryEncodedEndpointConstructorPrivacy redacts errors raised when a valid URL is decoded again by gRPC.
-func TestTelemetryEncodedEndpointConstructorPrivacy(t *testing.T) {
+// TestTelemetryGRPCEndpointIgnoresHTTPPaths follows the SDK 1.47 fix that treats gRPC targets as hosts rather than HTTP URLs.
+func TestTelemetryGRPCEndpointIgnoresHTTPPaths(t *testing.T) {
 	clearTelemetryEnv(t)
 	t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "grpc")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317/private-constructor-token/%25zz")
 	manager := NewManager()
 	defer manager.Shutdown(context.Background())
-	previous := manager.TracerProvider()
-	err := manager.ConfigureTelemetry(context.Background())
-	if err == nil || err.Error() != "OTLP trace configuration failed" {
-		t.Fatal("constructor did not return a safe failure")
-	}
-	var cause *url.Error
-	if !errors.As(err, &cause) || !strings.Contains(cause.URL, "private-constructor-token") {
-		t.Fatal("explicit inspection lost the original constructor failure")
-	}
-	if manager.TracerProvider() != previous {
-		t.Fatal("failed configuration replaced the provider")
+	if err := manager.ConfigureTelemetry(context.Background()); err != nil {
+		t.Fatal("gRPC configuration rejected an ignored HTTP path")
 	}
 }
 

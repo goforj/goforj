@@ -3,6 +3,7 @@ package observability
 {{- if .ProjectComponents.Jobs }}
 import (
 	"context"
+ "go.opentelemetry.io/otel/trace"
 	"time"
 
 	"github.com/goforj/queue"
@@ -83,9 +84,12 @@ func logQueueWorkflowEvent(appLogger *logger.AppLogger, inspectManager *inspects
 		Fields:  inspectFields,
 	})
 
-	log := appLogger.Info()
+	// The inspect event above already owns the local timeline entry; preserve only source and span identity for the log projection.
+ loggingCtx:=trace.ContextWithSpanContext(runtime.WithSource(context.Background(),source),trace.SpanContextFromContext(ctx))
+ contextualLogger:=appLogger.WithContext(loggingCtx)
+ log := contextualLogger.Info()
 	if event.Err != nil {
-		log = appLogger.Warn()
+		log = contextualLogger.Warn()
 	}
 	log.
 		Str("event", queueWorkflowEventLabel(event.Kind)).

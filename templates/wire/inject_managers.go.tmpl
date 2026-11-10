@@ -5,6 +5,7 @@ package wire
 
 import (
 	"context"
+ "{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/runtime"
 	"github.com/goforj/wire"
 
@@ -17,7 +18,6 @@ import (
 	"{{.GoModuleName}}/internal/inspects"
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
-	"{{.GoModuleName}}/internal/logger"
 {{- end }}
 {{- if .Components.Mail }}
 	"{{.GoModuleName}}/internal/mail"
@@ -193,3 +193,18 @@ func provideQueueManager(
 	)
 }
 {{- end }}
+
+// provideAppLogger configures export before other providers derive component loggers and owns construction-failure cleanup.
+func provideAppLogger(timeouts *runtime.Timeouts) (*logger.AppLogger, func(), error) {
+ appLogger := logger.ProvideAppLogger()
+ cleanup := func() {
+ ctx, cancel := context.WithTimeout(context.Background(), timeouts.ShutdownTimeout())
+ defer cancel()
+ _ = appLogger.Shutdown(ctx)
+ }
+ if err := appLogger.ConfigureTelemetry(context.Background()); err != nil {
+ cleanup()
+ return nil, nil, err
+ }
+ return appLogger, cleanup, nil
+}

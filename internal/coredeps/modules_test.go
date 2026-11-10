@@ -26,6 +26,10 @@ func TestSyncCoreLibrariesIncludesStr(t *testing.T) {
 func TestSyncCoreLibrariesIncludesBaseModules(t *testing.T) {
 	modules := []string{
 		"google.golang.org/grpc", "github.com/andybalholm/brotli",
+		"go.opentelemetry.io/otel/log",
+		"go.opentelemetry.io/otel/sdk/log",
+		"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp",
+		"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc",
 		"go.opentelemetry.io/otel",
 		"go.opentelemetry.io/otel/trace",
 		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",

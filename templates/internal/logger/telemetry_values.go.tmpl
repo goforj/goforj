@@ -1,0 +1,132 @@
+package logger
+
+import (
+	"encoding/json"
+	"math"
+	"reflect"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"go.opentelemetry.io/otel/attribute"
+)
+
+// boundedLogString bounds queued payload memory without splitting an encoded rune.
+func boundedLogString(value string, limit int) string {
+	if len(value) > limit {
+		end := limit
+		for end > 0 && !utf8.RuneStart(value[end]) {
+			end--
+		}
+		value = value[:end]
+	}
+	if utf8.ValidString(value) {
+		return value
+	}
+	value = strings.ToValidUTF8(value, "�")
+	if len(value) > limit {
+		return boundedLogString(value, limit)
+	}
+	return value
+}
+
+// logAttributeValue snapshots mutable values with depth and element budgets so malformed application data cannot exhaust the queue.
+func logAttributeValue(value any, depth int, budget *int) attribute.Value {
+	if depth >= 8 || *budget <= 0 {
+		return attribute.StringValue("[truncated]")
+	}
+	*budget--
+	switch typed := value.(type) {
+	case nil:
+		return attribute.StringValue("null")
+	case string:
+		return attribute.StringValue(boundedLogString(typed, 4096))
+	case bool:
+		return attribute.BoolValue(typed)
+	case time.Duration:
+		return attribute.StringValue(typed.String())
+	case time.Time:
+		return attribute.StringValue(typed.Format(time.RFC3339Nano))
+	case json.Number:
+		if number, err := typed.Int64(); err == nil {
+			return attribute.Int64Value(number)
+		}
+		if number, err := typed.Float64(); err == nil {
+			return attribute.Float64Value(number)
+		}
+		return attribute.StringValue(boundedLogString(string(typed), 4096))
+	case rawJSONField:
+		if len(typed) > 65536 {
+			return attribute.StringValue("[truncated]")
+		}
+		var decoded any
+		if err := json.Unmarshal(typed, &decoded); err != nil {
+			return attribute.StringValue("[invalid JSON]")
+		}
+		return logAttributeValue(decoded, depth+1, budget)
+	}
+	return logReflectValue(reflect.ValueOf(value), depth, budget)
+}
+
+// logReflectValue preserves scalar types and snapshots slices and string-keyed maps without invoking arbitrary application formatters.
+func logReflectValue(value reflect.Value, depth int, budget *int) attribute.Value {
+	switch value.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if value.IsNil() {
+			return attribute.StringValue("null")
+		}
+		return logAttributeValue(value.Elem().Interface(), depth+1, budget)
+	case reflect.Struct:
+		fields := make([]attribute.KeyValue, 0, min(value.NumField(), 64, *budget))
+		for index := 0; index < value.NumField() && len(fields) < 64 && *budget > 0; index++ {
+			field := value.Type().Field(index)
+			if !field.IsExported() {
+				continue
+			}
+			key := strings.SplitN(field.Tag.Get("json"), ",", 2)[0]
+			if key == "-" {
+				continue
+			}
+			if key == "" {
+				key = field.Name
+			}
+			fields = append(fields, attribute.KeyValue{Key: attribute.Key(boundedLogString(key, 256)), Value: logAttributeValue(value.Field(index).Interface(), depth+1, budget)})
+		}
+		return attribute.MapValue(fields...)
+
+	case reflect.String:
+		return attribute.StringValue(boundedLogString(value.String(), 4096))
+	case reflect.Bool:
+		return attribute.BoolValue(value.Bool())
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return attribute.Int64Value(value.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		number := value.Uint()
+		if number > math.MaxInt64 {
+			return attribute.StringValue(strconv.FormatUint(number, 10))
+		}
+		return attribute.Int64Value(int64(number))
+	case reflect.Float32, reflect.Float64:
+		return attribute.Float64Value(value.Float())
+	case reflect.Slice, reflect.Array:
+		count := min(value.Len(), 64, *budget)
+		items := make([]attribute.Value, 0, count)
+		for index := 0; index < count; index++ {
+			items = append(items, logAttributeValue(value.Index(index).Interface(), depth+1, budget))
+		}
+		return attribute.SliceValue(items...)
+	case reflect.Map:
+		if value.Type().Key().Kind() != reflect.String {
+			return attribute.StringValue("[unsupported map key]")
+		}
+		fields := make([]attribute.KeyValue, 0, min(value.Len(), 64, *budget))
+		iterator := value.MapRange()
+		for len(fields) < 64 && *budget > 0 && iterator.Next() {
+			fields = append(fields, attribute.KeyValue{Key: attribute.Key(boundedLogString(iterator.Key().String(), 256)), Value: logAttributeValue(iterator.Value().Interface(), depth+1, budget)})
+		}
+		return attribute.MapValue(fields...)
+	default:
+		return attribute.StringValue("[unsupported value]")
+	}
+}
