@@ -80,12 +80,13 @@ func (m *Manager) initTracing() {
 // TracerProvider exposes the standard provider for application spans and client instrumentation.
 func (m *Manager) TracerProvider() *sdktrace.TracerProvider { return m.tracing.provider }
 
-// ConfigureTelemetry installs the app-owned SDK before runtimes start. Export is opt-in through OTEL configuration.
+// ConfigureTelemetry installs the app-owned SDK before runtimes start. Explicit OTEL settings override generated local Grafana defaults.
 func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	exporterName := strings.TrimSpace(os.Getenv("OTEL_TRACES_EXPORTER"))
+	exporterConfigured := exporterName != ""
 	endpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
 	tracesEndpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"))
 	if exporterName == "" {
@@ -100,6 +101,17 @@ func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
 	disabled, err := strconv.ParseBool(envDefault("OTEL_SDK_DISABLED", "false"))
 	if err != nil {
 		return fmt.Errorf("OTEL_SDK_DISABLED must be a boolean")
+	}
+	protocol := envDefault("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", envDefault("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"))
+	localEndpoint := ""
+	if !disabled && (exporterName == "otlp" || !exporterConfigured) && endpoint == "" && tracesEndpoint == "" {
+		localEndpoint, err = localTraceEndpoint(protocol)
+		if err != nil {
+			return err
+		}
+		if localEndpoint != "" {
+			exporterName = "otlp"
+		}
 	}
 	exportEnabled := !disabled && exporterName == "otlp"
 	sampler, err := telemetrySampler(exportEnabled || m.config.Enabled)
@@ -133,12 +145,19 @@ func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
 		if err := validateTelemetryHeaders(); err != nil {
 			return err
 		}
-		protocol := envDefault("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", envDefault("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"))
 		switch protocol {
 		case "http/protobuf":
-			exporter, err = otlptracehttp.New(ctx)
+			clientOptions := []otlptracehttp.Option{}
+			if localEndpoint != "" {
+				clientOptions = append(clientOptions, otlptracehttp.WithEndpointURL(localEndpoint+"/v1/traces"))
+			}
+			exporter, err = otlptracehttp.New(ctx, clientOptions...)
 		case "grpc":
-			exporter, err = otlptracegrpc.New(ctx)
+			clientOptions := []otlptracegrpc.Option{}
+			if localEndpoint != "" {
+				clientOptions = append(clientOptions, otlptracegrpc.WithEndpointURL(localEndpoint))
+			}
+			exporter, err = otlptracegrpc.New(ctx, clientOptions...)
 		default:
 			return fmt.Errorf("unsupported OTLP trace protocol %q: use http/protobuf or grpc", protocol)
 		}

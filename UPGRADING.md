@@ -4,13 +4,21 @@ Review the notes for the changes you are adopting before upgrading an existing p
 
 ## Unreleased
 
+### Grafana receives local traces automatically
+
+Projects with Grafana, Observability, and Docker now render Tempo, a provisioned trace datasource, and Traces Overview. After updating the CLI and reviewing scaffold ownership, run `forj render`, rebuild the app, and start the generated stack with `docker-compose up -d --build`. The existing `grafana` Compose profile includes Tempo. No datasource setup is needed.
+
+With `APP_ENV=local` and that profile active, apps send traces to Tempo automatically. Explicit OTLP endpoint settings keep their existing destination, and `OTEL_TRACES_EXPORTER=none` keeps export disabled. Staging, production, and test processes have no automatic destination. This is a local runtime behavior change for existing Grafana projects after regeneration, not an API or persisted-data migration.
+
+Tempo adds host ports `13200` (query), `14317` (OTLP gRPC), and `14318` (OTLP HTTP). Override them with `TEMPO_HTTP_PORT`, `TEMPO_OTLP_GRPC_PORT`, and `TEMPO_OTLP_HTTP_PORT`; host apps follow the ingestion overrides automatically. Trace data lives in a separate named Docker volume. Existing metrics and Lighthouse storage are unchanged.
+
 ### Lighthouse tracing uses OpenTelemetry
 
 Framework execution boundaries now create standard OTel spans. Lighthouse builds inspect records from those spans and retains its bounded, richer debugging payloads. Existing inspect lookup IDs and `LIGHTHOUSE_INSPECT_*` retention settings remain supported; records add `otel_trace_id`, `span_id`, and `parent_span_id` for correlation.
 
 After updating the CLI, review starter-kit ownership before running a full `forj render`, then rebuild the app. This refreshes framework-managed inspect, HTTP, and wiring code and synchronizes OTel dependencies. No minimum Go version change is required. Keep customized starter-kit source committed because a full render can refresh its scaffold.
 
-Export remains off until configured. Set `OTEL_TRACES_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT`, and optionally `OTEL_SERVICE_NAME` to send traces independently from Lighthouse. HTTP/protobuf is the default; select gRPC with `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=grpc`. The generated `internal/inspects/README.md` lists supported settings, outbound HTTP instrumentation, application spans, and transport limits.
+Export remains off until configured outside the local Grafana default described above. Set `OTEL_TRACES_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT`, and optionally `OTEL_SERVICE_NAME` to send traces independently from Lighthouse. HTTP/protobuf is the default; select gRPC with `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=grpc`. The generated `internal/inspects/README.md` lists supported settings, outbound HTTP instrumentation, application spans, and transport limits.
 
 Malformed OTLP endpoint URLs, header names, or percent-encoding now fail construction without logging their values. App-owned exporter failures also use generic diagnostic messages while preserving the original cause through standard error unwrapping. Framework-generated exceptions export their type and a generic message; original error text stays in Lighthouse, alongside explicit application exception events. CLI span names use parsed command paths and argument placeholders, excluding flag and positional values. The instrumented HTTP client omits URL user information, query strings, and fragments from automatic span attributes, and uses generic failure descriptions without changing requests or caller-visible errors.
 

@@ -387,7 +387,7 @@ func TestDeveloperServiceDataConditionalExtensions(t *testing.T) {
 		t.Fatalf("component Grafana runtime = image %q build %#v, want generated build context", grafanaService.Image, grafanaService.Build)
 	}
 	if !reflect.DeepEqual(grafanaService.Profiles, []string{"grafana"}) ||
-		!reflect.DeepEqual(grafanaService.DependsOn, []string{"victoriametrics"}) ||
+		!reflect.DeepEqual(grafanaService.DependsOn, []string{"victoriametrics", "tempo"}) ||
 		!reflect.DeepEqual(grafanaService.SecurityOptions, []string{"no-new-privileges:true"}) ||
 		!reflect.DeepEqual(grafanaService.Ports, []string{"${IP_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-13001}:3000"}) ||
 		!reflect.DeepEqual(grafanaService.Volumes, []string{"grafana:/var/lib/grafana"}) {
