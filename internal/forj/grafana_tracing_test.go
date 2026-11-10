@@ -98,7 +98,7 @@ func TestGrafanaTraceDashboardUsesProvisionedDatasource(t *testing.T) {
 	for _, panel := range dashboard.Panels {
 		for _, target := range panel.Targets {
 			queries++
-			if target.Datasource.UID != "goforj-tempo" || target.QueryType != "traceql" || !strings.Contains(target.Query, "${service:regex}") {
+			if target.Datasource.UID != "goforj-tempo" || target.QueryType != "traceql" || !strings.Contains(target.Query, "`${service:regex}`") {
 				t.Fatalf("invalid trace search: %+v", target)
 			}
 		}

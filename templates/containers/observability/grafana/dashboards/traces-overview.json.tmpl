@@ -80,7 +80,7 @@
             "uid": "goforj-tempo"
           },
           "queryType": "traceql",
-          "query": "{ resource.service.name =~ \"${service:regex}\" }",
+          "query": "{ resource.service.name =~ `${service:regex}` }",
           "tableType": "traces",
           "limit": 50,
           "filters": []
