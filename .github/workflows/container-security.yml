@@ -109,6 +109,9 @@ jobs:
     name: template image (${{ matrix.name }})
     needs: template-image-inventory
     runs-on: ubuntu-latest
+    env:
+      # Registry reads avoid incomplete Docker/containerd image export archives.
+      TRIVY_IMAGE_SRC: remote
     strategy:
       fail-fast: false
       max-parallel: 3
