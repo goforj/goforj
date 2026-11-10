@@ -513,16 +513,20 @@ func runDevMySQLReadinessFixture(ctx context.Context, shell, mode, script string
 
 // TestDevMySQLPreparationWaitsForAuthenticatedPermanentServer proves readiness failures cannot run provisioning early or twice.
 func TestDevMySQLPreparationWaitsForAuthenticatedPermanentServer(t *testing.T) {
-	shell, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("POSIX shell unavailable")
-	}
 	probes, provisions := 0, 0
-	run := func(ctx context.Context, _ string, _ []string, input string) (execx.Result, error) {
+	run := func(_ context.Context, _ string, _ []string, input string) (execx.Result, error) {
 		if input == devMySQLReadinessScript {
-			mode := []string{"authentication", "temporary", "ready"}[probes]
 			probes++
-			return runDevMySQLReadinessFixture(ctx, shell, mode, input)
+			switch probes {
+			case 1:
+				return execx.Result{ExitCode: 9, Stderr: "authentication rejected"}, nil
+			case 2:
+				return execx.Result{ExitCode: 1, Stderr: "temporary initialization server"}, nil
+			case 3:
+				return execx.Result{}, nil
+			default:
+				t.Fatal("readiness continued after the authenticated permanent server became available")
+			}
 		}
 		provisions++
 		if probes != 3 || input != devMySQLPreparationScript {
