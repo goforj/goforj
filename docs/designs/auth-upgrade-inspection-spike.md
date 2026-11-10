@@ -206,8 +206,12 @@ Ship's full runtime suite.
 Framework validation passes the root module's test suite and vet, the focused
 race suite, and relevant nested-module compile/test checks with workspace
 resolution disabled. The pure comparison package has 97.1% statement coverage.
-An initial concurrently loaded full test run hit CLI-help timeouts; the CLI
-package and a subsequent complete run with reduced package concurrency passed.
+The `sentinel_max_mysql` render case also passes with Auth, OAuth, Web API/UI,
+mail, metrics/observability/Grafana, scheduler, cache, events, storage, and jobs
+enabled: render, component contracts, Wire, build, and generated Go tests.
+Concurrently loaded full test runs hit CLI-help timeouts; the CLI package and
+complete runs with reduced package concurrency passed, including a serial
+package run after rebasing onto current main.
 
 ## Required next proof
 
