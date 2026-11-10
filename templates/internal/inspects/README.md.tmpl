@@ -12,7 +12,7 @@ OTEL_TRACES_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 ```
 
-The generic endpoint receives traces at `/v1/traces`. A signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is a complete URL, including its trace path. The Go SDK's exporter handles endpoint, header, certificate, compression, timeout, and TLS settings. Use HTTPS for remote collectors.
+The generic endpoint receives traces at `/v1/traces`. A signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is a complete URL, including its trace path. Header settings are validated before exporter construction; invalid names or percent-encoding return an error without logging their values. The Go SDK's exporter handles endpoint, header, certificate, compression, timeout, and TLS settings. Use HTTPS for remote collectors.
 
 For gRPC, select the protocol and its endpoint:
 
@@ -27,6 +27,8 @@ Setting either OTLP endpoint implicitly selects `otlp` when `OTEL_TRACES_EXPORTE
 `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` supply standard resource identity. The default service name is the Project's Go module path followed by the current app name. `goforj.app` identifies the app, and `goforj.source` identifies each execution's runtime role.
 
 `OTEL_TRACES_SAMPLER` supports `always_on`, `always_off`, `parentbased_always_on`, `parentbased_always_off`, `traceidratio`, and `parentbased_traceidratio`. Ratio samplers accept `OTEL_TRACES_SAMPLER_ARG` between 0 and 1. When tracing or Lighthouse capture is enabled, the default is `parentbased_always_on`; otherwise it is `always_off`. `OTEL_SDK_DISABLED=true` disables span recording for both outputs. Lighthouse's existing sample rate and capture gate only reduce its own detail capture; they never disable configured external export.
+
+CLI span names use parsed command paths and argument placeholders rather than raw flag or positional values.
 
 The App installs the provider and W3C Trace Context propagator before runtime startup. HTTP requests extract `traceparent` and `tracestate`. HTTP span names use registered route patterns, and framework Lighthouse/metrics transport endpoints are excluded. Lifecycle shutdown flushes the SDK within the App shutdown budget. An unreachable collector affects telemetry delivery and does not prevent the app from serving requests.
 
@@ -48,13 +50,15 @@ This is a fragment using `go.opentelemetry.io/otel` and `go.opentelemetry.io/ote
 
 For outbound HTTP, inject a client built with `manager.HTTPClient(http.DefaultClient)`, then use `http.NewRequestWithContext` with the execution context. The helper wraps a copy of the client, creates client spans, and injects W3C context without modifying the process-wide default client. Other clients can use their standard OTel instrumentation with the app's provider.
 
+`WithRecorder(ctx, recorder)` binds both the recorder and its execution span while preserving caller values and cancellation. Start application child spans after binding. `Recorder.RecordEvent` uses that recorder's own execution context, including for nested captures.
+
 ### Lighthouse Projection and Compatibility
 
 The existing `trace_id` field remains the unique inspect lookup ID for compatibility. `otel_trace_id`, `span_id`, and `parent_span_id` carry standard OTel identity. Multiple executions can share one OTel trace without overwriting each other's inspect records. Lighthouse displays the OTel trace and span IDs alongside its lookup ID.
 
-Application span events and completed child spans are projected into the bounded timeline. A child that ends after its owning execution is finalized is still eligible for OTLP export but does not reopen the finished inspect. Active child associations and retained events are bounded.
+Application span events and completed child spans in the execution's trace are projected into the bounded timeline. Spans started with `trace.WithNewRoot()` are independent traces and are exported without being attached to the previous inspect. Rich observations retained in the calling inspect omit span IDs when their SDK spans belong to a different trace. A child that ends after its owning execution is finalized is still eligible for OTLP export but does not reopen the finished inspect. Active child associations and retained events are bounded.
 
-Cache, storage, mail, and database completion observations produce timed child spans. Because these hooks run after completion, those spans cannot become active parents of work that already happened inside the operation. Queue/event observations become span events. Rich request/response bodies, arbitrary logs, job payloads, cache keys, object paths, and raw SQL remain Lighthouse-only enrichment; framework instrumentation does not automatically send them to OTLP. Explicit attributes and events added by application or third-party OTel instrumentation follow that instrumentation's own capture policy.
+Cache, storage, mail, and database completion observations produce timed child spans. Because these hooks run after completion, those spans cannot become active parents of work that already happened inside the operation. Queue/event observations become span events. Rich request/response bodies, arbitrary logs, job payloads, cache keys, object paths, and raw SQL remain Lighthouse-only enrichment; framework instrumentation does not automatically send them to OTLP. Framework terminal errors export an exception type and a generic message; their original error text remains in Lighthouse. Explicit attributes, errors, and events added by application or third-party OTel instrumentation follow that instrumentation's own capture policy.
 
 ### Current Boundaries
 

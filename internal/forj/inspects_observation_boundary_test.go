@@ -49,7 +49,7 @@ func TestInspectManagerWiringKeepsHistoryIndependentFromAppCache(t *testing.T) {
 	source := string(content)
 
 	for _, expected := range []string{
-		"func provideInspectManager() (*inspects.Manager, error)",
+		"func provideInspectManager(timeouts *runtime.Timeouts) (*inspects.Manager, func(), error)",
 		"inspectManager *inspects.Manager",
 		"observability.CacheInspectObserver(inspectManager)",
 	} {

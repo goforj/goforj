@@ -4,6 +4,9 @@
 package wire
 
 import (
+{{- if .Components.Cache }}
+	"go.opentelemetry.io/otel"
+{{- end }}
 	"context"
 	"errors"
 	"sync/atomic"
@@ -14,6 +17,8 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/runtime"
+	"strings"
+	"{{.GoModuleName}}/{{.AppImportPath}}"
 )
 
 // TestLogTimeoutWarningsReportsEachCappedSetting verifies startup logs retain both configured and effective values.
@@ -199,3 +204,164 @@ type shutdownSpanExporter struct{ *tracetest.InMemoryExporter }
 
 // Shutdown preserves test evidence instead of resetting the in-memory exporter.
 func (e *shutdownSpanExporter) Shutdown(context.Context) error { return nil }
+
+// TestAppRunFlushesTelemetryBeforeStartup protects constructor spans when command parsing rejects execution.
+func TestAppRunFlushesTelemetryBeforeStartup(t *testing.T) {
+ for _, test := range []struct {
+  name string
+  missingRoot bool
+  errorText string
+ }{
+  {name: "parse error", errorText: "unknown"},
+  {name: "parser construction error", missingRoot: true, errorText: "expected a pointer to a struct"},
+ } {
+  t.Run(test.name, func(t *testing.T) {
+   t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+   inspectManager := inspects.NewManager()
+   t.Cleanup(func() {
+    if err := inspectManager.Shutdown(context.Background()); err != nil {
+     t.Errorf("telemetry cleanup: %v", err)
+    }
+   })
+   exporter := &runCleanupSpanExporter{InMemoryExporter: tracetest.NewInMemoryExporter()}
+   inspectManager.TracerProvider().RegisterSpanProcessor(sdktrace.NewBatchSpanProcessor(exporter, sdktrace.WithBatchTimeout(time.Hour)))
+   _, span := inspectManager.TracerProvider().Tracer("test/providers").Start(context.Background(), "provider.prepare")
+   span.End()
+   if got := len(exporter.GetSpans()); got != 0 {
+    t.Fatalf("constructor spans exported before cleanup = %d, want 0", got)
+   }
+   timeouts := runtime.NewTimeouts()
+   lifecycle := runtime.NewLifecycle(timeouts)
+   var startupCalls atomic.Int64
+   lifecycle.On(runtime.BeforeStartup, func(context.Context) error {
+    startupCalls.Add(1)
+    return nil
+   })
+   application := App{
+    rootCmd: &{{.AppPackageName}}.RootCmd{},
+    inspects: inspectManager,
+    logger: logger.NewSilentLogger(),
+    lifecycle: lifecycle,
+    appTimeouts: timeouts,
+   }
+   if test.missingRoot {
+    application.rootCmd = nil
+   }
+   err := application.Run(context.Background(), []string{"--unknown-review-flag"})
+   if err == nil || !strings.Contains(err.Error(), test.errorText) {
+    t.Fatalf("Run error = %v, want %q", err, test.errorText)
+   }
+   if got := startupCalls.Load(); got != 0 {
+    t.Fatalf("startup calls = %d, want 0", got)
+   }
+   if got := exporter.shutdownCalls.Load(); got != 1 {
+    t.Fatalf("exporter shutdown calls after Run = %d, want 1", got)
+   }
+   spans := exporter.GetSpans()
+   if len(spans) != 1 || spans[0].Name != "provider.prepare" {
+    t.Fatalf("constructor spans after Run = %+v, want provider.prepare", spans)
+   }
+  })
+ }
+}
+
+// runCleanupSpanExporter retains flush evidence after the owning provider has closed.
+type runCleanupSpanExporter struct {
+ *tracetest.InMemoryExporter
+ shutdownCalls atomic.Int64
+}
+
+// Shutdown records ownership release without discarding the spans under test.
+func (e *runCleanupSpanExporter) Shutdown(context.Context) error {
+ e.shutdownCalls.Add(1)
+ return nil
+}
+
+{{- if .Components.Cache }}
+// TestInitializeApplicationClosesTelemetryAfterProviderFailure protects resources created before a later dependency rejects configuration.
+func TestInitializeApplicationClosesTelemetryAfterProviderFailure(t *testing.T) {
+ for _, key := range []string{
+  "OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+  "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_RESOURCE_ATTRIBUTES", "OTEL_SERVICE_NAME",
+ } {
+  t.Setenv(key, "")
+ }
+ t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
+ t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9")
+ t.Setenv("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "http/protobuf")
+ t.Setenv("OTEL_TRACES_SAMPLER", "always_on")
+ t.Setenv("OTEL_SDK_DISABLED", "false")
+ t.Setenv("CACHE_DRIVER", "invalid-initialization-test-driver")
+ previous, propagator := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+ sentinel := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.NeverSample()))
+ otel.SetTracerProvider(sentinel)
+ t.Cleanup(func() {
+  if provider, ok := otel.GetTracerProvider().(*sdktrace.TracerProvider); ok {
+   _ = provider.Shutdown(context.Background())
+  }
+  _ = sentinel.Shutdown(context.Background())
+  otel.SetTracerProvider(previous)
+  otel.SetTextMapPropagator(propagator)
+ })
+ application, err := InitializeApplication()
+ if err == nil || !strings.Contains(err.Error(), "invalid-initialization-test-driver") {
+  t.Fatalf("initialization error = %v, want invalid cache driver", err)
+ }
+ if application.inspects != nil {
+  t.Fatal("failed initialization returned a partially initialized App")
+ }
+ provider := otel.GetTracerProvider()
+ if provider == sentinel {
+  t.Fatal("cache failure occurred before telemetry provider construction")
+ }
+ _, span := provider.Tracer("test/initialization").Start(context.Background(), "after-failed-initialization")
+ if span.IsRecording() {
+  // Leave a failure-path span unfinished so the regression test never exports to the placeholder collector.
+  t.Fatal("failed initialization left its telemetry provider recording")
+ }
+ span.End()
+}
+{{- end }}
+
+// TestAppShutdownSharesWireCleanupAcrossCopies protects once-only provider cleanup after value copies of App.
+func TestAppShutdownSharesWireCleanupAcrossCopies(t *testing.T) {
+ t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+ inspectManager := inspects.NewManager()
+ t.Cleanup(func() { _ = inspectManager.Shutdown(context.Background()) })
+ lifecycle := runtime.NewLifecycle(runtime.NewTimeouts())
+ var cleanupCalls atomic.Int64
+ lifecycle.On(runtime.Shutdown, func(context.Context) error {
+  if got := cleanupCalls.Load(); got != 0 {
+   t.Errorf("Wire cleanup ran before lifecycle shutdown: %d", got)
+  }
+  return nil
+ })
+ if err := lifecycle.Start(context.Background()); err != nil {
+  t.Fatal(err)
+ }
+ application := App{
+  inspects: inspectManager,
+  lifecycle: lifecycle,
+  cleanup: onceCleanup(func() {
+   cleanupCalls.Add(1)
+   _, span := inspectManager.TracerProvider().Tracer("test/shutdown").Start(context.Background(), "after-sdk-shutdown")
+   if span.IsRecording() {
+    t.Error("Wire cleanup ran before SDK shutdown")
+   }
+   span.End()
+  }),
+ }
+ copied := application
+ if copied != application || !map[App]bool{application: true}[copied] {
+  t.Fatal("App value comparisons or map-key identity changed")
+ }
+ if err := application.Shutdown(nil); err != nil {
+  t.Fatal(err)
+ }
+ if err := copied.Shutdown(context.Background()); err != nil {
+  t.Fatal(err)
+ }
+ if got := cleanupCalls.Load(); got != 1 {
+  t.Fatalf("Wire cleanup calls across App copies = %d, want 1", got)
+ }
+}

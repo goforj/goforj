@@ -12,6 +12,8 @@ After updating the CLI, review starter-kit ownership before running a full `forj
 
 Export remains off until configured. Set `OTEL_TRACES_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_ENDPOINT`, and optionally `OTEL_SERVICE_NAME` to send traces independently from Lighthouse. HTTP/protobuf is the default; select gRPC with `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=grpc`. The generated `internal/inspects/README.md` lists supported settings, outbound HTTP instrumentation, application spans, and transport limits.
 
+Malformed OTLP header names or percent-encoding now fail construction without logging header values. Framework-generated exceptions export their type and a generic message; original error text stays in Lighthouse. CLI span names use parsed command paths and argument placeholders, excluding flag and positional values.
+
 OTel head sampling now governs whether an execution is recorded, including inherited remote sampling decisions. Lighthouse's sample rate, capacity, and connection gate only reduce its local enrichment and retention. Nested `Begin` calls create independently finished child executions; retain the returned context and pair each call with `Finish`. Standard custom spans use normal OTel APIs.
 
 This change adds HTTP propagation and tracing for existing runtime boundaries. Queue and event transports do not yet carry standard trace metadata across brokers. Prometheus metrics and existing logging contracts continue independently.

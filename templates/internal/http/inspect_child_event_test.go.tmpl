@@ -15,6 +15,8 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"fmt"
+	"strings"
 )
 
 func TestHTTPInspectCapturesChildEvents(t *testing.T) {
@@ -249,4 +251,90 @@ func TestHTTPSpanFinalAttributes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHTTPCommittedClientResponseThenPanic preserves panic diagnostics without exporting their private content.
+func TestHTTPCommittedClientResponseThenPanic(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_SAMPLE_RATE", "1.0")
+	manager := inspects.NewManager()
+	defer manager.Shutdown(context.Background())
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+	server := &Server{inspectManager: manager}
+	const rawPanic = "private-panic-token-8719"
+	handler := server.inspectContextMiddleware()(func(r web.Context) error {
+		if err := r.NoContent(http.StatusBadRequest); err != nil {
+			return err
+		}
+		panic(rawPanic)
+	})
+	request := httptest.NewRequest(http.MethodGet, "/fail", nil)
+	response := httptest.NewRecorder()
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		_ = handler(webtest.NewContext(request, response, "/fail", nil))
+	}()
+	if recovered != rawPanic {
+		t.Fatalf("recovered panic = %v, want original panic", recovered)
+	}
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("response status = %d, want 400", response.Code)
+	}
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("exported spans = %d, want 1", len(spans))
+	}
+	span := spans[0]
+	if span.Status.Code != codes.Error {
+		t.Errorf("panic span status = %v, want Error", span.Status.Code)
+	}
+	foundResponseStatus := false
+	for _, attribute := range span.Attributes {
+		if attribute.Key == "http.response.status_code" {
+			foundResponseStatus = attribute.Value.AsInt64() == http.StatusBadRequest
+		}
+	}
+	if !foundResponseStatus {
+		t.Error("span did not retain committed response status 400")
+	}
+	foundSafeException := false
+	for _, event := range span.Events {
+		if event.Name != "exception" {
+			continue
+		}
+		var message, exceptionType string
+		for _, attribute := range event.Attributes {
+			switch attribute.Key {
+			case "exception.message":
+				message = attribute.Value.AsString()
+			case "exception.type":
+				exceptionType = attribute.Value.AsString()
+			}
+		}
+		if message != "" && exceptionType != "" && !strings.Contains(message, rawPanic) {
+			foundSafeException = true
+		}
+	}
+	if !foundSafeException {
+		t.Error("panic span must contain a safe exception message and type")
+	}
+	if strings.Contains(fmt.Sprint(span.Name, span.Status, span.Attributes, span.Events), rawPanic) {
+		t.Error("raw panic content entered exported span data")
+	}
+	summaries, err := manager.Recent(context.Background(), inspects.RecentQuery{})
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("Lighthouse summaries = %d, error = %v", len(summaries), err)
+	}
+	record, ok, err := manager.ByID(context.Background(), summaries[0].TraceID)
+	if err != nil || !ok || record.Summary.Status != "error" {
+		t.Fatalf("Lighthouse panic record missing or not failed: %+v, found=%v, error=%v", record.Summary, ok, err)
+	}
+	for _, event := range record.Events {
+		if event.Kind == inspects.EventKindError && strings.Contains(event.Message, rawPanic) {
+			return
+		}
+	}
+	t.Error("Lighthouse did not retain original panic content")
 }

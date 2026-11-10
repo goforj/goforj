@@ -659,7 +659,7 @@ func (s *Server) traceHTTPExecution(r web.Context, next web.Handler) error {
 			span.SetAttributes(attribute.String("http.request.method", method), attribute.String("http.route", route), attribute.Int("http.response.status_code", status))
 		}
 		spanErr := err
-		if status >= 400 && status < 500 {
+		if panicValue == nil && status >= 400 && status < 500 {
 			spanErr = nil
 		}
 		s.inspectManager.Finish(ctx, httpInspectStatus(status, spanErr), spanErr)

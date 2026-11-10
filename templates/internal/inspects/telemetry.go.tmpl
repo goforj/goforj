@@ -2,12 +2,15 @@ package inspects
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -25,12 +28,27 @@ import (
 
 // tracingState owns the SDK and the bounded association of active spans with Lighthouse captures.
 type tracingState struct {
-	provider *sdktrace.TracerProvider
-	tracer   trace.Tracer
-	enabled  bool
-	external bool
-	mu       sync.Mutex
-	owners   map[spanIdentity]*Recorder
+	provider       *sdktrace.TracerProvider
+	tracer         trace.Tracer
+	enabled        bool
+	external       bool
+	mu             sync.Mutex
+	owners         map[spanIdentity]*Recorder
+	ownedProcessor *managedSpanProcessor
+}
+
+// managedSpanProcessor shares shutdown ownership between SDK callbacks and deadline fallback cleanup.
+type managedSpanProcessor struct {
+	sdktrace.SpanProcessor
+	shutdown atomic.Bool
+}
+
+// Shutdown prevents recursive cleanup from reentering a batch processor that is waiting on the same callback.
+func (p *managedSpanProcessor) Shutdown(ctx context.Context) error {
+	if !p.shutdown.CompareAndSwap(false, true) {
+		return nil
+	}
+	return p.SpanProcessor.Shutdown(ctx)
 }
 
 // spanIdentity follows OTel's uniqueness contract, which scopes span IDs to their trace.
@@ -64,6 +82,9 @@ func (m *Manager) TracerProvider() *sdktrace.TracerProvider { return m.tracing.p
 
 // ConfigureTelemetry installs the app-owned SDK before runtimes start. Export is opt-in through OTEL configuration.
 func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	exporterName := strings.TrimSpace(os.Getenv("OTEL_TRACES_EXPORTER"))
 	endpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
 	tracesEndpoint := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"))
@@ -104,9 +125,12 @@ func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
 		sdktrace.WithResource(res), sdktrace.WithSampler(sampler),
 		sdktrace.WithSpanProcessor(&lighthouseProcessor{manager: m}),
 	}
+	var exporter sdktrace.SpanExporter
 	if exportEnabled {
+		if err := validateTelemetryHeaders(); err != nil {
+			return err
+		}
 		protocol := envDefault("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", envDefault("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"))
-		var exporter sdktrace.SpanExporter
 		switch protocol {
 		case "http/protobuf":
 			exporter, err = otlptracehttp.New(ctx)
@@ -118,13 +142,10 @@ func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("configure OTLP traces: %w", err)
 		}
-		options = append(options, sdktrace.WithBatcher(exporter))
 	}
-	if err := m.tracing.provider.Shutdown(ctx); err != nil {
+	if err := m.installTelemetryProvider(ctx, exporter, options...); err != nil {
 		return err
 	}
-	m.tracing.provider = sdktrace.NewTracerProvider(options...)
-	m.tracing.tracer = m.tracing.provider.Tracer("github.com/goforj/goforj")
 	m.tracing.external = exportEnabled || strings.TrimSpace(os.Getenv("OTEL_TRACES_SAMPLER")) != ""
 	m.tracing.enabled = !disabled && (m.config.Enabled || m.tracing.external)
 	otel.SetTracerProvider(m.tracing.provider)
@@ -132,8 +153,87 @@ func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
 	return nil
 }
 
-// Shutdown flushes completed spans within the app's shutdown budget.
-func (m *Manager) Shutdown(ctx context.Context) error { return m.tracing.provider.Shutdown(ctx) }
+// installTelemetryProvider transfers exporter ownership only after the previous SDK releases its resources.
+func (m *Manager) installTelemetryProvider(ctx context.Context, exporter sdktrace.SpanExporter, options ...sdktrace.TracerProviderOption) error {
+	if err := m.Shutdown(ctx); err != nil {
+		if exporter != nil {
+			return errors.Join(err, exporter.Shutdown(ctx))
+		}
+		return err
+	}
+	var ownedProcessor *managedSpanProcessor
+	if exporter != nil {
+		ownedProcessor = &managedSpanProcessor{SpanProcessor: sdktrace.NewBatchSpanProcessor(exporter)}
+		options = append(options, sdktrace.WithSpanProcessor(ownedProcessor))
+	}
+	m.tracing.provider = sdktrace.NewTracerProvider(options...)
+	m.tracing.ownedProcessor = ownedProcessor
+	m.tracing.tracer = m.tracing.provider.Tracer("github.com/goforj/goforj")
+	return nil
+}
+
+// validateTelemetryHeaders rejects malformed settings before the SDK can log credential-bearing input.
+func validateTelemetryHeaders() error {
+	for _, setting := range []string{"OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS"} {
+		headers := strings.TrimSpace(os.Getenv(setting))
+		if headers == "" {
+			continue
+		}
+		for index, header := range strings.Split(headers, ",") {
+			name, value, found := strings.Cut(header, "=")
+			if !found {
+				return fmt.Errorf("%s header %d requires a name=value pair", setting, index+1)
+			}
+			if !validTelemetryHeaderName(strings.TrimSpace(name)) {
+				return fmt.Errorf("%s header %d has an invalid name", setting, index+1)
+			}
+			if _, err := url.PathUnescape(value); err != nil {
+				return fmt.Errorf("%s header %d has invalid percent-encoding", setting, index+1)
+			}
+		}
+	}
+	return nil
+}
+
+// validTelemetryHeaderName follows the exporter's ASCII HTTP-token grammar without exposing invalid input.
+func validTelemetryHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, character := range name {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' {
+			continue
+		}
+		switch character {
+		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// recordFrameworkError keeps arbitrary framework failure text local while preserving standard exception classification.
+func (r *Recorder) recordFrameworkError(err error) {
+	r.span.AddEvent("exception", trace.WithAttributes(
+		attribute.String("exception.type", fmt.Sprintf("%T", err)),
+		attribute.String("exception.message", "execution failed"),
+	))
+}
+
+// Shutdown flushes within the app's budget and signals owned exporters even if the SDK skips processors after cancellation.
+func (m *Manager) Shutdown(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	owned := m.tracing.ownedProcessor
+	err := m.tracing.provider.Shutdown(ctx)
+	if owned != nil {
+		err = errors.Join(err, owned.Shutdown(ctx))
+	}
+	return err
+}
 
 // envDefault treats an unset or empty optional OTel setting as its documented default.
 func envDefault(key, fallback string) string {
@@ -226,7 +326,7 @@ func (p *lighthouseProcessor) OnStart(ctx context.Context, span sdktrace.ReadWri
 	}
 	recorder.projectionMu.Lock()
 	defer recorder.projectionMu.Unlock()
-	if recorder.state == nil {
+	if recorder.state == nil || span.SpanContext().TraceID() != recorder.span.SpanContext().TraceID() {
 		return
 	}
 	state := p.manager.tracing

@@ -509,13 +509,17 @@ func InspectIDFromContext(ctx context.Context) string {
 	return strings.TrimSpace(inspectID)
 }
 
-// WithRecorder binds a recorder handle to ctx.
+// WithRecorder binds the recorder and its execution span while preserving caller values and cancellation.
+// Start application child spans after binding so they inherit this execution.
 func WithRecorder(ctx context.Context, recorder *Recorder) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if recorder == nil {
 		return ctx
+	}
+	if recorder.span != nil {
+		ctx = trace.ContextWithSpan(ctx, recorder.span)
 	}
 	return context.WithValue(ctx, recorderContextKey{}, recorder)
 }
@@ -556,7 +560,7 @@ func (m *Manager) Begin(ctx context.Context, source runtime.Source, name string,
 	inspectCtx.Context = ctx
 	inspectCtx.source = source
 	inspectCtx.recorder = Recorder{
-		manager: m, inspectID: newInspectID(), span: span, spanContext: ctx,
+		manager: m, inspectID: newInspectID(), span: span, spanContext: inspectCtx,
 	}
 	if m.Enabled() && m.captureAllowed() && m.shouldSample() && m.tryAcquireInflight() {
 		inspectCtx.recorder.state = m.beginRecord(&inspectCtx.recorder, source, name, labels)
@@ -959,7 +963,10 @@ func (r *Recorder) recordEvent(ctx context.Context, event InspectEvent) {
 	r.projectionMu.Lock()
 	defer r.projectionMu.Unlock()
 	if r.state != nil {
-		if identity.IsValid() {
+		if identity.IsValid() && identity.TraceID() != r.span.SpanContext().TraceID() {
+			event.SpanID = ""
+			event.ParentSpanID = ""
+		} else if identity.IsValid() {
 			if event.Kind == EventKindHTTP {
 				event.SpanID = r.state.record.Summary.SpanID
 			} else {
@@ -983,7 +990,7 @@ func (r *Recorder) Finish(status string, err error) {
 		r.projectionMu.Unlock()
 		if r.span != nil {
 			if err != nil {
-				r.span.RecordError(err)
+				r.recordFrameworkError(err)
 			}
 			if terminalStatus == statusError || (terminalStatus == statusCanceled && err != nil) {
 				r.span.SetStatus(codes.Error, terminalStatus)

@@ -21,6 +21,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
+	"os"
+	"os/exec"
+	"sync/atomic"
+	"time"
 	"{{.GoModuleName}}/internal/runtime"
 )
 
@@ -786,5 +790,677 @@ func TestTelemetryNativeChildAttributesRemainComplete(t *testing.T) {
 		if got["attribute."+strconv.Itoa(index)] != int64(index) {
 			t.Fatalf("native attribute %d changed: %v", index, got)
 		}
+	}
+}
+
+// recorderBindingValueKey distinguishes caller metadata from recorder and SDK context state.
+type recorderBindingValueKey struct{}
+
+// TestRecorderBindingSelectsExecutionSpan preserves explicit binding semantics with or without an upstream span.
+func TestRecorderBindingSelectsExecutionSpan(t *testing.T) {
+	for _, upstream := range []bool{false, true} {
+		name := "without upstream"
+		if upstream {
+			name = "with upstream"
+		}
+		t.Run(name, func(t *testing.T) {
+			manager := newTestManager(t)
+			exporter := tracetest.NewInMemoryExporter()
+			manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+			base := context.WithValue(context.Background(), recorderBindingValueKey{}, "caller value")
+			if upstream {
+				parent := trace.NewSpanContext(trace.SpanContextConfig{
+					TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}, TraceFlags: trace.FlagsSampled,
+				})
+				base = trace.ContextWithRemoteSpanContext(base, parent)
+			}
+			base, cancel := context.WithCancel(base)
+			defer cancel()
+			recorder := manager.BeginHTTPRecorder(base, "GET /binding")
+			if recorder == nil {
+				t.Fatal("execution recorder missing")
+			}
+			ctx := WithRecorder(base, recorder)
+			if RecorderFromContext(ctx) != recorder || ctx.Value(recorderBindingValueKey{}) != "caller value" {
+				t.Fatal("binding lost recorder or caller metadata")
+			}
+			if ctx.Done() != base.Done() {
+				t.Fatal("binding replaced caller cancellation")
+			}
+			manager.RecordCacheEvent(ctx, CacheOperationInspectEvent{Name: "default", Operation: "get"})
+			childCtx, child := manager.TracerProvider().Tracer("regression/application").Start(ctx, "application child")
+			// Explicit rebinding returns to the execution span even when the caller currently holds a child span.
+			rebound := WithRecorder(childCtx, recorder)
+			if got, want := trace.SpanContextFromContext(rebound), trace.SpanContextFromContext(ctx); !got.Equal(want) {
+				t.Fatal("explicit rebinding did not select the execution span")
+			}
+			child.End()
+			cancel()
+			if !errors.Is(ctx.Err(), context.Canceled) {
+				t.Fatal("binding lost caller cancellation state")
+			}
+			manager.Finish(ctx, "ok", nil)
+			spans := exporter.GetSpans()
+			if len(spans) != 3 {
+				t.Fatalf("exported spans = %d, want cache, application child, and execution", len(spans))
+			}
+			root := spans[2]
+			if got := trace.SpanContextFromContext(ctx); !got.Equal(root.SpanContext) {
+				t.Fatalf("bound span = %v, want execution %v", got, root.SpanContext)
+			}
+			if upstream && (root.SpanContext.TraceID() != (trace.TraceID{1}) || root.Parent.SpanID() != (trace.SpanID{2})) {
+				t.Fatal("execution lost upstream parent")
+			}
+			for _, span := range spans[:2] {
+				if span.SpanContext.TraceID() != root.SpanContext.TraceID() || span.Parent.SpanID() != root.SpanContext.SpanID() {
+					t.Fatalf("span %q does not descend from the bound execution", span.Name)
+				}
+			}
+		})
+	}
+}
+
+// recorderContractAnnotator models a standard processor enriching every span at creation.
+type recorderContractAnnotator struct{}
+
+// OnStart provides a distinguishable native event for each span's Lighthouse owner.
+func (recorderContractAnnotator) OnStart(_ context.Context, span sdktrace.ReadWriteSpan) {
+	span.AddEvent("recorder contract annotation", trace.WithAttributes(attribute.String("annotated.span", span.Name())))
+}
+
+// OnEnd leaves projection and export to the other registered processors.
+func (recorderContractAnnotator) OnEnd(sdktrace.ReadOnlySpan) {}
+
+// Shutdown has no resources to release for this synchronous processor.
+func (recorderContractAnnotator) Shutdown(context.Context) error { return nil }
+
+// ForceFlush has no buffered state for this synchronous processor.
+func (recorderContractAnnotator) ForceFlush(context.Context) error { return nil }
+
+// TestRecorderDirectEventKeepsProcessorOwnership exercises the documented recorder method at root and nested boundaries.
+func TestRecorderDirectEventKeepsProcessorOwnership(t *testing.T) {
+	for _, nested := range []bool{false, true} {
+		name := "root"
+		if nested {
+			name = "nested"
+		}
+		t.Run(name, func(t *testing.T) {
+			manager := newTestManager(t)
+			manager.TracerProvider().RegisterSpanProcessor(recorderContractAnnotator{})
+			outer := manager.Begin(context.Background(), runtime.SourceHTTP, "outer", nil)
+			ctx := outer
+			if nested {
+				ctx = manager.Begin(outer, runtime.SourceJobs, "inner", nil)
+			}
+			RecorderFromContext(ctx).RecordEvent(InspectEvent{Kind: EventKindCache, Name: "get"})
+			manager.Finish(ctx, "ok", nil)
+			if nested {
+				manager.Finish(outer, "ok", nil)
+			}
+			record, ok, err := manager.ByID(context.Background(), InspectIDFromContext(ctx))
+			if err != nil || !ok {
+				t.Fatalf("target inspect missing: %v", err)
+			}
+			var operationID string
+			for _, event := range record.Events {
+				if event.Kind == EventKindCache {
+					operationID = event.SpanID
+				}
+			}
+			if operationID == "" {
+				t.Fatal("rich operation event missing its span identity")
+			}
+			operationAnnotations := 0
+			for _, event := range record.Events {
+				if event.Name == "recorder contract annotation" && event.Attributes["annotated.span"] == "cache get" {
+					operationAnnotations++
+					if event.SpanID != operationID {
+						t.Fatal("operation annotation and rich event have different identities")
+					}
+				}
+			}
+			if operationAnnotations != 1 {
+				t.Fatalf("operation annotations in target inspect = %d, want 1", operationAnnotations)
+			}
+			if nested {
+				outerRecord, ok, err := manager.ByID(context.Background(), InspectIDFromContext(outer))
+				if err != nil || !ok {
+					t.Fatalf("outer inspect missing: %v", err)
+				}
+				for _, event := range outerRecord.Events {
+					if event.SpanID == operationID {
+						t.Fatal("nested operation annotation leaked into outer inspect")
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestRecorderNewTraceDoesNotProjectIntoOldCapture prevents standalone traces from inheriting an unrelated inspect identity.
+func TestRecorderNewTraceDoesNotProjectIntoOldCapture(t *testing.T) {
+	manager := newTestManager(t)
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "captured execution", nil)
+	tracer := manager.TracerProvider().Tracer("regression/application")
+	newCtx, newRoot := tracer.Start(ctx, "independent trace", trace.WithNewRoot())
+	newRoot.AddEvent("independent root event")
+	manager.RecordCacheEvent(newCtx, CacheOperationInspectEvent{Name: "default", Operation: "get"})
+	_, descendant := tracer.Start(newCtx, "independent descendant")
+	descendant.AddEvent("independent descendant event")
+	descendant.End()
+	newRoot.End()
+	manager.Finish(ctx, "ok", nil)
+	spans := exporter.GetSpans()
+	if len(spans) != 4 {
+		t.Fatalf("exported spans = %d, want all four SDK spans", len(spans))
+	}
+	for _, span := range spans[:2] {
+		if span.SpanContext.TraceID() != spans[2].SpanContext.TraceID() || span.Parent.SpanID() != spans[2].SpanContext.SpanID() {
+			t.Fatalf("span %q lost its independent trace or parent relationship", span.Name)
+		}
+	}
+	if spans[0].Name != "cache get" || spans[0].SpanKind != trace.SpanKindClient {
+		t.Fatal("cache operation lost its SDK client span")
+	}
+	if spans[2].SpanContext.TraceID() == spans[3].SpanContext.TraceID() {
+		t.Fatal("WithNewRoot did not create an independent trace")
+	}
+	record, ok, err := manager.ByID(context.Background(), InspectIDFromContext(ctx))
+	if err != nil || !ok {
+		t.Fatalf("captured execution missing: %v", err)
+	}
+	if len(record.Events) != 1 || record.Events[0].Kind != EventKindCache {
+		t.Fatalf("rich cache event missing or unrelated native spans projected: %+v", record.Events)
+	}
+	if record.Events[0].SpanID != "" || record.Events[0].ParentSpanID != "" {
+		t.Fatalf("rich event carries an unrelated trace identity: %+v", record.Events[0])
+	}
+}
+
+// TestTelemetryFrameworkErrorPrivacy keeps framework error enrichment local while preserving application OTel policy.
+func TestTelemetryFrameworkErrorPrivacy(t *testing.T) {
+	manager := newTestManager(t)
+	defer manager.Shutdown(context.Background())
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+	const privateMessage = "invalid request password=private-framework-password"
+	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "POST /login", nil)
+	_, app := manager.TracerProvider().Tracer("example/app").Start(ctx, "application-controlled-error")
+	app.RecordError(errors.New(privateMessage))
+	app.End()
+	manager.Finish(ctx, "error", errors.New(privateMessage))
+	record, ok, err := manager.ByID(context.Background(), InspectIDFromContext(ctx))
+	if err != nil || !ok {
+		t.Fatalf("framework error inspect missing: %v", err)
+	}
+	localError := false
+	for _, event := range record.Events {
+		if event.Kind == EventKindError && event.Message == privateMessage {
+			localError = true
+		}
+	}
+	if !localError {
+		t.Fatal("raw framework error missing from local Lighthouse enrichment")
+	}
+	rootException, appException := false, false
+	for _, span := range exporter.GetSpans() {
+		for _, event := range span.Events {
+			if event.Name != "exception" {
+				continue
+			}
+			exceptionType, exceptionMessage := "", ""
+			for _, attr := range event.Attributes {
+				switch string(attr.Key) {
+				case "exception.type":
+					exceptionType = attr.Value.AsString()
+				case "exception.message":
+					exceptionMessage = attr.Value.AsString()
+				}
+				if span.Name != "application-controlled-error" && strings.Contains(attr.Value.Emit(), "private-framework-password") {
+					t.Fatal("raw framework error escaped through an SDK exception attribute")
+				}
+			}
+			if span.Name == "application-controlled-error" {
+				appException = exceptionMessage == privateMessage
+			} else {
+				rootException = exceptionType != "" && exceptionMessage != "" && exceptionMessage != privateMessage
+			}
+		}
+	}
+	if !rootException {
+		t.Fatal("framework exception must retain type and a safe nonempty message")
+	}
+	if !appException {
+		t.Fatal("explicit application RecordError capture policy changed")
+	}
+}
+
+// TestTelemetryMalformedHeaderPrivacy checks the SDK's actual process logger without changing shared logging state.
+func TestTelemetryMalformedHeaderPrivacy(t *testing.T) {
+	for _, protocol := range []string{"http/protobuf", "grpc"} {
+		for _, key := range []string{"OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS"} {
+			for _, item := range []struct{ name, value string }{
+				{"missing_equals", "private-header-secret"},
+				{"empty_key", "=private-header-secret"},
+				{"invalid_key", "private header secret=value"},
+				{"invalid_escape", "Authorization=Bearer%20private-header-secret%zz"},
+				{"trailing_separator", "Authorization=private-header-secret,"},
+			} {
+				t.Run(protocol+"/"+key+"/"+item.name, func(t *testing.T) {
+					command := exec.Command(os.Args[0], "-test.run=^TestTelemetryHeaderPrivacySubprocess$", "-test.count=1")
+					for _, entry := range os.Environ() {
+						if strings.HasPrefix(entry, "OTEL_") || strings.HasPrefix(entry, "LIGHTHOUSE_") || strings.HasPrefix(entry, "GOFORJ_HEADER_PRIVACY_") {
+							continue
+						}
+						command.Env = append(command.Env, entry)
+					}
+					command.Env = append(command.Env,
+						"GOFORJ_HEADER_PRIVACY_CHILD=1", "GOFORJ_HEADER_PRIVACY_KEY="+key,
+						"OTEL_TRACES_EXPORTER=otlp", "OTEL_TRACES_SAMPLER=always_on",
+						"OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="+protocol,
+						"OTEL_EXPORTER_OTLP_HEADERS=X-Valid=generic", "OTEL_EXPORTER_OTLP_TRACES_HEADERS=X-Valid=signal",
+					)
+					// Replace the selected variable so generic validation still runs when a valid signal override exists.
+					filtered := command.Env[:0]
+					for _, entry := range command.Env {
+						if !strings.HasPrefix(entry, key+"=") {
+							filtered = append(filtered, entry)
+						}
+					}
+					command.Env = append(filtered, key+"="+item.value)
+					output, err := command.CombinedOutput()
+					if strings.Contains(string(output), "private-header-secret") || strings.Contains(string(output), "private header secret") {
+						t.Fatal("malformed OTLP credentials escaped into process output")
+					}
+					if err != nil {
+						t.Fatalf("header prevalidation failed: %v; output: %s", err, output)
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestTelemetryHeaderPrivacySubprocess isolates the SDK global logger and captures all malformed-header diagnostics in its parent.
+func TestTelemetryHeaderPrivacySubprocess(t *testing.T) {
+	if os.Getenv("GOFORJ_HEADER_PRIVACY_CHILD") != "1" {
+		t.Skip("invoked by malformed-header privacy matrix")
+	}
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	manager := NewManager()
+	defer manager.Shutdown(context.Background())
+	previousProvider := manager.TracerProvider()
+	err := manager.ConfigureTelemetry(context.Background())
+	if err == nil {
+		t.Fatal("accepted malformed OTLP header configuration")
+	}
+	if !strings.Contains(err.Error(), os.Getenv("GOFORJ_HEADER_PRIVACY_KEY")) {
+		t.Fatal("header validation error must identify the setting without its secret value")
+	}
+	if strings.Contains(err.Error(), "private-header-secret") || strings.Contains(err.Error(), "private header secret") {
+		t.Fatal("header validation error exposed a credential")
+	}
+	if manager.TracerProvider() != previousProvider {
+		t.Fatal("rejected header configuration replaced the previous provider")
+	}
+	ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "GET /after-invalid-config", nil)
+	if RecorderFromContext(ctx) == nil {
+		t.Fatal("rejected header configuration shut down the previous provider")
+	}
+	manager.Finish(ctx, "ok", nil)
+}
+
+// TestTelemetryValidHeaderGrammar preserves the SDK's case-sensitive ASCII token and path-unescaped value grammar.
+func TestTelemetryValidHeaderGrammar(t *testing.T) {
+	for _, protocol := range []string{"http/protobuf", "grpc"} {
+		for _, key := range []string{"OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS"} {
+			for _, header := range []string{
+				"Authorization=", "Authorization=a=b", "Authorization=a+b", "Authorization=a%2Bb%2Cc%25d",
+				" Authorization = Bearer%20example , X-Request-ID = 123 ",
+				"X-Key=one,x-key=two,X-Key=three", "user%20name=alice%20smith",
+				"!#$%&'*+-.^_`|~=value",
+			} {
+				t.Run(protocol+"/"+key+"/"+header, func(t *testing.T) {
+					clearTelemetryEnv(t)
+					t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "")
+					t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "")
+					t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
+					t.Setenv("OTEL_TRACES_SAMPLER", "always_on")
+					t.Setenv("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", protocol)
+					t.Setenv(key, header)
+					previous, propagator := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+					t.Cleanup(func() { otel.SetTracerProvider(previous); otel.SetTextMapPropagator(propagator) })
+					manager := NewManager()
+					defer manager.Shutdown(context.Background())
+					if err := manager.ConfigureTelemetry(context.Background()); err != nil {
+						t.Fatal("rejected valid SDK header grammar")
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestTelemetryUnusedMalformedHeaders preserves opt-in export when dormant collector settings are malformed.
+func TestTelemetryUnusedMalformedHeaders(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "exporter_none", true: "sdk_disabled"}[disabled], func(t *testing.T) {
+			clearTelemetryEnv(t)
+			t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=example%zz")
+			t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "also-malformed")
+			if disabled {
+				t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
+				t.Setenv("OTEL_SDK_DISABLED", "true")
+			} else {
+				t.Setenv("OTEL_TRACES_EXPORTER", "none")
+			}
+			previous, propagator := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+			t.Cleanup(func() { otel.SetTracerProvider(previous); otel.SetTextMapPropagator(propagator) })
+			manager := NewManager()
+			defer manager.Shutdown(context.Background())
+			if err := manager.ConfigureTelemetry(context.Background()); err != nil {
+				t.Fatal("validated dormant OTLP headers despite disabled export")
+			}
+		})
+	}
+}
+
+// TestTelemetryProviderFailureClosesPendingExporter protects ownership before a new batch processor is installed.
+func TestTelemetryProviderFailureClosesPendingExporter(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		export       bool
+		cleanupFails bool
+	}{
+		{name: "no exporter"},
+		{name: "exporter", export: true},
+		{name: "exporter cleanup failure", export: true, cleanupFails: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manager := newTestManager(t)
+			oldProvider := manager.TracerProvider()
+			shutdownErr := errors.New("previous processor shutdown failed")
+			oldProcessor := &handoffSpanProcessor{shutdownErr: shutdownErr}
+			oldProvider.RegisterSpanProcessor(oldProcessor)
+			pending := &handoffSpanExporter{}
+			if test.cleanupFails {
+				pending.shutdownErr = errors.New("pending exporter shutdown failed")
+			}
+			var exporter sdktrace.SpanExporter
+			if test.export {
+				exporter = pending
+			}
+			err := manager.installTelemetryProvider(context.Background(), exporter)
+			if !errors.Is(err, shutdownErr) {
+				t.Fatalf("configuration error = %v, want previous shutdown error", err)
+			}
+			if test.cleanupFails && !errors.Is(err, pending.shutdownErr) {
+				t.Fatalf("configuration error = %v, want pending exporter cleanup error", err)
+			}
+			if manager.TracerProvider() != oldProvider {
+				t.Fatal("failed handoff installed a new provider")
+			}
+			if got := oldProcessor.shutdownCalls.Load(); got != 1 {
+				t.Fatalf("old processor shutdown calls = %d, want 1", got)
+			}
+			want := int64(0)
+			if test.export {
+				want = 1
+			}
+			if got := pending.shutdownCalls.Load(); got != want {
+				t.Fatalf("pending exporter shutdown calls = %d, want %d", got, want)
+			}
+			if got := pending.exportedSpans.Load(); got != 0 {
+				t.Fatalf("pending exporter received %d spans after failed handoff", got)
+			}
+		})
+	}
+}
+
+// TestTelemetryProviderSuccessTransfersExporterOwnership verifies the installed provider closes its exporter once.
+func TestTelemetryProviderSuccessTransfersExporterOwnership(t *testing.T) {
+	manager := newTestManager(t)
+	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
+	oldProvider := manager.TracerProvider()
+	oldProcessor := &handoffSpanProcessor{}
+	oldProvider.RegisterSpanProcessor(oldProcessor)
+	exporter := &handoffSpanExporter{}
+	if err := manager.installTelemetryProvider(context.Background(), exporter, sdktrace.WithSampler(sdktrace.AlwaysSample())); err != nil {
+		t.Fatal(err)
+	}
+	if manager.TracerProvider() == oldProvider {
+		t.Fatal("successful handoff retained the old provider")
+	}
+	if got := oldProcessor.shutdownCalls.Load(); got != 1 {
+		t.Fatalf("old processor shutdown calls = %d, want 1", got)
+	}
+	if got := exporter.shutdownCalls.Load(); got != 0 {
+		t.Fatalf("owned exporter was closed before provider shutdown: %d", got)
+	}
+	_, span := manager.TracerProvider().Tracer("test/handoff").Start(context.Background(), "new-provider-work")
+	span.End()
+	if err := manager.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := exporter.shutdownCalls.Load(); got != 1 {
+		t.Fatalf("owned exporter shutdown calls = %d, want 1", got)
+	}
+	if got := exporter.exportedSpans.Load(); got != 1 {
+		t.Fatalf("owned exporter spans = %d, want 1", got)
+	}
+}
+
+// handoffSpanProcessor makes the previous provider's failure independent of transport timing.
+type handoffSpanProcessor struct {
+	shutdownErr   error
+	shutdownCalls atomic.Int64
+}
+
+// OnStart leaves span processing to the owning SDK.
+func (*handoffSpanProcessor) OnStart(context.Context, sdktrace.ReadWriteSpan) {}
+
+// OnEnd avoids exporting spans from the previous provider under test.
+func (*handoffSpanProcessor) OnEnd(sdktrace.ReadOnlySpan) {}
+
+// ForceFlush has no buffered state to flush.
+func (*handoffSpanProcessor) ForceFlush(context.Context) error { return nil }
+
+// Shutdown exposes the old provider's failure while recording its ownership release.
+func (p *handoffSpanProcessor) Shutdown(context.Context) error {
+	p.shutdownCalls.Add(1)
+	return p.shutdownErr
+}
+
+// handoffSpanExporter records resource ownership without starting a network transport.
+type handoffSpanExporter struct {
+	shutdownErr   error
+	shutdownCalls atomic.Int64
+	exportedSpans atomic.Int64
+}
+
+// ExportSpans retains only the span count required to verify successful handoff.
+func (e *handoffSpanExporter) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
+	e.exportedSpans.Add(int64(len(spans)))
+	return nil
+}
+
+// Shutdown makes cleanup failures observable without depending on background worker scheduling.
+func (e *handoffSpanExporter) Shutdown(context.Context) error {
+	e.shutdownCalls.Add(1)
+	return e.shutdownErr
+}
+
+// TestTelemetryCanceledShutdownReleasesOwnedExporter protects SDK resources when the app has consumed its shutdown budget.
+func TestTelemetryCanceledShutdownReleasesOwnedExporter(t *testing.T) {
+	for _, cancelBeforeCall := range []bool{true, false} {
+		name := "canceled by previous processor"
+		if cancelBeforeCall {
+			name = "already canceled"
+		}
+		t.Run(name, func(t *testing.T) {
+			manager := newTestManager(t)
+			exporter := &budgetShutdownExporter{done: make(chan struct{})}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			options := []sdktrace.TracerProviderOption{}
+			if !cancelBeforeCall {
+				options = append(options, sdktrace.WithSpanProcessor(&budgetShutdownProcessor{shutdown: func(context.Context) error { cancel(); return nil }}))
+			}
+			if err := manager.installTelemetryProvider(context.Background(), exporter, options...); err != nil {
+				t.Fatal(err)
+			}
+			if cancelBeforeCall {
+				cancel()
+			}
+			if err := manager.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+				t.Fatalf("shutdown error = %v, want context.Canceled", err)
+			}
+			select {
+			case <-exporter.done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("owned exporter was not released after shutdown budget expired")
+			}
+			if err := manager.Shutdown(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := exporter.shutdownCalls.Load(); got != 1 {
+				t.Fatalf("owned exporter shutdown calls = %d, want 1", got)
+			}
+		})
+	}
+}
+
+// TestTelemetryShutdownAllowsRecursiveProcessor protects application processors that request manager shutdown while being closed.
+func TestTelemetryShutdownAllowsRecursiveProcessor(t *testing.T) {
+	manager := newTestManager(t)
+	exporter := &budgetShutdownExporter{done: make(chan struct{})}
+	processor := &budgetShutdownProcessor{shutdown: manager.Shutdown}
+	if err := manager.installTelemetryProvider(context.Background(), exporter, sdktrace.WithSpanProcessor(processor)); err != nil {
+		t.Fatal(err)
+	}
+	returned := make(chan error, 1)
+	go func() { returned <- manager.Shutdown(context.Background()) }()
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("recursive processor shutdown did not complete")
+	}
+	if got := processor.shutdownCalls.Load(); got != 1 {
+		t.Fatalf("recursive processor shutdown calls = %d, want 1", got)
+	}
+	if got := exporter.shutdownCalls.Load(); got != 1 {
+		t.Fatalf("owned exporter shutdown calls = %d, want 1", got)
+	}
+}
+
+// TestTelemetryShutdownAllowsRecursiveExporter protects both public shutdown entry points from callbacks out of the owned batch processor.
+func TestTelemetryShutdownAllowsRecursiveExporter(t *testing.T) {
+	for _, directSDK := range []bool{false, true} {
+		name := "manager entry"
+		if directSDK {
+			name = "SDK entry"
+		}
+		t.Run(name, func(t *testing.T) {
+			manager := newTestManager(t)
+			exporter := &budgetShutdownExporter{done: make(chan struct{}), shutdown: manager.Shutdown}
+			if err := manager.installTelemetryProvider(context.Background(), exporter); err != nil {
+				t.Fatal(err)
+			}
+			shutdown := manager.Shutdown
+			if directSDK {
+				shutdown = manager.TracerProvider().Shutdown
+			}
+			returned := make(chan error, 1)
+			go func() { returned <- shutdown(context.Background()) }()
+			select {
+			case err := <-returned:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("recursive exporter shutdown did not complete")
+			}
+			select {
+			case <-exporter.done:
+			default:
+				t.Fatal("recursive exporter ownership release did not finish")
+			}
+			if err := manager.Shutdown(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := exporter.shutdownCalls.Load(); got != 1 {
+				t.Fatalf("recursive exporter shutdown calls = %d, want 1", got)
+			}
+		})
+	}
+}
+
+// budgetShutdownProcessor provides deterministic cancellation or recursion before the owned batch processor is closed.
+type budgetShutdownProcessor struct {
+	shutdown      func(context.Context) error
+	shutdownCalls atomic.Int64
+}
+
+// OnStart leaves processing to the SDK under test.
+func (*budgetShutdownProcessor) OnStart(context.Context, sdktrace.ReadWriteSpan) {}
+
+// OnEnd has no buffered spans to retain.
+func (*budgetShutdownProcessor) OnEnd(sdktrace.ReadOnlySpan) {}
+
+// ForceFlush has no state to flush.
+func (*budgetShutdownProcessor) ForceFlush(context.Context) error { return nil }
+
+// Shutdown applies the callback once through the owning SDK's processor contract.
+func (p *budgetShutdownProcessor) Shutdown(ctx context.Context) error {
+	p.shutdownCalls.Add(1)
+	return p.shutdown(ctx)
+}
+
+// budgetShutdownExporter signals resource release without involving transport workers or collector timing.
+type budgetShutdownExporter struct {
+	done          chan struct{}
+	shutdown      func(context.Context) error
+	shutdownCalls atomic.Int64
+	once          sync.Once
+}
+
+// ExportSpans leaves tests focused on ownership rather than delivery.
+func (*budgetShutdownExporter) ExportSpans(context.Context, []sdktrace.ReadOnlySpan) error {
+	return nil
+}
+
+// Shutdown makes asynchronous SDK resource release observable through a channel.
+func (e *budgetShutdownExporter) Shutdown(ctx context.Context) error {
+	e.shutdownCalls.Add(1)
+	var err error
+	if e.shutdown != nil {
+		err = e.shutdown(ctx)
+	}
+	e.once.Do(func() { close(e.done) })
+	return err
+}
+
+// TestTelemetryNilContextsPreserveLifecycleCompatibility keeps optional lifecycle contexts consistent with Begin and App shutdown.
+func TestTelemetryNilContextsPreserveLifecycleCompatibility(t *testing.T) {
+	clearTelemetryEnv(t)
+	previous, propagator := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+	t.Cleanup(func() { otel.SetTracerProvider(previous); otel.SetTextMapPropagator(propagator) })
+	manager := newTestManager(t)
+	defer manager.Shutdown(context.Background())
+	if err := manager.ConfigureTelemetry(nil); err != nil {
+		t.Fatalf("nil configuration context: %v", err)
+	}
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+	ctx := manager.Begin(nil, runtime.SourceHTTP, "nil-context", nil)
+	manager.Finish(ctx, "ok", nil)
+	if err := manager.Shutdown(nil); err != nil {
+		t.Fatalf("nil shutdown context: %v", err)
 	}
 }

@@ -11,8 +11,8 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 )
 
-// InitializeApplication initializes the application by providing all the dependencies.
-func InitializeApplication() (App, error) {
+// initializeApplication builds the graph and releases constructed resources if a later provider fails.
+func initializeApplication() (App, func(), error) {
 	wire.Build(
 		appSet,
 {{ if and .Components.Auth .Components.HasDatabase -}}
@@ -45,5 +45,5 @@ func InitializeApplication() (App, error) {
 		NewApplication,
 	)
 
-	return App{}, nil
+	return App{}, nil, nil
 }
