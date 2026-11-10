@@ -4,7 +4,9 @@
 
 ## OpenTelemetry
 
-Tracing support is included in every app. Export is off until configured, so local development does not require a collector. To export through OTLP HTTP/protobuf:
+Tracing support is included in every app. New projects include a commented OpenTelemetry section in `.env`. Export is off until configured, so local development does not require a collector. Uncomment `OTEL_EXPORTER_OTLP_ENDPOINT` and point it at your collector to enable OTLP HTTP/protobuf export. No code changes are needed; the service name defaults to the Go module path and current app name.
+
+For an explicit exporter selection and service name:
 
 ```env
 OTEL_SERVICE_NAME=photodrop-api

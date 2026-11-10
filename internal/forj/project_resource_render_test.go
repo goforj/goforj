@@ -377,7 +377,7 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 		if len(line) > 100 {
 			t.Fatalf("default environment line %d exceeds 100 characters: %s", lineIndex+1, line)
 		}
-		if strings.HasPrefix(line, "# ") && line != environmentReference && !strings.HasPrefix(line, "# Available drivers:") {
+		if strings.HasPrefix(line, "# ") && lineIndex > 0 && lines[lineIndex-1] == "" {
 			sections = append(sections, line)
 		}
 		if key, _, ok := envfile.ParseAssignment(line); ok {
@@ -388,6 +388,7 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 	wantSections := []string{
 		"# App",
 		"# Logging",
+		"# OpenTelemetry",
 		"# Lighthouse",
 		"# API",
 		"# Metrics",
@@ -445,6 +446,14 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 		t.Fatalf("default environment assignments:\nwant: %q\ngot:  %q\n%s", wantKeys, keys, environment)
 	}
 	for _, want := range []string{
+		"# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318",
+		"# OTEL_SERVICE_NAME=",
+		"# OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+		"# OTEL_EXPORTER_OTLP_HEADERS=",
+		"# OTEL_TRACES_EXPORTER=otlp",
+		"# OTEL_TRACES_SAMPLER=parentbased_always_on",
+		"# OTEL_TRACES_SAMPLER_ARG=1.0 # used by traceidratio and parentbased_traceidratio",
+		"# OTEL_SDK_DISABLED=false",
 		"# Available drivers: log,smtp,resend,postmark,mailgun,sendgrid,ses\nMAIL_DRIVER=smtp\nMAIL_SUPPORTED_DRIVERS=log,smtp",
 		"# Available drivers: sqlite,mysql,postgres\nDB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql",
 		"# Available drivers: memory,file,null,redis,memcached,dynamodb,sqlite,postgres,mysql,nats\nCACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory,redis",
@@ -453,7 +462,7 @@ func TestDefaultEnvironmentIsCompactAndIntentional(t *testing.T) {
 		"# Available drivers: null,sync,workerpool,redis,nats,sqs,rabbitmq,sqlite,postgres,mysql\nQUEUE_DRIVER=workerpool\nQUEUE_SUPPORTED_DRIVERS=workerpool,redis",
 	} {
 		if !strings.Contains(environment, want+"\n") {
-			t.Fatalf("default environment omitted available-driver choices %q:\n%s", want, environment)
+			t.Fatalf("default environment omitted documented configuration %q:\n%s", want, environment)
 		}
 	}
 	if !strings.Contains(environment, "STORAGE_PUBLIC_DRIVER=local\n") {
