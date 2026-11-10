@@ -1046,10 +1046,11 @@ func (m *Manager) recordEventByInspectID(ctx context.Context, inspectID string, 
 	return nil
 }
 
+// appendEventToInflight pins the indexed state until appending ends so completion cannot recycle it concurrently.
 func (m *Manager) appendEventToInflight(inspectID string, event InspectEvent) bool {
 	m.inflightMu.RLock()
+	defer m.inflightMu.RUnlock()
 	state := m.inflight[inspectID]
-	m.inflightMu.RUnlock()
 	if state == nil {
 		return false
 	}
@@ -1119,8 +1120,8 @@ func (m *Manager) finishStateAt(ctx context.Context, inspectID string, state *in
 	state.record.Summary.EndedAt = now
 	state.record.Summary.DurationMS = maxInt64(0, now.Sub(state.record.Summary.StartedAt).Milliseconds())
 	record := materializeInflightRecord(state)
-	persistErr := m.persistFinishedRecord(ctx, record)
 	state.mu.Unlock()
+	persistErr := m.persistFinishedRecord(ctx, record)
 	if persistErr != nil {
 		return persistErr
 	}

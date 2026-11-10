@@ -14,7 +14,7 @@ OTEL_TRACES_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 ```
 
-The generic endpoint receives traces at `/v1/traces`. A signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is a complete URL, including its trace path. Header settings are validated before exporter construction; invalid names or percent-encoding return an error without logging their values. The Go SDK's exporter handles endpoint, header, certificate, compression, timeout, and TLS settings. Use HTTPS for remote collectors.
+The generic endpoint receives traces at `/v1/traces`. A signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is a complete URL, including its trace path. Endpoint URLs and header settings are validated before exporter construction; malformed URLs, invalid header names, or invalid percent-encoding return an error without logging their values. The Go SDK's exporter handles endpoint, header, certificate, compression, timeout, and TLS settings. Use HTTPS for remote collectors.
 
 For gRPC, select the protocol and its endpoint:
 
@@ -51,6 +51,10 @@ if err != nil {
 This is a fragment using `go.opentelemetry.io/otel` and `go.opentelemetry.io/otel/codes`. Spans created during a captured execution appear in the Lighthouse timeline and in the configured exporter. Inject `*inspects.Manager` and use `TracerProvider()` when a library accepts an explicit provider. Additional standard SDK processors can be registered on that provider before work starts.
 
 For outbound HTTP, inject a client built with `manager.HTTPClient(http.DefaultClient)`, then use `http.NewRequestWithContext` with the execution context. The helper wraps a copy of the client, creates client spans, and injects W3C context without modifying the process-wide default client. Other clients can use their standard OTel instrumentation with the app's provider.
+
+The helper's automatic URL attributes omit user information, query strings, and fragments. Automatic transport and response-body failures use a generic span status description while the original errors remain available to the caller. The actual outgoing URL is unchanged. Explicit application instrumentation retains its own capture policy.
+
+App-owned OTLP exporters return generic configuration, delivery, and shutdown error messages so automatic diagnostics cannot expose collector URLs, authentication headers, or response bodies. `errors.Is`, `errors.As`, and `errors.Unwrap` retain access to the underlying cause for explicit inspection. Application-registered exporters and processors retain their own diagnostic policy.
 
 `WithRecorder(ctx, recorder)` binds both the recorder and its execution span while preserving caller values and cancellation. Start application child spans after binding. `Recorder.RecordEvent` uses that recorder's own execution context, including for nested captures.
 

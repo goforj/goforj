@@ -127,6 +127,9 @@ func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
 	}
 	var exporter sdktrace.SpanExporter
 	if exportEnabled {
+		if err := validateTelemetryEndpoints(); err != nil {
+			return err
+		}
 		if err := validateTelemetryHeaders(); err != nil {
 			return err
 		}
@@ -140,8 +143,9 @@ func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
 			return fmt.Errorf("unsupported OTLP trace protocol %q: use http/protobuf or grpc", protocol)
 		}
 		if err != nil {
-			return fmt.Errorf("configure OTLP traces: %w", err)
+			return &telemetryExportError{operation: "configuration", err: err}
 		}
+		exporter = telemetryExporter{SpanExporter: exporter}
 	}
 	if err := m.installTelemetryProvider(ctx, exporter, options...); err != nil {
 		return err
@@ -150,6 +154,49 @@ func (m *Manager) ConfigureTelemetry(ctx context.Context) error {
 	m.tracing.enabled = !disabled && (m.config.Enabled || m.tracing.external)
 	otel.SetTracerProvider(m.tracing.provider)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
+	return nil
+}
+
+// telemetryExporter keeps collector responses and endpoint credentials out of automatic SDK diagnostics.
+type telemetryExporter struct{ sdktrace.SpanExporter }
+
+// ExportSpans preserves delivery and error inspection while redacting automatic diagnostic text.
+func (e telemetryExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	if err := e.SpanExporter.ExportSpans(ctx, spans); err != nil {
+		return &telemetryExportError{operation: "export", err: err}
+	}
+	return nil
+}
+
+// Shutdown applies the same diagnostic policy to flush and connection cleanup failures.
+func (e telemetryExporter) Shutdown(ctx context.Context) error {
+	if err := e.SpanExporter.Shutdown(ctx); err != nil {
+		return &telemetryExportError{operation: "shutdown", err: err}
+	}
+	return nil
+}
+
+// telemetryExportError retains the underlying cause without exposing its potentially private message to loggers.
+type telemetryExportError struct {
+	operation string
+	err       error
+}
+
+// Error provides stable diagnostics that do not include collector-controlled content.
+func (e telemetryExportError) Error() string { return "OTLP trace " + e.operation + " failed" }
+
+// Unwrap preserves errors.Is and errors.As for explicit inspection of the original delivery failure.
+func (e telemetryExportError) Unwrap() error { return e.err }
+
+// validateTelemetryEndpoints prevents SDK parser diagnostics from logging credential-bearing endpoints.
+func validateTelemetryEndpoints() error {
+	for _, setting := range []string{"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"} {
+		if value := strings.TrimSpace(os.Getenv(setting)); value != "" {
+			if _, err := url.Parse(value); err != nil {
+				return fmt.Errorf("%s must be a valid URL", setting)
+			}
+		}
+	}
 	return nil
 }
 
@@ -217,6 +264,7 @@ func validTelemetryHeaderName(name string) bool {
 // recordFrameworkError keeps arbitrary framework failure text local while preserving standard exception classification.
 func (r *Recorder) recordFrameworkError(err error) {
 	r.span.AddEvent("exception", trace.WithAttributes(
+		attribute.Bool("goforj.inspect.event", true),
 		attribute.String("exception.type", fmt.Sprintf("%T", err)),
 		attribute.String("exception.message", "execution failed"),
 	))
@@ -354,14 +402,22 @@ func (p *lighthouseProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 	if recorder == nil {
 		return
 	}
+	completed, status, err := p.projectSpan(recorder, span)
+	if completed != nil {
+		_ = p.manager.finishStateAt(context.Background(), recorder.inspectID, completed, status, err, span.EndTime())
+	}
+}
+
+// projectSpan detaches completed captures before publication so callbacks can safely start work or inspect capture state.
+func (p *lighthouseProcessor) projectSpan(recorder *Recorder, span sdktrace.ReadOnlySpan) (*inflightInspect, string, error) {
 	recorder.projectionMu.Lock()
 	defer recorder.projectionMu.Unlock()
 	if recorder.state == nil {
-		return
+		return nil, "", nil
 	}
 	root := identityForSpan(recorder.span.SpanContext()) == identityForSpan(span.SpanContext())
 	for _, event := range span.Events() {
-		if isInspectEvent(event.Attributes) || (root && recorder.terminalError != nil && event.Name == "exception") {
+		if isInspectEvent(event.Attributes) {
 			continue
 		}
 		p.manager.appendEvent(recorder.state, InspectEvent{
@@ -371,7 +427,7 @@ func (p *lighthouseProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 	}
 	if !root {
 		if isInspectEvent(span.Attributes()) {
-			return
+			return nil, "", nil
 		}
 		spanAttributes := span.Attributes()
 		attributes := make(map[string]any, len(spanAttributes)+1)
@@ -384,7 +440,7 @@ func (p *lighthouseProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 			SpanID: span.SpanContext().SpanID().String(), ParentSpanID: span.Parent().SpanID().String(),
 			Status: span.Status().Code.String(), Attributes: attributes,
 		})
-		return
+		return nil, "", nil
 	}
 	recorder.state.mu.Lock()
 	recorder.state.record.Summary.Name = span.Name()
@@ -397,9 +453,10 @@ func (p *lighthouseProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 	if span.Status().Code == codes.Error && status != statusCanceled {
 		status = statusError
 	}
-	_ = p.manager.finishStateAt(context.Background(), recorder.inspectID, recorder.state, status, recorder.terminalError, span.EndTime())
+	completed := recorder.state
 	recorder.state = nil
 	// Detached application spans may outlive the inspect, so release their projection associations now.
+	state := p.manager.tracing
 	state.mu.Lock()
 	delete(state.owners, recorder.childSpan)
 	recorder.childSpan = spanIdentity{}
@@ -408,6 +465,7 @@ func (p *lighthouseProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 	}
 	recorder.childSpans = nil
 	state.mu.Unlock()
+	return completed, status, recorder.terminalError
 }
 
 // Shutdown leaves provider and publisher lifecycle ownership with the App.
@@ -485,9 +543,70 @@ func (r *Recorder) recordTelemetryEvent(ctx context.Context, event InspectEvent)
 // HTTPClient creates an instrumented client without changing the process-wide default transport.
 func (m *Manager) HTTPClient(client *http.Client) *http.Client {
 	copy := *client
-	copy.Transport = otelhttp.NewTransport(client.Transport, otelhttp.WithTracerProvider(m.TracerProvider()),
+	copy.Transport = otelhttp.NewTransport(client.Transport, otelhttp.WithTracerProvider(httpClientTracerProvider{TracerProvider: m.TracerProvider()}),
 		otelhttp.WithPropagators(propagation.TraceContext{}))
 	return &copy
+}
+
+// httpClientTracerProvider limits automatic client metadata without changing application instrumentation.
+type httpClientTracerProvider struct{ trace.TracerProvider }
+
+// Tracer applies the framework client's privacy policy to its instrumentation scope.
+func (p httpClientTracerProvider) Tracer(name string, options ...trace.TracerOption) trace.Tracer {
+	return httpClientTracer{Tracer: p.TracerProvider.Tracer(name, options...)}
+}
+
+// httpClientTracer wraps spans before otelhttp records request metadata.
+type httpClientTracer struct{ trace.Tracer }
+
+// Start preserves parent identity and binds the sanitized span for downstream context access.
+func (t httpClientTracer) Start(ctx context.Context, name string, options ...trace.SpanStartOption) (context.Context, trace.Span) {
+	ctx, span := t.Tracer.Start(ctx, name, options...)
+	if !span.IsRecording() {
+		return ctx, span
+	}
+	wrapped := httpClientSpan{Span: span}
+	return trace.ContextWithSpan(ctx, wrapped), wrapped
+}
+
+// httpClientSpan removes credential carriers from framework-generated HTTP metadata.
+type httpClientSpan struct{ trace.Span }
+
+// SetAttributes sanitizes URL attributes without altering caller slices or the actual request.
+func (s httpClientSpan) SetAttributes(attributes ...attribute.KeyValue) {
+	var cleaned []attribute.KeyValue
+	for index, value := range attributes {
+		if value.Key != "url.full" && value.Key != "http.url" {
+			continue
+		}
+		if cleaned == nil {
+			cleaned = append([]attribute.KeyValue(nil), attributes...)
+		}
+		parsed, err := url.Parse(value.Value.AsString())
+		if err != nil {
+			cleaned[index] = attribute.String(string(value.Key), "[redacted]")
+			continue
+		}
+		parsed.User = nil
+		parsed.Opaque = ""
+		parsed.RawQuery = ""
+		parsed.ForceQuery = false
+		parsed.Fragment = ""
+		parsed.RawFragment = ""
+		cleaned[index] = attribute.String(string(value.Key), parsed.String())
+	}
+	if cleaned != nil {
+		attributes = cleaned
+	}
+	s.Span.SetAttributes(attributes...)
+}
+
+// SetStatus preserves error classification without automatically exporting dependency error text.
+func (s httpClientSpan) SetStatus(code codes.Code, description string) {
+	if code == codes.Error {
+		description = "request failed"
+	}
+	s.Span.SetStatus(code, description)
 }
 
 // Capturing reports whether rich Lighthouse payloads are enabled for this execution.
