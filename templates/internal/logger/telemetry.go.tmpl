@@ -196,10 +196,11 @@ func (l *AppLogger) emitTelemetry(ctx context.Context, entry LogEntry) {
 	case "fatal", "panic":
 		record.SetSeverity(log.SeverityFatal)
 	}
+	spanContext := trace.SpanContextFromContext(ctx)
 	budget := 256
 	count := 0
 	appendField := func(key string, value any) {
-		if count >= 60 || key == "trace_id" || key == "span_id" {
+		if count >= 60 || spanContext.IsValid() && (key == "trace_id" || key == "span_id") {
 			return
 		}
 		record.AddAttributes(attribute.KeyValue{Key: attribute.Key(boundedLogString(key, 256)), Value: logAttributeValue(value, 0, &budget)})
@@ -220,9 +221,8 @@ func (l *AppLogger) emitTelemetry(ctx context.Context, entry LogEntry) {
 	if source := runtime.SourceFromContext(ctx); source != "" {
 		record.AddAttributes(attribute.String("source", string(source)))
 	}
-	// SpanContext contains only immutable identity, so the batch queue never retains request contexts.
-	emitCtx := trace.ContextWithSpanContext(context.Background(), trace.SpanContextFromContext(ctx))
-	state.logger.Emit(emitCtx, record)
+	// The owned BatchProcessor snapshots the record during Emit and does not retain its context.
+	state.logger.Emit(ctx, record)
 }
 
 // localLogEndpoint keeps automatic export inside the generated local stack and outside test processes.

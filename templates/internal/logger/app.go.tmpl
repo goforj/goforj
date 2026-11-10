@@ -606,6 +606,7 @@ func (l *AppLogger) SetDebugLevel(level int) {
 	l.debugLevel = level
 }
 
+// clone shares export ownership while retaining each derived logger's immutable context and fields.
 func (l *AppLogger) clone() *AppLogger {
 	if l == nil {
 		return NewSilentLogger()
@@ -676,7 +677,7 @@ func (l *AppLogger) WithComponent(component string) *AppLogger {
 	return child
 }
 
-// WithContext derives a logger that stamps inspect/source fields from ctx into emitted log entries.
+// WithContext derives a logger with inspect, source, and active OpenTelemetry span identity.
 func (l *AppLogger) WithContext(ctx context.Context) *AppLogger {
 	if l == nil {
 		return NewSilentLogger()
@@ -842,6 +843,7 @@ func encodeLogEntry(entry LogEntry, fallbackLevel zerolog.Level) []byte {
 	return append(encoded, '\n')
 }
 
+// WriteLevel exports the structured legacy event before applying local repeat suppression.
 func (w *structuredLogLevelWriter) WriteLevel(level zerolog.Level, p []byte) (int, error) {
 	if w == nil || w.out == nil {
 		return len(p), nil

@@ -190,6 +190,7 @@ func (d *sinkDedupe) filter(entry LogEntry) (bool, *LogEntry) {
 	return false, nil
 }
 
+// summaryEntryLocked omits per-execution IDs because an aggregate can describe several traces.
 func (d *sinkDedupe) summaryEntryLocked(state *sinkDedupeEntry, now time.Time) *LogEntry {
 	if state == nil || state.suppressedSinceSummary <= 0 {
 		return nil

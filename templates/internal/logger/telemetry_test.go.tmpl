@@ -415,3 +415,18 @@ func TestLogValueFailureModes(t *testing.T) {
 		t.Fatal("invalid UTF-8 escaped normalization")
 	}
 }
+
+// TestExplicitTraceFieldsRemainAvailableWithoutContext preserves fields supplied by existing structured-log integrations.
+func TestExplicitTraceFieldsRemainAvailableWithoutContext(t *testing.T) {
+	exporter := &logMemoryExporter{}
+	logger, provider := testLogTelemetry(t, exporter, 16)
+	logger.Info().Str("trace_id", "external-trace").Str("span_id", "external-span").Msg("external correlation")
+	if err := provider.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fields := map[attribute.Key]string{}
+	exporter.records[0].WalkAttributes(func(value attribute.KeyValue) bool { fields[value.Key] = value.Value.AsString(); return true })
+	if fields["trace_id"] != "external-trace" || fields["span_id"] != "external-span" {
+		t.Fatal("explicit correlation fields were lost")
+	}
+}

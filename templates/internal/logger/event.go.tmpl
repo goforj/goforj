@@ -297,6 +297,7 @@ func (e *Event) Send() {
 	e.emit("")
 }
 
+// emit preserves normal output and gives fatal records a bounded delivery window before exit.
 func (e *Event) emit(msg string) {
 	if e == nil {
 		return
@@ -314,6 +315,7 @@ func (e *Event) emit(msg string) {
 	}
 }
 
+// emitTypedEntry carries a derived logger's bound context through its existing structured event path.
 func (l *AppLogger) emitTypedEntry(output *zerolog.Logger, level zerolog.Level, caller bool, entry LogEntry) {
 	if l == nil {
 		return
