@@ -5,9 +5,11 @@ package wire
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -70,6 +72,8 @@ type App struct {
 	{{- end }}
 	lifecycle *runtime.Lifecycle
 	appTimeouts *runtime.Timeouts
+	cleanup *applicationCleanup // cleanup is set by Wire initialization; direct NewApplication callers retain their existing lifecycle.
+
 	{{- if .Components.Jobs }}
 	queues *queues.Manager
 	{{- end }}
@@ -182,9 +186,14 @@ func (a *App) Startup(ctx context.Context) error {
 	return nil
 }
 
-// Shutdown gracefully releases background app resources.
+// Shutdown stops runtime resources before flushing telemetry, including after failed startup.
 func (a *App) Shutdown(ctx context.Context) error {
-	return a.lifecycle.Stop(ctx)
+	lifecycleErr := a.lifecycle.Stop(ctx)
+	telemetryErr := a.inspects.Shutdown(ctx)
+	if a.cleanup != nil {
+		a.cleanup.run()
+	}
+	return errors.Join(lifecycleErr, telemetryErr)
 }
 
 // Run starts app lifecycle, executes CLI args, and performs graceful shutdown.
@@ -197,6 +206,17 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		command = args[0]
 	}
 	origin := strings.TrimSpace(os.Getenv("FORJ_COMMAND_ORIGIN"))
+	// Preserve a live command context through shutdown while still cleaning up before parser failures return.
+	var stopSignals context.CancelFunc
+	defer func() {
+		if stopSignals != nil {
+			stopSignals()
+		}
+	}()
+	shutdownTimeout := a.shutdownTimeoutForOrigin(origin)
+	defer func() {
+		a.shutdownAfterRun(ctx, command, args, origin, shutdownTimeout)
+	}()
 	parser, err := kong.New(
 		a.RootCmd(),
 		kong.Name(cmd.AppHelpName()),
@@ -217,20 +237,18 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return konghelp.CommandParseError(parser, command, err)
 	}
 	ctx, stop := runtime.CLINotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	ctx = a.inspects.Begin(ctx, runtime.SourceCLI, command, map[string]string{
+	stopSignals = stop
+	ctx = a.inspects.Begin(ctx, runtime.SourceCLI, parseCtx.Command(), map[string]string{
 		"command": command,
 	})
 	parseCtx.BindTo(ctx, (*context.Context)(nil))
-	shutdownTimeout := a.shutdownTimeoutForOrigin(origin)
+	defer func() {
+		a.inspects.Finish(ctx, "", nil)
+	}()
 	if err := a.Startup(ctx); err != nil {
 		a.inspects.Finish(ctx, "error", err)
 		return err
 	}
-	defer func() {
-		a.shutdownAfterRun(ctx, command, args, origin, shutdownTimeout)
-		a.inspects.Finish(ctx, "", nil)
-	}()
 	if err := parseCtx.Run(); err != nil {
 		a.inspects.Finish(ctx, "error", err)
 		return err
@@ -285,6 +303,30 @@ func LaunchApplication() {
 		RootCommand: &{{.AppPackageName}}.RootCmd{},
 		Run:         runApplication,
 	})
+}
+
+// InitializeApplication preserves the public initializer while transferring Wire cleanup to the completed App.
+func InitializeApplication() (App, error) {
+	application, cleanup, err := initializeApplication()
+	if err != nil {
+		return App{}, err
+	}
+	application.cleanup = onceCleanup(cleanup)
+	return application, nil
+}
+
+// applicationCleanup shares once-only resource ownership while keeping App values comparable.
+type applicationCleanup struct {
+	once sync.Once
+	cleanup func()
+}
+
+// run releases the constructed graph once across every App copy sharing this owner.
+func (c *applicationCleanup) run() { c.once.Do(c.cleanup) }
+
+// onceCleanup shares resource ownership across App value copies without copying a live synchronization primitive.
+func onceCleanup(cleanup func()) *applicationCleanup {
+	return &applicationCleanup{cleanup: cleanup}
 }
 
 // runApplication initializes the App only after preboot commands have been handled.

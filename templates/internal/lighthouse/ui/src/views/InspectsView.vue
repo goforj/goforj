@@ -246,6 +246,23 @@
                 <span class="break-all text-left">{{ selectedInspectRecord.summary.trace_id }}</span>
                 <Copy class="h-3 w-3" />
               </button>
+              <button
+                v-if="selectedInspectRecord.summary.otel_trace_id"
+                type="button"
+                class="inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] transition hover:bg-background/80"
+                :class="valuePillClass"
+                title="Copy OpenTelemetry trace ID"
+                @click="copyInspectID(selectedInspectRecord.summary.otel_trace_id, 'Trace ID')"
+              >
+                <span class="break-all text-left">trace {{ selectedInspectRecord.summary.otel_trace_id }}</span>
+                <Copy class="h-3 w-3" />
+              </button>
+              <span
+                v-if="selectedInspectRecord.summary.span_id"
+                :class="['inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 font-mono', valuePillClass]"
+              >
+                span {{ selectedInspectRecord.summary.span_id }}
+              </span>
               <span
                 v-if="requestHostname"
                 :class="['inline-flex items-center gap-1.5 rounded-full border px-3 py-1', valuePillClass]"
@@ -1004,6 +1021,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 
 type InspectSummary = {
   trace_id: string;
+  otel_trace_id?: string;
+  span_id?: string;
+  parent_span_id?: string;
   source: string;
   app?: string;
   agent_key?: string;
@@ -1222,6 +1242,9 @@ const normalizeInspectRecord = (value: unknown): InspectRecord => {
   return {
     summary: {
       trace_id: String(readObjectField(summary, "trace_id", "TraceID") || ""),
+      otel_trace_id: String(readObjectField(summary, "otel_trace_id", "OTelTraceID") || ""),
+      span_id: String(readObjectField(summary, "span_id", "SpanID") || ""),
+      parent_span_id: String(readObjectField(summary, "parent_span_id", "ParentSpanID") || ""),
       source: String(readObjectField(summary, "source", "Source") || ""),
       name: String(readObjectField(summary, "name", "Name") || ""),
       status: String(readObjectField(summary, "status", "Status") || ""),
@@ -1889,12 +1912,12 @@ const copyRawQuery = async (event: InspectEvent) => {
   }
 };
 
-const copyInspectID = async (inspectID: string) => {
+const copyInspectID = async (inspectID: string, label = "Inspect ID") => {
   try {
     await navigator.clipboard.writeText(inspectID);
-    toast.success("Inspect ID copied");
+    toast.success(`${label} copied`);
   } catch (err: any) {
-    toast.error(err?.message || "Unable to copy inspect ID.");
+    toast.error(err?.message || `Unable to copy ${label.toLowerCase()}.`);
   }
 };
 

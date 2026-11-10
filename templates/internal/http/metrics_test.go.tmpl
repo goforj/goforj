@@ -9,12 +9,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
+ "{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/metrics"
 )
 
 func TestMetricsEndpoint(t *testing.T) {
 	metricsManager := metrics.NewManager()
-	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} nil, metricsManager)
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} inspects.NewManager(), metricsManager)
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 

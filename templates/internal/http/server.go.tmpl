@@ -12,6 +12,9 @@ import (
 	"github.com/goforj/web"
 	"github.com/goforj/web/adapter/echoweb"
 	"github.com/goforj/web/webmiddleware"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"net"
 	"net/http"
@@ -177,9 +180,6 @@ func (s *Server) Log(r web.Context, v webmiddleware.RequestLoggerValues) error {
 		s.metrics.RecordHTTPRequest(r, v.Status, v.Latency)
 	}
 {{- end }}
-	if s.inspectEnabled && s.inspectManager != nil && !isInternalDevwatch {
-		s.inspectManager.Finish(r.Context(), httpInspectStatus(v.Status, v.Error), v.Error)
-	}
 	if !s.httpAccessLogs {
 		return nil
 	}
@@ -441,11 +441,12 @@ func (s *Server) routerMounts() []web.RouterMount {
 
 // mountRuntimeMiddleware activates only middleware backed by dependencies enabled for this App.
 func (s *Server) mountRuntimeMiddleware(router web.Router) error {
-	if s.inspectEnabled {
-		router.Use(s.inspectContextMiddleware())
-	} else {
-		router.Use(s.sourceContextMiddleware(runtime.SourceHTTP))
-	}
+ if s.inspectEnabled {
+  router.Use(s.inspectContextMiddleware())
+ } else {
+  router.Use(s.sourceContextMiddleware(runtime.SourceHTTP))
+  if s.inspectManager.TracingEnabled() { router.Use(s.inspectContextMiddleware()) }
+ }
 {{- if .ProjectComponents.Metrics }}
 	if s.metrics != nil && s.metrics.HTTPEnabled() {
 		router.Use(s.metrics.HTTPMiddleware())
@@ -458,8 +459,7 @@ func (s *Server) mountRuntimeMiddleware(router web.Router) error {
 		}))
 	}
 	if s.inspectEnabled {
-		// Body dump must unwind before request logging so the captured
-		// http_exchange event is recorded before Log() finalizes the inspect.
+		// Rich capture completes inside the execution middleware before the shared span ends.
 		router.Use(s.captureHTTPExchange())
 	}
 	router.Use(s.maintenanceMode())
@@ -476,7 +476,7 @@ func (s *Server) captureHTTPExchange() web.Middleware {
 			if strings.Contains(strings.ToLower(r.Header("Upgrade")), "websocket") {
 				return next(r)
 			}
-			if inspects.RecorderFromContext(r.Context()) == nil {
+			if !s.inspectManager.Capturing(r.Context()) {
 				return next(r)
 			}
 
@@ -503,9 +503,6 @@ func (s *Server) captureHTTPExchange() web.Middleware {
 
 			err := next(r)
 			s.recordHTTPExchange(ctx, r, req, writer, reqBody, writer.Body())
-			if !s.httpAccessLogs && s.inspectManager != nil {
-				s.inspectManager.Finish(r.Context(), httpInspectStatus(r.StatusCode(), err), err)
-			}
 			return err
 		}
 	}
@@ -614,18 +611,84 @@ func (s *Server) sourceContextMiddleware(source runtime.Source) web.Middleware {
 	}
 }
 
+// inspectContextMiddleware owns the HTTP span independently from optional rich request capture.
 func (s *Server) inspectContextMiddleware() web.Middleware {
 	return func(next web.Handler) web.Handler {
 		return func(r web.Context) error {
-			if s.inspectManager == nil || !s.inspectManager.CaptureAllowed() {
+			if !s.inspectManager.TracingEnabled() {
 				return next(r)
 			}
-			path, _, _ := strings.Cut(r.URI(), "?")
-			name := r.Method() + " " + path
-			web.BindContext(r, s.inspectManager.BeginHTTP(r.Context(), name))
-			return next(r)
+			if strings.HasPrefix(r.URI(), "/lighthouse/") || r.Path() == "/metrics" {
+				return next(r)
+			}
+			return s.traceHTTPExecution(r, next)
 		}
 	}
+}
+
+// traceHTTPExecution keeps SDK setup and deferred cleanup out of the inactive middleware stack frame.
+func (s *Server) traceHTTPExecution(r web.Context, next web.Handler) error {
+	ctx := r.Context()
+	source := runtime.SourceFromContext(ctx)
+	if req := web.RawRequest(r); req != nil {
+		ctx = (propagation.TraceContext{}).Extract(ctx, propagation.HeaderCarrier(req.Header))
+	}
+	if source != "" {
+		ctx = runtime.WithSource(ctx, source)
+	}
+	route := r.Path()
+	name := r.Method()
+	if route != "" {
+		name += " " + route
+	}
+	ctx = s.inspectManager.BeginHTTP(ctx, name)
+	web.BindContext(r, ctx)
+	span := trace.SpanFromContext(ctx)
+	method := r.Method()
+	var err error
+	defer func() {
+		panicValue := recover()
+		if panicValue != nil {
+			err = fmt.Errorf("HTTP handler panic: %v", panicValue)
+		}
+		status := httpSpanStatus(r.Response().Committed(), r.StatusCode(), err)
+		// Finalize HTTP attributes together to avoid repeatedly growing the SDK's attribute slice.
+		if route == "" {
+			span.SetAttributes(attribute.String("http.request.method", method), attribute.Int("http.response.status_code", status))
+		} else {
+			span.SetAttributes(attribute.String("http.request.method", method), attribute.String("http.route", route), attribute.Int("http.response.status_code", status))
+		}
+		spanErr := err
+		if panicValue == nil && status >= 400 && status < 500 {
+			spanErr = nil
+		}
+		s.inspectManager.Finish(ctx, httpInspectStatus(status, spanErr), spanErr)
+		if panicValue != nil {
+			panic(panicValue)
+		}
+	}()
+	err = next(r)
+	return err
+}
+
+// httpSpanStatus resolves the eventual response before the adapter renders a returned handler error.
+func httpSpanStatus(committed bool, status int, err error) int {
+	if committed && status > 0 {
+		return status
+	}
+	if err != nil {
+		var statusError interface{ StatusCode() int }
+		if errors.As(err, &statusError) {
+			if code := statusError.StatusCode(); code >= 400 && code <= 599 {
+				return code
+			}
+		}
+		return http.StatusInternalServerError
+	}
+	if status > 0 {
+		return status
+	}
+	return http.StatusOK
 }
 
 func httpInspectStatus(status int, err error) string {
@@ -694,8 +757,7 @@ func httpBodyForInspectWithOptions(contentType string, body []byte, redact bool)
 	return string(body)
 }
 
-// httpBodyForInspectFastPath handles the common lower-case JSON/form cases
-// without paying the generic content-type normalization and inspectability path.
+// httpBodyForInspectFastPath avoids generic content-type normalization for common text, JSON, and form responses.
 func httpBodyForInspectFastPath(contentType string, body []byte, redact bool, maxBodyBytes int) (string, bool) {
 	if len(body) == 0 {
 		return "", true
@@ -705,6 +767,8 @@ func httpBodyForInspectFastPath(contentType string, body []byte, redact bool, ma
 		return "", true
 	}
 	switch {
+	case contentType == "text/plain" || contentType == "text/plain; charset=UTF-8" || contentType == "text/plain; charset=utf-8":
+		return formatInspectBodyString(bytes.TrimSpace(body), maxBodyBytes), true
 	case hasCommonJSONInspectContentType(contentType):
 		if redact && mayContainSensitiveJSONInspectField(body) {
 			body = redactJSONBodyForInspect(body)

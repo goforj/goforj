@@ -103,8 +103,9 @@ func BenchmarkHTTPRequestInspectModes(b *testing.B) {
 func newInspectBenchmarkServer(b *testing.B, inspectEnabled bool, handler func(web.Context) error) http.Handler {
 	b.Helper()
 	b.Setenv("HTTP_ACCESS_LOG_ENABLED", "false")
+ b.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "false")
 
-	var inspectManager *inspects.Manager
+	inspectManager := inspects.NewManager()
 	if inspectEnabled {
 		b.Setenv("LIGHTHOUSE_ENABLED", "true")
 		b.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")

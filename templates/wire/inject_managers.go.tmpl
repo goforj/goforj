@@ -4,6 +4,8 @@
 package wire
 
 import (
+	"context"
+	"{{.GoModuleName}}/internal/runtime"
 	"github.com/goforj/wire"
 
 {{- if .Components.Cache }}
@@ -90,8 +92,18 @@ func provideCacheManager(
 {{- end }}
 
 // provideInspectManager owns process-local inspect history independently from App Cache.
-func provideInspectManager() *inspects.Manager {
-	return inspects.NewManager()
+func provideInspectManager(timeouts *runtime.Timeouts) (*inspects.Manager, func(), error) {
+	manager := inspects.NewManager()
+	cleanup := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), timeouts.ShutdownTimeout())
+		defer cancel()
+		_ = manager.Shutdown(ctx)
+	}
+	if err := manager.ConfigureTelemetry(context.Background()); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return manager, cleanup, nil
 }
 
 {{ if .Components.Events }}

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"{{.GoModuleName}}/internal/lighthouse"
 	"{{.GoModuleName}}/internal/logger"
+ "{{.GoModuleName}}/internal/inspects"
 	"{{.GoModuleName}}/internal/maintenance"
 {{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
@@ -300,7 +301,7 @@ func newMaintenanceTestServerWithGroups(t *testing.T, groups []web.RouteGroup, c
 {{- if .ProjectComponents.Storage }}
 		nil,
 {{- end }}
-		nil,
+		inspects.NewManager(),
 {{- if .ProjectComponents.Metrics }}
 		metrics.NewManager(),
 {{- end }}

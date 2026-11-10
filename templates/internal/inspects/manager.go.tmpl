@@ -14,6 +14,8 @@ import (
 
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str/v2"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"{{.GoModuleName}}/internal/runtime"
 )
 
@@ -146,6 +148,36 @@ func (c *inspectContext) Value(key any) any {
 	}
 }
 
+// unrecordedInspectContext isolates skipped executions from their parent's recorder while preserving propagation.
+type unrecordedInspectContext struct {
+	context.Context
+	source runtime.Source
+}
+
+// AppSource preserves the runtime identity across the standard SDK context wrapper.
+func (c unrecordedInspectContext) AppSource() runtime.Source { return c.source }
+
+// InspectRecorder prevents a skipped nested execution from completing its parent.
+func (c unrecordedInspectContext) InspectRecorder() *Recorder { return nil }
+
+// Value hides inspect lookup state while forwarding application values and the SDK span.
+func (c unrecordedInspectContext) Value(key any) any {
+	switch key {
+	case recorderContextKey{}, inspectIDContextKey{}:
+		return nil
+	default:
+		return c.Context.Value(key)
+	}
+}
+
+// withoutInspectRecorder keeps the common inactive path allocation-free and isolates nested execution boundaries.
+func withoutInspectRecorder(ctx context.Context, source runtime.Source) context.Context {
+	if RecorderFromContext(ctx) == nil {
+		return ctx
+	}
+	return unrecordedInspectContext{Context: ctx, source: source}
+}
+
 type recorderContextProvider interface {
 	InspectRecorder() *Recorder
 }
@@ -201,33 +233,38 @@ type Config struct {
 
 // InspectSummary is the list-friendly view of an inspect record.
 type InspectSummary struct {
-	TraceID     string            `json:"trace_id"`
-	Source      string            `json:"source"`
-	App         string            `json:"app,omitempty"`
-	AgentKey    string            `json:"agent_key,omitempty"`
-	GroupKey    string            `json:"group_key,omitempty"`
-	InstanceKey string            `json:"instance_key,omitempty"`
-	Name        string            `json:"name"`
-	Status      string            `json:"status"`
-	StartedAt   time.Time         `json:"started_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
-	EndedAt     time.Time         `json:"ended_at,omitempty"`
-	DurationMS  int64             `json:"duration_ms,omitempty"`
-	EventCount  int               `json:"event_count"`
-	Labels      map[string]string `json:"labels,omitempty"`
+	TraceID      string            `json:"trace_id"`
+	OTelTraceID  string            `json:"otel_trace_id,omitempty"`
+	SpanID       string            `json:"span_id,omitempty"`
+	ParentSpanID string            `json:"parent_span_id,omitempty"`
+	Source       string            `json:"source"`
+	App          string            `json:"app,omitempty"`
+	AgentKey     string            `json:"agent_key,omitempty"`
+	GroupKey     string            `json:"group_key,omitempty"`
+	InstanceKey  string            `json:"instance_key,omitempty"`
+	Name         string            `json:"name"`
+	Status       string            `json:"status"`
+	StartedAt    time.Time         `json:"started_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+	EndedAt      time.Time         `json:"ended_at,omitempty"`
+	DurationMS   int64             `json:"duration_ms,omitempty"`
+	EventCount   int               `json:"event_count"`
+	Labels       map[string]string `json:"labels,omitempty"`
 }
 
 // InspectEvent is a normalized event captured within an inspect.
 type InspectEvent struct {
-	Seq        int64          `json:"seq"`
-	At         time.Time      `json:"at"`
-	Kind       EventKind      `json:"kind"`
-	Level      string         `json:"level,omitempty"`
-	Name       string         `json:"name,omitempty"`
-	Message    string         `json:"message,omitempty"`
-	Status     string         `json:"status,omitempty"`
-	HTTP       *HTTPExchange  `json:"http,omitempty"`
-	Attributes map[string]any `json:"attributes,omitempty"`
+	Seq          int64          `json:"seq"`
+	SpanID       string         `json:"span_id,omitempty"`
+	ParentSpanID string         `json:"parent_span_id,omitempty"`
+	At           time.Time      `json:"at"`
+	Kind         EventKind      `json:"kind"`
+	Level        string         `json:"level,omitempty"`
+	Name         string         `json:"name,omitempty"`
+	Message      string         `json:"message,omitempty"`
+	Status       string         `json:"status,omitempty"`
+	HTTP         *HTTPExchange  `json:"http,omitempty"`
+	Attributes   map[string]any `json:"attributes,omitempty"`
 }
 
 type HTTPHeader struct {
@@ -280,6 +317,7 @@ type Manager struct {
 	inflightMu    sync.RWMutex
 	inflight      map[string]*inflightInspect
 	inflightCount atomic.Int64
+	tracing       *tracingState
 }
 
 var httpHeaderBufferPool = sync.Pool{
@@ -314,14 +352,17 @@ var inflightInspectPool = sync.Pool{
 
 // Recorder is the lightweight execution-scoped inspect handle.
 type Recorder struct {
-	manager   *Manager
-	inspectID string
-	state     *inflightInspect
-	source    runtime.Source
-	name      string
-	labels    map[string]string
-	once      sync.Once
-	owner     *inspectContext
+	projectionMu   sync.Mutex
+	childSpan      spanIdentity // childSpan and childSpans share the tracing ownership lock.
+	childSpans     map[spanIdentity]struct{}
+	span           trace.Span
+	spanContext    context.Context
+	terminalStatus string
+	terminalError  error
+	manager        *Manager
+	inspectID      string
+	state          *inflightInspect
+	once           sync.Once
 }
 
 var inspectIDSeed = strconv.FormatInt(time.Now().UnixNano(), 36)
@@ -362,13 +403,15 @@ func NewConfig() Config {
 // NewManager creates an inspect manager with bounded process-local history.
 func NewManager() *Manager {
 	config := NewConfig()
-	return &Manager{
+	manager := &Manager{
 		store:    newInspectStore(config.MaxTotal),
 		config:   config,
 		now:      time.Now,
 		sample:   mathrand.Float64,
 		inflight: make(map[string]*inflightInspect),
 	}
+	manager.initTracing()
+	return manager
 }
 
 // Enabled reports whether inspect capture is active.
@@ -466,13 +509,17 @@ func InspectIDFromContext(ctx context.Context) string {
 	return strings.TrimSpace(inspectID)
 }
 
-// WithRecorder binds a recorder handle to ctx.
+// WithRecorder binds the recorder and its execution span while preserving caller values and cancellation.
+// Start application child spans after binding so they inherit this execution.
 func WithRecorder(ctx context.Context, recorder *Recorder) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if recorder == nil {
 		return ctx
+	}
+	if recorder.span != nil {
+		ctx = trace.ContextWithSpan(ctx, recorder.span)
 	}
 	return context.WithValue(ctx, recorderContextKey{}, recorder)
 }
@@ -489,101 +536,55 @@ func RecorderFromContext(ctx context.Context) *Recorder {
 	return recorder
 }
 
-// Begin starts an inspect for the current execution boundary and returns a derived context.
+// Begin starts one OpenTelemetry execution span and optionally captures Lighthouse details.
 func (m *Manager) Begin(ctx context.Context, source runtime.Source, name string, labels map[string]string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if !m.Enabled() {
-		return ctx
+	if !m.TracingEnabled() {
+		return withoutInspectRecorder(ctx, runtime.SourceFromContext(ctx))
 	}
-	if existing := RecorderFromContext(ctx); existing != nil {
-		return ctx
-	}
-	if !m.captureAllowed() {
-		return ctx
-	}
-	if !m.shouldSample() {
-		return ctx
-	}
-	if !m.tryAcquireInflight() {
-		return ctx
-	}
+	previousSource := runtime.SourceFromContext(ctx)
 	if source == "" {
-		source = runtime.SourceFromContext(ctx)
+		source = previousSource
 	}
 	if source == "" {
 		source = runtime.SourceApp
 	}
-	inspectID := newInspectID()
+	name = normalizeInspectName(name)
+	ctx, span := m.tracing.tracer.Start(ctx, name, executionStartOptions(source)...)
+	if !span.IsRecording() {
+		return withoutInspectRecorder(ctx, previousSource)
+	}
 	inspectCtx := acquireInspectContext()
 	inspectCtx.Context = ctx
 	inspectCtx.source = source
 	inspectCtx.recorder = Recorder{
-		manager:   m,
-		inspectID: inspectID,
-		state:     nil,
-		source:    source,
-		name:      normalizeInspectName(name),
-		labels:    labels,
-		owner:     inspectCtx,
+		manager: m, inspectID: newInspectID(), span: span, spanContext: inspectCtx,
 	}
-	inspectCtx.recorder.state = m.beginRecord(&inspectCtx.recorder)
+	if m.Enabled() && m.captureAllowed() && m.shouldSample() && m.tryAcquireInflight() {
+		inspectCtx.recorder.state = m.beginRecord(&inspectCtx.recorder, source, name, labels)
+		m.trackSpan(span.SpanContext(), &inspectCtx.recorder)
+	} else {
+		inspectCtx.source = previousSource
+	}
 	return inspectCtx
 }
 
-// BeginHTTP is the HTTP ingress fast path. It keeps the generic Begin behavior
-// but skips source inference because the caller already knows this boundary is HTTP.
+// BeginHTTP starts an HTTP server span using the same execution contract as other runtimes.
 func (m *Manager) BeginHTTP(ctx context.Context, name string) context.Context {
-	if recorder := m.BeginHTTPRecorder(ctx, name); recorder != nil {
-		return recorder.owner
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return ctx
+	return m.Begin(ctx, runtime.SourceHTTP, name, nil)
 }
 
-// BeginHTTPRecorder starts an HTTP inspect and returns the recorder handle.
+// BeginHTTPRecorder returns the handle for an HTTP execution span when recording is enabled.
 func (m *Manager) BeginHTTPRecorder(ctx context.Context, name string) *Recorder {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if !m.Enabled() {
-		return nil
-	}
-	if existing := RecorderFromContext(ctx); existing != nil {
-		return existing
-	}
-	if !m.captureAllowed() {
-		return nil
-	}
-	if !m.shouldSample() {
-		return nil
-	}
-	if !m.tryAcquireInflight() {
-		return nil
-	}
-	inspectID := newInspectID()
-	inspectCtx := acquireInspectContext()
-	inspectCtx.Context = ctx
-	inspectCtx.source = runtime.SourceHTTP
-	inspectCtx.recorder = Recorder{
-		manager:   m,
-		inspectID: inspectID,
-		state:     nil,
-		source:    runtime.SourceHTTP,
-		name:      normalizeInspectName(name),
-		owner:     inspectCtx,
-	}
-	inspectCtx.recorder.state = m.beginRecord(&inspectCtx.recorder)
-	return &inspectCtx.recorder
+	return RecorderFromContext(m.BeginHTTP(ctx, name))
 }
 
 // Finish finalizes the active inspect in ctx when one exists.
 func (m *Manager) Finish(ctx context.Context, status string, err error) {
 	recorder := RecorderFromContext(ctx)
-	if recorder == nil {
+	if recorder == nil || recorder.manager != m {
 		return
 	}
 	recorder.Finish(status, err)
@@ -687,7 +688,7 @@ func (m *Manager) RecordLog(ctx context.Context, event LogInspectEvent) {
 		Attributes: event.Fields,
 	}
 	if recorder != nil {
-		recorder.RecordEvent(inspectEvent)
+		recorder.recordEvent(ctx, inspectEvent)
 		return
 	}
 	inspectID := InspectIDFromContext(ctx)
@@ -714,7 +715,7 @@ func (m *Manager) RecordCacheEvent(ctx context.Context, event CacheOperationInsp
 	if event.Err != nil {
 		attrs["error"] = event.Err.Error()
 	}
-	recorder.RecordEvent(InspectEvent{
+	recorder.recordEvent(ctx, InspectEvent{
 		Kind:       EventKindCache,
 		Name:       strings.TrimSpace(event.Operation),
 		Status:     statusFromError(event.Err),
@@ -739,7 +740,7 @@ func (m *Manager) RecordStorageEvent(ctx context.Context, event StorageOperation
 	if event.Err != nil {
 		attrs["error"] = event.Err.Error()
 	}
-	recorder.RecordEvent(InspectEvent{
+	recorder.recordEvent(ctx, InspectEvent{
 		Kind:       EventKindStorage,
 		Name:       strings.TrimSpace(event.Operation),
 		Status:     statusFromError(event.Err),
@@ -764,7 +765,7 @@ func (m *Manager) recordEventBusOperation(ctx context.Context, operation, bus, t
 	if err != nil {
 		attrs["error"] = err.Error()
 	}
-	recorder.RecordEvent(InspectEvent{
+	recorder.recordEvent(ctx, InspectEvent{
 		Kind:       EventKindEventBus,
 		Name:       strings.TrimSpace(operation),
 		Status:     statusFromError(err),
@@ -812,7 +813,7 @@ func (m *Manager) RecordMailEvent(ctx context.Context, event MailSendInspectEven
 	if event.Err != nil {
 		attrs["error"] = event.Err.Error()
 	}
-	recorder.RecordEvent(InspectEvent{
+	recorder.recordEvent(ctx, InspectEvent{
 		Kind:       EventKindMail,
 		Name:       strings.TrimSpace(event.Name),
 		Status:     statusFromError(event.Err),
@@ -840,7 +841,7 @@ func (m *Manager) RecordQueueEvent(ctx context.Context, event QueueInspectEvent)
 	if event.Err != nil {
 		attrs["error"] = event.Err.Error()
 	}
-	recorder.RecordEvent(InspectEvent{
+	recorder.recordEvent(ctx, InspectEvent{
 		Kind:       EventKindQueue,
 		Name:       event.Kind,
 		Status:     statusFromError(event.Err),
@@ -868,7 +869,7 @@ func (m *Manager) RecordQueryEvent(ctx context.Context, event DatabaseQueryInspe
 	if event.RowsAffected >= 0 {
 		attrs["rows"] = event.RowsAffected
 	}
-	recorder.RecordEvent(InspectEvent{
+	recorder.recordEvent(ctx, InspectEvent{
 		Kind:       EventKindQuery,
 		Name:       strings.TrimSpace(event.Operation),
 		Status:     strings.TrimSpace(event.Status),
@@ -894,7 +895,7 @@ func (m *Manager) RecordHTTPExchange(ctx context.Context, event HTTPExchangeInsp
 	exchange.ResponseStatus = event.ResponseStatus
 	exchange.ResponseHeaders = adoptHTTPHeaders(exchange.responseHeadersInline[:], event.ResponseHeaders)
 	exchange.ResponseBody = event.ResponseBody
-	recorder.RecordEvent(InspectEvent{
+	recorder.recordEvent(ctx, InspectEvent{
 		Kind:    EventKindHTTP,
 		Name:    "http_exchange",
 		Status:  normalizeStatusFromHTTP(event.ResponseStatus),
@@ -933,7 +934,7 @@ func (m *Manager) RecordHTTPExchangeFromHeaders(
 	exchange.ResponseStatus = responseStatus
 	exchange.ResponseHeaders = buildHTTPHeadersInline(exchange.responseHeadersInline[:], responseHeaders)
 	exchange.ResponseBody = responseBody
-	recorder.RecordEvent(InspectEvent{
+	recorder.recordEvent(ctx, InspectEvent{
 		Kind:    EventKindHTTP,
 		Name:    "http_exchange",
 		Status:  normalizeStatusFromHTTP(responseStatus),
@@ -944,55 +945,76 @@ func (m *Manager) RecordHTTPExchangeFromHeaders(
 
 // RecordEvent appends a normalized inspect event.
 func (r *Recorder) RecordEvent(event InspectEvent) {
-	if r == nil || r.manager == nil || !r.manager.Enabled() {
+	if r == nil {
 		return
 	}
-	if r.state != nil && r.manager.appendEvent(r.state, event) {
-		return
-	}
-	_ = r.manager.recordEventByInspectID(context.Background(), r.inspectID, event)
+	r.recordEvent(r.spanContext, event)
 }
 
-// Finish finalizes the inspect and records terminal error details when present.
-func (r *Recorder) Finish(status string, err error) {
-	if r == nil || r.manager == nil || !r.manager.Enabled() {
+// recordEvent keeps operation spans attached to the caller's active context while enriching Lighthouse locally.
+func (r *Recorder) recordEvent(ctx context.Context, event InspectEvent) {
+	if r == nil {
 		return
 	}
-	shouldRelease := false
-	r.once.Do(func() {
-		if r.state != nil {
-			_ = r.manager.finishState(context.Background(), r.inspectID, r.state, normalizeStatus(status, err), err)
-			r.state = nil
-			shouldRelease = true
-			return
+	var identity trace.SpanContext
+	if r.span != nil {
+		identity = r.recordTelemetryEvent(ctx, event)
+	}
+	r.projectionMu.Lock()
+	defer r.projectionMu.Unlock()
+	if r.state != nil {
+		if identity.IsValid() && identity.TraceID() != r.span.SpanContext().TraceID() {
+			event.SpanID = ""
+			event.ParentSpanID = ""
+		} else if identity.IsValid() {
+			if event.Kind == EventKindHTTP {
+				event.SpanID = r.state.record.Summary.SpanID
+			} else {
+				event.SpanID = identity.SpanID().String()
+			}
 		}
-		_ = r.manager.finishRecord(context.Background(), r.inspectID, normalizeStatus(status, err), err)
-		shouldRelease = true
-	})
-	if shouldRelease {
-		r.releaseOwner()
+		r.manager.appendEvent(r.state, event)
 	}
 }
 
-func (r *Recorder) releaseOwner() {
-	if r == nil || r.owner == nil {
+// Finish ends the shared execution span; the Lighthouse processor projects its final state.
+func (r *Recorder) Finish(status string, err error) {
+	if r == nil {
 		return
 	}
-	releaseInspectContext(r.owner)
-	r.owner = nil
+	r.once.Do(func() {
+		terminalStatus := normalizeStatus(status, err)
+		r.projectionMu.Lock()
+		r.terminalStatus = terminalStatus
+		r.terminalError = err
+		r.projectionMu.Unlock()
+		if r.span != nil {
+			if err != nil {
+				r.recordFrameworkError(err)
+			}
+			if terminalStatus == statusError || (terminalStatus == statusCanceled && err != nil) {
+				r.span.SetStatus(codes.Error, terminalStatus)
+			}
+			r.span.End()
+		}
+	})
 }
 
-func (m *Manager) beginRecord(recorder *Recorder) *inflightInspect {
+// beginRecord materializes capture-only metadata without retaining construction inputs on the recorder.
+func (m *Manager) beginRecord(recorder *Recorder, source runtime.Source, name string, labels map[string]string) *inflightInspect {
 	now := m.now()
+	spanContext := recorder.span.SpanContext()
 	record := Record{
 		Summary: InspectSummary{
-			TraceID:   recorder.inspectID,
-			Source:    recorder.source.String(),
-			Name:      recorder.name,
-			Status:    statusRunning,
-			StartedAt: now,
-			UpdatedAt: now,
-			Labels:    cloneStringMap(recorder.labels),
+			TraceID:     recorder.inspectID,
+			OTelTraceID: spanContext.TraceID().String(),
+			SpanID:      spanContext.SpanID().String(),
+			Source:      source.String(),
+			Name:        name,
+			Status:      statusRunning,
+			StartedAt:   now,
+			UpdatedAt:   now,
+			Labels:      cloneStringMap(labels),
 		},
 		Events: nil,
 	}
@@ -1004,7 +1026,7 @@ func (m *Manager) beginRecord(recorder *Recorder) *inflightInspect {
 	state.eventLen = 0
 	state.maxEvents = m.config.MaxEvents
 	state.finished = false
-	state.indexed = recorder.source != runtime.SourceHTTP
+	state.indexed = source != runtime.SourceHTTP
 	if state.indexed {
 		m.inflightMu.Lock()
 		m.inflight[recorder.inspectID] = state
@@ -1024,10 +1046,11 @@ func (m *Manager) recordEventByInspectID(ctx context.Context, inspectID string, 
 	return nil
 }
 
+// appendEventToInflight pins the indexed state until appending ends so completion cannot recycle it concurrently.
 func (m *Manager) appendEventToInflight(inspectID string, event InspectEvent) bool {
 	m.inflightMu.RLock()
+	defer m.inflightMu.RUnlock()
 	state := m.inflight[inspectID]
-	m.inflightMu.RUnlock()
 	if state == nil {
 		return false
 	}
@@ -1064,7 +1087,13 @@ func (m *Manager) finishRecord(ctx context.Context, inspectID, status string, er
 	return m.finishState(ctx, inspectID, state, status, err)
 }
 
+// finishState uses the local clock for callers finalizing a retained capture directly.
 func (m *Manager) finishState(ctx context.Context, inspectID string, state *inflightInspect, status string, err error) error {
+	return m.finishStateAt(ctx, inspectID, state, status, err, m.now())
+}
+
+// finishStateAt preserves the authoritative SDK end timestamp when projecting a span.
+func (m *Manager) finishStateAt(ctx context.Context, inspectID string, state *inflightInspect, status string, err error, endedAt time.Time) error {
 	state.mu.Lock()
 	if state.finished {
 		state.mu.Unlock()
@@ -1085,14 +1114,14 @@ func (m *Manager) finishState(ctx context.Context, inspectID string, state *infl
 			state.record.Events = state.record.Events[:m.config.MaxEvents]
 		}
 	}
-	now := m.now()
+	now := endedAt
 	state.record.Summary.Status = normalizeStatus(status, err)
 	state.record.Summary.UpdatedAt = now
 	state.record.Summary.EndedAt = now
 	state.record.Summary.DurationMS = maxInt64(0, now.Sub(state.record.Summary.StartedAt).Milliseconds())
 	record := materializeInflightRecord(state)
-	persistErr := m.persistFinishedRecord(ctx, record)
 	state.mu.Unlock()
+	persistErr := m.persistFinishedRecord(ctx, record)
 	if persistErr != nil {
 		return persistErr
 	}
@@ -1443,11 +1472,9 @@ func releaseInflightInspect(state *inflightInspect) {
 	inflightInspectPool.Put(state)
 }
 
+// acquireInspectContext preserves distinct lifetimes because downstream spans may retain completed contexts.
 func acquireInspectContext() *inspectContext {
 	return &inspectContext{}
-}
-
-func releaseInspectContext(inspectCtx *inspectContext) {
 }
 
 func acquireHTTPHeaders(capHint int) []HTTPHeader {
@@ -1556,8 +1583,30 @@ func appendHTTPHeaders(out []HTTPHeader, headers http.Header) []HTTPHeader {
 	return out
 }
 
-// sensitiveHTTPHeaderForInspect prevents authentication material from entering persisted or published diagnostics.
+// sensitiveHTTPHeaderForInspect redacts credential segments without allocating normalized ASCII header names.
 func sensitiveHTTPHeaderForInspect(name string) bool {
+	start := 0
+	for end := 0; end <= len(name); end++ {
+		if end < len(name) {
+			if name[end] >= 128 {
+				return sensitiveUnicodeHTTPHeaderForInspect(name)
+			}
+			if name[end] != '-' && name[end] != '_' {
+				continue
+			}
+		}
+		for _, sensitive := range [...]string{"authorization", "authentication", "cookie", "key", "password", "secret", "token"} {
+			if strings.EqualFold(name[start:end], sensitive) {
+				return true
+			}
+		}
+		start = end + 1
+	}
+	return false
+}
+
+// sensitiveUnicodeHTTPHeaderForInspect preserves normalization for non-ASCII names supplied outside normal HTTP parsing.
+func sensitiveUnicodeHTTPHeaderForInspect(name string) bool {
 	for _, segment := range strings.FieldsFunc(strings.ToLower(name), func(character rune) bool {
 		return character == '-' || character == '_'
 	}) {

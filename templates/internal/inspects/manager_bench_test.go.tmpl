@@ -3,9 +3,13 @@ package inspects
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 	"{{.GoModuleName}}/internal/runtime"
 )
 
@@ -128,4 +132,159 @@ func benchmarkEvent(seq int) InspectEvent {
 			},
 		}
 	}
+}
+
+// BenchmarkTelemetryCleanupWithActiveCaptures measures whether unrelated open requests increase execution completion cost.
+func BenchmarkTelemetryCleanupWithActiveCaptures(b *testing.B) {
+	for _, active := range []int{0, 128, 1024} {
+		for _, children := range []int{0, 4} {
+			b.Run(fmt.Sprintf("active_%d/children_%d", active, children), func(b *testing.B) {
+				manager := newBenchmarkManager(b)
+				manager.config.MaxInflight = active + 1
+				manager.SetPublishOnly(true)
+				for range active {
+					ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "held", nil)
+					if !manager.Capturing(ctx) {
+						b.Fatal("held request did not capture")
+					}
+					b.Cleanup(func() { manager.Finish(ctx, "ok", nil) })
+				}
+				tracer := manager.TracerProvider().Tracer("app")
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "request", nil)
+					for range children {
+						_, child := tracer.Start(ctx, "child")
+						child.End()
+					}
+					manager.Finish(ctx, "ok", nil)
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkTelemetryNativeChildProjection isolates attributed child projection from HTTP dispatch and network export.
+func BenchmarkTelemetryNativeChildProjection(b *testing.B) {
+	for _, mode := range []string{"capture", "external_only"} {
+		b.Run(mode, func(b *testing.B) {
+			for _, attributeCount := range []int{0, 4, 16} {
+				b.Run(fmt.Sprintf("attrs_%d", attributeCount), func(b *testing.B) {
+					manager, exporter := newTelemetryProjectionBenchmarkManager(b, mode)
+					tracer := manager.TracerProvider().Tracer("benchmark/native")
+					attributes := make([]attribute.KeyValue, attributeCount)
+					for index := range attributes {
+						attributes[index] = attribute.String(fmt.Sprintf("benchmark.attribute.%d", index), "value")
+					}
+					var options []trace.SpanStartOption
+					if len(attributes) > 0 {
+						options = []trace.SpanStartOption{trace.WithAttributes(attributes...)}
+					}
+					runTelemetryProjectionBenchmark(b, manager, exporter, 2, func(ctx context.Context) {
+						_, child := tracer.Start(ctx, "native child", options...)
+						child.End()
+					})
+				})
+			}
+		})
+	}
+}
+
+// BenchmarkTelemetryOperationProjection measures the complete framework observation path with bounded local delivery.
+func BenchmarkTelemetryOperationProjection(b *testing.B) {
+	for _, mode := range []string{"capture", "external_only"} {
+		b.Run(mode, func(b *testing.B) {
+			for _, operation := range []string{"cache", "storage", "query", "mixed"} {
+				b.Run(operation, func(b *testing.B) {
+					manager, exporter := newTelemetryProjectionBenchmarkManager(b, mode)
+					cache := CacheOperationInspectEvent{Name: "users", Operation: "get", Key: "user:42", Driver: "memory", Hit: true, Duration: time.Millisecond}
+					storage := StorageOperationInspectEvent{Operation: "read", Disk: "local", Path: "example.txt", Driver: "local", Duration: time.Millisecond}
+					query := DatabaseQueryInspectEvent{Connection: "default", Driver: "postgres", Operation: "select", Target: "users", Status: statusOK, Fingerprint: "benchmark", Shape: "select id from users where id = ?", RawSQL: "select id from users where id = 42", RowsAffected: 1, Duration: time.Millisecond}
+					spansPerExecution := uint64(2)
+					if operation == "mixed" {
+						spansPerExecution = 4
+					}
+					runTelemetryProjectionBenchmark(b, manager, exporter, spansPerExecution, func(ctx context.Context) {
+						if operation == "cache" || operation == "mixed" {
+							manager.RecordCacheEvent(ctx, cache)
+						}
+						if operation == "storage" || operation == "mixed" {
+							manager.RecordStorageEvent(ctx, storage)
+						}
+						if operation == "query" || operation == "mixed" {
+							manager.RecordQueryEvent(ctx, query)
+						}
+					})
+				})
+			}
+		})
+	}
+}
+
+// telemetryBenchmarkExporter counts synchronous SDK delivery without retaining span snapshots.
+type telemetryBenchmarkExporter struct {
+	spans atomic.Uint64
+}
+
+// ExportSpans counts delivered spans so the benchmark can reject missing telemetry outside its timer.
+func (e *telemetryBenchmarkExporter) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
+	e.spans.Add(uint64(len(spans)))
+	return nil
+}
+
+// Shutdown has no resources to release because this sink neither buffers nor opens connections.
+func (e *telemetryBenchmarkExporter) Shutdown(context.Context) error {
+	return nil
+}
+
+// newTelemetryProjectionBenchmarkManager keeps both modes sampled while disabling local history and network exporters.
+func newTelemetryProjectionBenchmarkManager(b *testing.B, mode string) (*Manager, *telemetryBenchmarkExporter) {
+	b.Helper()
+	b.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	b.Setenv("LIGHTHOUSE_INSPECT_MAX_TOTAL", "1")
+	b.Setenv("LIGHTHOUSE_INSPECT_MAX_EVENTS", "256")
+	b.Setenv("LIGHTHOUSE_INSPECT_SAMPLE_RATE", "1")
+	manager := NewManager()
+	manager.SetPublishOnly(true)
+	if mode == "external_only" {
+		// The provider already uses always-on sampling; only Lighthouse projection changes between modes.
+		manager.config.Enabled = false
+		manager.tracing.external = true
+	}
+	exporter := &telemetryBenchmarkExporter{}
+	manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+	b.Cleanup(func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			b.Fatal(err)
+		}
+	})
+	return manager, exporter
+}
+
+// runTelemetryProjectionBenchmark separates warm execution costs from setup and verifies lossless in-process SDK delivery.
+func runTelemetryProjectionBenchmark(b *testing.B, manager *Manager, exporter *telemetryBenchmarkExporter, spansPerExecution uint64, observe func(context.Context)) {
+	b.Helper()
+	warm := manager.Begin(context.Background(), runtime.SourceHTTP, "benchmark request", nil)
+	if manager.Capturing(warm) != manager.config.Enabled {
+		b.Fatal("projection benchmark capture mode was not applied")
+	}
+	observe(warm)
+	manager.Finish(warm, statusOK, nil)
+	if got := exporter.spans.Load(); got != spansPerExecution {
+		b.Fatalf("warm execution delivered %d spans, want %d", got, spansPerExecution)
+	}
+	exporter.spans.Store(0)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		ctx := manager.Begin(context.Background(), runtime.SourceHTTP, "benchmark request", nil)
+		observe(ctx)
+		manager.Finish(ctx, statusOK, nil)
+	}
+	b.StopTimer()
+	if got, want := exporter.spans.Load(), uint64(b.N)*spansPerExecution; got != want {
+		b.Fatalf("measured executions delivered %d spans, want %d", got, want)
+	}
+	b.ReportMetric(float64(spansPerExecution), "spans/op")
 }

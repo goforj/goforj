@@ -192,7 +192,7 @@ func TestManagerRespectsMaxInflight(t *testing.T) {
 	}
 
 	second := manager.Begin(context.Background(), "http", "second", nil)
-	if RecorderFromContext(second) != nil {
+	if manager.Capturing(second) {
 		t.Fatal("expected second inspect to be rejected by max inflight")
 	}
 }
@@ -204,7 +204,7 @@ func TestManagerRespectsSampleRate(t *testing.T) {
 	manager := NewManager()
 
 	manager.config.SampleRate = 0
-	if recorder := RecorderFromContext(manager.Begin(context.Background(), "http", "sampled-out", nil)); recorder != nil {
+	if manager.Capturing(manager.Begin(context.Background(), "http", "sampled-out", nil)) {
 		t.Fatal("expected inspect to be skipped when sample rate is 0")
 	}
 
@@ -355,8 +355,8 @@ func TestManagerCaptureGateSkipsNewInspect(t *testing.T) {
 	})
 
 	inactive := manager.Begin(context.Background(), "http", "request", nil)
-	if recorder := RecorderFromContext(inactive); recorder != nil {
-		t.Fatalf("expected inactive capture gate to skip recorder, got %q", recorder.InspectID())
+	if manager.Capturing(inactive) {
+		t.Fatal("expected inactive capture gate to skip rich capture")
 	}
 
 	active = true
@@ -669,13 +669,11 @@ func TestBeginHTTPStartsHTTPInspect(t *testing.T) {
 	if recorder == nil {
 		t.Fatal("expected recorder")
 	}
-	if recorder.source != runtime.SourceHTTP {
-		t.Fatalf("expected source http, got %q", recorder.source)
-	}
-	if recorder.name != "GET /-/health" {
-		t.Fatalf("expected normalized name, got %q", recorder.name)
-	}
 	manager.Finish(ctx, statusOK, nil)
+	record, ok, err := manager.ByID(context.Background(), recorder.InspectID())
+	if err != nil || !ok || record.Summary.Source != runtime.SourceHTTP.String() || record.Summary.Name != "GET /-/health" {
+		t.Fatalf("HTTP execution metadata changed: %+v, %v", record.Summary, err)
+	}
 }
 
 func TestInspectPerformanceBudget(t *testing.T) {
@@ -691,5 +689,33 @@ func TestInspectPerformanceBudget(t *testing.T) {
 	}
 	if bytes := result.AllocedBytesPerOp(); bytes > 200_000 {
 		t.Fatalf("inspect begin/finish bytes budget exceeded: got %d want <=200000", bytes)
+	}
+}
+
+// TestSensitiveHTTPHeaderSegments preserves credential redaction, separators, and Unicode normalization on the allocation-free ASCII path.
+func TestSensitiveHTTPHeaderSegments(t *testing.T) {
+	for _, item := range []struct {
+		name string
+		want bool
+	}{
+		{"", false}, {"Content-Type", false}, {"X-Request-ID", false},
+		{"AUTHORIZATION", true}, {"x_AUTHENTICATION", true}, {"Set-Cookie", true},
+		{"X--Api__Key", true}, {"Password-Policy", true}, {"X-SECRET", true}, {"X-Token", true},
+		{"--__", false}, {"X-Monkey", false}, {"Tokenization", false},
+		{"X-Key", true}, {"Authentİcation", true}, {"X-ſecret", false},
+		{"X-値", false}, {"X-値-Token", true}, {"X-\xff-Key", true},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			if got := sensitiveHTTPHeaderForInspect(item.name); got != item.want {
+				t.Fatalf("sensitiveHTTPHeaderForInspect(%q) = %t, want %t", item.name, got, item.want)
+			}
+		})
+	}
+	if got := testing.AllocsPerRun(100, func() {
+		if sensitiveHTTPHeaderForInspect("Content-Type") || !sensitiveHTTPHeaderForInspect("X-Api-Key") {
+			t.Fatal("header classification changed")
+		}
+	}); got != 0 {
+		t.Fatalf("ASCII header classification allocated %g times", got)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"{{.GoModuleName}}/internal/runtime"
 	"{{.GoModuleName}}/internal/logger"
+ "{{.GoModuleName}}/internal/inspects"
 {{- if .ProjectComponents.Metrics }}
 	"{{.GoModuleName}}/internal/metrics"
 {{- end }}
@@ -19,7 +20,7 @@ import (
 func TestHealthAndReadinessEndpoints(t *testing.T) {
 	t.Setenv("APP_DIAG_TOKEN", "diag-token")
 
-	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} nil{{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
+	s := NewServer(logger.NewSilentLogger(), runtime.NewTimeouts(), nil, []ReadinessCheck{}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} inspects.NewManager(){{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 
@@ -59,7 +60,7 @@ func TestReadinessEndpointsReturn503WhenDependencyFails(t *testing.T) {
 					return errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
 				},
 			},
-		}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} nil{{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
+		}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} inspects.NewManager(){{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 
@@ -87,7 +88,7 @@ func TestReadinessFullReturnsErrorsWhenAuthorized(t *testing.T) {
 					return errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
 				},
 			},
-		}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} nil{{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
+		}, nil, newTestMaintenanceState(t),{{- if .ProjectComponents.Storage }} nil,{{- end }} inspects.NewManager(){{- if .ProjectComponents.Metrics }}, metrics.NewManager(){{- end }})
 	e, err := s.bootstrap("")
 	assert.NoError(t, err)
 

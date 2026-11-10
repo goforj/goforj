@@ -20,11 +20,14 @@ import (
 )
 
 type renderedTraceSummary struct {
-	TraceID string            `json:"trace_id"`
-	Source  string            `json:"source"`
-	Name    string            `json:"name"`
-	Status  string            `json:"status"`
-	Labels  map[string]string `json:"labels"`
+	TraceID      string            `json:"trace_id"`
+	OTelTraceID  string            `json:"otel_trace_id"`
+	SpanID       string            `json:"span_id"`
+	ParentSpanID string            `json:"parent_span_id"`
+	Source       string            `json:"source"`
+	Name         string            `json:"name"`
+	Status       string            `json:"status"`
+	Labels       map[string]string `json:"labels"`
 }
 
 type renderedAgentInfo struct {
@@ -111,7 +114,12 @@ func TestRenderedLighthouseTraceEndpoints(t *testing.T) {
 	defer consoleConn.Close()
 	time.Sleep(200 * time.Millisecond)
 
-	helloResp, err := http.Get(baseURL + "/api/v1/hello")
+	helloReq, err := http.NewRequest(http.MethodGet, baseURL+"/api/v1/hello", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	helloReq.Header.Set("traceparent", "00-01000000000000000000000000000000-0200000000000000-01")
+	helloResp, err := http.DefaultClient.Do(helloReq)
 	if err != nil {
 		t.Fatalf("get hello endpoint: %v\n%s", err, handle.Output())
 	}
@@ -129,6 +137,9 @@ func TestRenderedLighthouseTraceEndpoints(t *testing.T) {
 				record := fetchRenderedTraceRecord(t, baseURL, token, summary.TraceID)
 				if record.Summary.TraceID != summary.TraceID {
 					t.Fatalf("trace detail id = %q, want %q", record.Summary.TraceID, summary.TraceID)
+				}
+				if record.Summary.OTelTraceID != "01000000000000000000000000000000" || record.Summary.ParentSpanID != "0200000000000000" || len(record.Summary.SpanID) != 16 {
+					t.Fatalf("Lighthouse transport lost OTel identity: %+v", record.Summary)
 				}
 				if record.Summary.Source != "http" {
 					t.Fatalf("trace detail source = %q, want %q", record.Summary.Source, "http")

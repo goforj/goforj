@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,12 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/runtime"
 	"github.com/goforj/web"
+	"github.com/goforj/web/webtest"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"fmt"
+	"strings"
 )
 
 func TestHTTPInspectCapturesChildEvents(t *testing.T) {
@@ -54,7 +61,9 @@ func TestHTTPInspectCapturesChildEvents(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/probe", nil))
+	request := httptest.NewRequest(http.MethodGet, "/probe", nil)
+ request.Header.Set("traceparent", "00-01000000000000000000000000000000-0200000000000000-01")
+ handler.ServeHTTP(rec, request)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
@@ -73,7 +82,10 @@ func TestHTTPInspectCapturesChildEvents(t *testing.T) {
 	if !ok {
 		t.Fatalf("inspect %q not found", recent[0].TraceID)
 	}
-	if len(record.Events) != 2 {
+	if record.Summary.OTelTraceID != "01000000000000000000000000000000" || record.Summary.ParentSpanID != "0200000000000000" {
+  t.Fatalf("incoming W3C trace context not preserved: %+v", record.Summary)
+ }
+ if len(record.Events) != 2 {
 		t.Fatalf("event count = %d, want 2: %#v", len(record.Events), record.Events)
 	}
 	if record.Events[0].Kind != inspects.EventKindLog {
@@ -82,4 +94,247 @@ func TestHTTPInspectCapturesChildEvents(t *testing.T) {
 	if record.Events[1].Kind != inspects.EventKindHTTP {
 		t.Fatalf("second event kind = %q, want %q", record.Events[1].Kind, inspects.EventKindHTTP)
 	}
+}
+
+// testHTTPStatusError models adapter-independent errors with an explicit HTTP response status.
+type testHTTPStatusError int
+
+// Error supplies a stable message for wrapped status-code tests.
+func (e testHTTPStatusError) Error() string { return "HTTP failure" }
+
+// StatusCode allows the adapter and instrumentation to agree on the eventual response status.
+func (e testHTTPStatusError) StatusCode() int { return int(e) }
+
+// TestHTTPSpanStatusMatchesEventualResponse covers errors before the adapter writes their response.
+func TestHTTPSpanStatusMatchesEventualResponse(t *testing.T) {
+	for _, item := range []struct {
+		committed bool
+		status    int
+		err       error
+		want      int
+	}{
+		{false, 0, nil, 200}, {false, 204, nil, 204}, {true, 201, errors.New("write failed"), 201},
+		{false, 200, errors.New("handler failed"), 500},
+		{false, 200, errors.Join(errors.New("wrapped"), testHTTPStatusError(404)), 404},
+		{false, 200, testHTTPStatusError(12), 500},
+	} {
+		if got := httpSpanStatus(item.committed, item.status, item.err); got != item.want {
+			t.Fatalf("status=%d, want %d", got, item.want)
+		}
+	}
+}
+
+// TestHTTPSpansHandleClientErrorsAndPanics preserves HTTP server span semantics and ends spans during stack unwinding.
+func TestHTTPSpansHandleClientErrorsAndPanics(t *testing.T) {
+	for _, scenario := range []string{"client-error", "server-error", "panic"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+			manager := inspects.NewManager()
+			exporter := tracetest.NewInMemoryExporter()
+			manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+			server := &Server{inspectManager: manager}
+			handler := server.inspectContextMiddleware()(func(web.Context) error {
+				if scenario == "panic" {
+					panic("handler panic")
+				}
+				if scenario == "client-error" {
+					return testHTTPStatusError(404)
+				}
+				return errors.New("handler failed")
+			})
+			recovered := false
+			func() {
+				defer func() {
+					if recover() != nil {
+						recovered = true
+					}
+				}()
+				request := httptest.NewRequest(http.MethodGet, "/users/42", nil)
+				response := httptest.NewRecorder()
+				response.Code = 0
+				_ = handler(webtest.NewContext(request, response, "/users/:id", nil))
+			}()
+			if recovered != (scenario == "panic") {
+				t.Fatal("panic behavior changed")
+			}
+			spans := exporter.GetSpans()
+			if len(spans) != 1 {
+				t.Fatalf("span not finalized: %d", len(spans))
+			}
+			wantStatus := 500
+			if scenario == "client-error" {
+				wantStatus = 404
+				if spans[0].Status.Code != codes.Unset {
+					t.Fatal("4xx server span marked failed")
+				}
+			} else if spans[0].Status.Code != codes.Error {
+				t.Fatal("failed handler span not marked failed")
+			}
+			found := false
+			for _, attribute := range spans[0].Attributes {
+				if attribute.Key == "http.response.status_code" {
+					found = attribute.Value.AsInt64() == int64(wantStatus)
+				}
+			}
+			if !found {
+				t.Fatal("eventual HTTP status was not recorded")
+			}
+		})
+	}
+}
+
+// TestHTTPTimeoutKeepsServerStatusUnset preserves Lighthouse cancellation without counting a client response as a server failure.
+func TestHTTPTimeoutKeepsServerStatusUnset(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	manager := inspects.NewManager()
+	defer manager.Shutdown(context.Background())
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+	server := &Server{inspectManager: manager}
+	handler := server.inspectContextMiddleware()(func(r web.Context) error {
+		return r.NoContent(http.StatusRequestTimeout)
+	})
+	request := httptest.NewRequest(http.MethodGet, "/timeout", nil)
+	if err := handler(webtest.NewContext(request, httptest.NewRecorder(), "/timeout", nil)); err != nil {
+		t.Fatal(err)
+	}
+	spans := exporter.GetSpans()
+	if len(spans) != 1 || spans[0].Status.Code != codes.Unset {
+		t.Fatalf("408 server span must retain unset status: %+v", spans)
+	}
+	foundStatus := false
+	for _, attribute := range spans[0].Attributes {
+		if attribute.Key == "http.response.status_code" {
+			foundStatus = attribute.Value.AsInt64() == http.StatusRequestTimeout
+		}
+	}
+	if !foundStatus {
+		t.Fatal("408 response status was not recorded")
+	}
+	summaries, err := manager.Recent(context.Background(), inspects.RecentQuery{})
+	if err != nil || len(summaries) != 1 || summaries[0].Status != "canceled" {
+		t.Fatalf("Lighthouse timeout must retain canceled status: %+v, %v", summaries, err)
+	}
+}
+
+// TestHTTPSpanFinalAttributes preserves method, registered route, and status when attributes are finalized together.
+func TestHTTPSpanFinalAttributes(t *testing.T) {
+	for _, route := range []string{"", "/users/:id"} {
+		t.Run(route, func(t *testing.T) {
+			t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+			manager := inspects.NewManager()
+			defer manager.Shutdown(context.Background())
+			exporter := tracetest.NewInMemoryExporter()
+			manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+			server := &Server{inspectManager: manager}
+			handler := server.inspectContextMiddleware()(func(r web.Context) error {
+				return r.Text(201, "created")
+			})
+			request := httptest.NewRequest(http.MethodPost, "/users/42", nil)
+			if err := handler(webtest.NewContext(request, httptest.NewRecorder(), route, nil)); err != nil {
+				t.Fatal(err)
+			}
+			spans := exporter.GetSpans()
+			if len(spans) != 1 {
+				t.Fatalf("exported spans = %d, want 1", len(spans))
+			}
+			attributes := map[string]any{}
+			for _, attribute := range spans[0].Attributes {
+				attributes[string(attribute.Key)] = attribute.Value.AsInterface()
+			}
+			if attributes["http.request.method"] != http.MethodPost || attributes["http.response.status_code"] != int64(201) {
+				t.Fatalf("HTTP attributes changed: %v", attributes)
+			}
+			gotRoute, present := attributes["http.route"]
+			if (route != "") != present || (present && gotRoute != route) {
+				t.Fatalf("registered route changed: %v", attributes)
+			}
+		})
+	}
+}
+
+// TestHTTPCommittedClientResponseThenPanic preserves panic diagnostics without exporting their private content.
+func TestHTTPCommittedClientResponseThenPanic(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_SAMPLE_RATE", "1.0")
+	manager := inspects.NewManager()
+	defer manager.Shutdown(context.Background())
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter))
+	server := &Server{inspectManager: manager}
+	const rawPanic = "private-panic-token-8719"
+	handler := server.inspectContextMiddleware()(func(r web.Context) error {
+		if err := r.NoContent(http.StatusBadRequest); err != nil {
+			return err
+		}
+		panic(rawPanic)
+	})
+	request := httptest.NewRequest(http.MethodGet, "/fail", nil)
+	response := httptest.NewRecorder()
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		_ = handler(webtest.NewContext(request, response, "/fail", nil))
+	}()
+	if recovered != rawPanic {
+		t.Fatalf("recovered panic = %v, want original panic", recovered)
+	}
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("response status = %d, want 400", response.Code)
+	}
+	spans := exporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("exported spans = %d, want 1", len(spans))
+	}
+	span := spans[0]
+	if span.Status.Code != codes.Error {
+		t.Errorf("panic span status = %v, want Error", span.Status.Code)
+	}
+	foundResponseStatus := false
+	for _, attribute := range span.Attributes {
+		if attribute.Key == "http.response.status_code" {
+			foundResponseStatus = attribute.Value.AsInt64() == http.StatusBadRequest
+		}
+	}
+	if !foundResponseStatus {
+		t.Error("span did not retain committed response status 400")
+	}
+	foundSafeException := false
+	for _, event := range span.Events {
+		if event.Name != "exception" {
+			continue
+		}
+		var message, exceptionType string
+		for _, attribute := range event.Attributes {
+			switch attribute.Key {
+			case "exception.message":
+				message = attribute.Value.AsString()
+			case "exception.type":
+				exceptionType = attribute.Value.AsString()
+			}
+		}
+		if message != "" && exceptionType != "" && !strings.Contains(message, rawPanic) {
+			foundSafeException = true
+		}
+	}
+	if !foundSafeException {
+		t.Error("panic span must contain a safe exception message and type")
+	}
+	if strings.Contains(fmt.Sprint(span.Name, span.Status, span.Attributes, span.Events), rawPanic) {
+		t.Error("raw panic content entered exported span data")
+	}
+	summaries, err := manager.Recent(context.Background(), inspects.RecentQuery{})
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("Lighthouse summaries = %d, error = %v", len(summaries), err)
+	}
+	record, ok, err := manager.ByID(context.Background(), summaries[0].TraceID)
+	if err != nil || !ok || record.Summary.Status != "error" {
+		t.Fatalf("Lighthouse panic record missing or not failed: %+v, found=%v, error=%v", record.Summary, ok, err)
+	}
+	for _, event := range record.Events {
+		if event.Kind == inspects.EventKindError && strings.Contains(event.Message, rawPanic) {
+			return
+		}
+	}
+	t.Error("Lighthouse did not retain original panic content")
 }
