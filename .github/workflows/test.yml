@@ -77,6 +77,9 @@ jobs:
       - name: run go tests
         run: go test ./... -count=1 -v
 
+      - name: test upgrade experiment evidence
+        run: python3 -B -m unittest discover -s scripts -p 'test_spike_upgrade_evidence.py'
+
       - name: race-test Atlas MCP readiness
         env:
           GORACE: atexit_sleep_ms=0

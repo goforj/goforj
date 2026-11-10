@@ -31,7 +31,7 @@ def copy_committed_app(source, destination):
     with tarfile.open(fileobj=io.BytesIO(archive)) as entries:
         for entry in entries:
             path = PurePosixPath(entry.name)
-            if not entry.isfile() or any(part.startswith(".env") for part in path.parts):
+            if not entry.isfile() or any(part.lower().startswith(".env") for part in path.parts):
                 continue
             if path.is_absolute() or ".." in path.parts:
                 raise ValueError("archive contains an unsafe path")

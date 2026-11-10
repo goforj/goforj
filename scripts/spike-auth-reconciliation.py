@@ -90,9 +90,24 @@ def run_tests(root, workspace, environment, name, expression=None):
         "exit_code": result.returncode,
         "passed_tests_and_subtests": sum(event.get("Action") == "pass" and bool(event.get("Test")) for event in events),
         "failed_tests": [event["Test"] for event in events if event.get("Action") == "fail" and event.get("Test")],
+        "passed_tests": sorted({event["Test"] for event in events if event.get("Action") == "pass" and event.get("Test")}),
+        "skipped_tests": [event["Test"] for event in events if event.get("Action") == "skip" and event.get("Test")],
     }
-    print(json.dumps(summary), flush=True)
+    print(json.dumps({key: value for key, value in summary.items() if key != "passed_tests"}), flush=True)
     return summary
+
+
+def require_complete_suite(summary, required=()):
+    """Reject skipped or missing behaviors even when aggregate pass counts happen to increase."""
+    if (summary["exit_code"] or not summary["passed_tests"] or summary["skipped_tests"]
+            or not set(required).issubset(summary["passed_tests"])):
+        raise RuntimeError(f"{summary['phase']} does not establish every required passing behavior")
+
+
+def require_behavioral_failure(summary, required):
+    """Require the intended test failures, rather than accepting compilation errors or a different regression."""
+    if not summary["exit_code"] or not set(required).issubset(summary["failed_tests"]) or summary["skipped_tests"]:
+        raise RuntimeError(f"{summary['phase']} did not reject every intended regression behaviorally")
 
 
 def main():
@@ -116,23 +131,21 @@ def main():
     phases = []
     baseline = run_tests(root, workspace, environment, "baseline")
     phases.append(baseline)
-    if baseline["exit_code"] or not baseline["passed_tests_and_subtests"]:
-        raise RuntimeError("reference auth suite does not establish a passing baseline")
+    require_complete_suite(baseline)
     regression = root / "internal/auth/upgrade_probe_integration_test.go"
     if regression.exists():
         raise RuntimeError("probe would replace an existing app test")
     regression.write_text(REGRESSION)
     red = run_tests(root, workspace, environment, "regression-before-fix", "^TestUpgradeProbeOAuthStateSingleUse$")
     phases.append(red)
-    if not red["exit_code"] or "TestUpgradeProbeOAuthStateSingleUse" not in red["failed_tests"]:
-        raise RuntimeError("regression did not fail behaviorally before the fix")
+    regression_tests = {"TestUpgradeProbeOAuthStateSingleUse", "TestUpgradeProbeOAuthStateSingleUse/replayed", "TestUpgradeProbeOAuthStateSingleUse/expired"}
+    require_behavioral_failure(red, regression_tests)
     state = root / "internal/auth/oauth_state.go"
     state.write_text(replace_method(state.read_text(), "r *OAuthStateRepo", "MarkUsed", CLAIM_METHOD))
     subprocess.run(["gofmt", "-w", str(state), str(regression)], check=True)
     green = run_tests(root, workspace, environment, "regression-after-fix", "^TestUpgradeProbeOAuthStateSingleUse$")
     phases.append(green)
-    if green["exit_code"] or green["passed_tests_and_subtests"] < 3:
-        raise RuntimeError("security regression still fails after the candidate fix")
+    require_complete_suite(green, regression_tests)
     binary = arguments.forj.expanduser().resolve(strict=True)
     snapshot = json.loads(subprocess.check_output([str(binary), "render", "--snapshot"], cwd=root, env=environment, text=True, timeout=30))
     incoming = next(artifact["source"] for artifact in snapshot["artifacts"] if artifact["path"] == "internal/auth/service.go")
@@ -145,14 +158,12 @@ def main():
     try:
         negative = run_tests(root, workspace, environment, "destructive-workflow-replacement", "^TestImpersonationRoundTripIsSessionScopedAndPrivate$")
         phases.append(negative)
-        if not negative["exit_code"] or "TestImpersonationRoundTripIsSessionScopedAndPrivate" not in negative["failed_tests"]:
-            raise RuntimeError("bad reconciliation was not rejected by the impersonation behavior test")
+        require_behavioral_failure(negative, {"TestImpersonationRoundTripIsSessionScopedAndPrivate"})
     finally:
         service.write_bytes(original_service)
     final = run_tests(root, workspace, environment, "reconciled-auth-suite")
     phases.append(final)
-    if final["exit_code"] or final["passed_tests_and_subtests"] < baseline["passed_tests_and_subtests"] + 3:
-        raise RuntimeError("candidate does not preserve the full reference auth suite")
+    require_complete_suite(final, set(baseline["passed_tests"]) | regression_tests)
     after = auth_fingerprints(root)
     changed = sorted(name for name in set(before) | set(after) if before.get(name) != after.get(name))
     if changed != ["oauth_state.go", "upgrade_probe_integration_test.go"]:

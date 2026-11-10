@@ -256,9 +256,14 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 		case "migration":
 			file.Action = "preserve-migration"
 			if _, err := filesystem.Lstat(filepath.FromSlash(name)); os.IsNotExist(err) {
+				if !hasNext {
+					continue
+				}
 				file.Action = "review-new-migration"
 			} else if err != nil {
 				return Plan{}, err
+			} else if !hasNext {
+				file.Action = "preserve-retired-migration"
 			}
 		case "app-derived":
 			if _, err := filesystem.Lstat(filepath.FromSlash(name)); os.IsNotExist(err) {
@@ -297,6 +302,9 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 				file.ModeChanged = observation.mode&0o111 != next.Mode&0o111
 			}
 
+			matchesBaselineMode := runtime.GOOS == "windows" ||
+				(old.Mode == 0 && !file.ModeChanged) ||
+				(old.Mode != 0 && observation.mode&0o111 == old.Mode&0o111)
 			switch {
 			case !hasNext:
 				file.Action = "review-retirement"
@@ -310,7 +318,7 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 				file.Action = "review-unversioned"
 			case !hasOld:
 				file.Action = "review-collision"
-			case file.CurrentDigest == file.BaselineDigest && (old.Mode == 0 || runtime.GOOS == "windows" || observation.mode&0o111 == old.Mode&0o111):
+			case file.CurrentDigest == file.BaselineDigest && matchesBaselineMode:
 				file.Action = "upstream-only-relative-to-baseline"
 			case file.TargetDigest == file.BaselineDigest:
 				file.Action = "preserve-local-relative-to-baseline"
@@ -369,10 +377,11 @@ func declarations(source string) (map[string]string, bool) {
 	}
 	result := map[string]string{"package": file.Name.Name}
 	var constraints, directives []string
+	var directiveOffsets []int
 	var lexer scanner.Scanner
 	lexer.Init(positions.AddFile("directives.go", -1, len(source)), []byte(source), nil, scanner.ScanComments)
 	for {
-		_, kind, line := lexer.Scan()
+		location, kind, line := lexer.Scan()
 		if kind == token.EOF {
 			break
 		}
@@ -384,10 +393,13 @@ func declarations(source string) (map[string]string, bool) {
 		}
 		if strings.HasPrefix(line, "//go:") && !strings.HasPrefix(line, "//go:build ") {
 			directives = append(directives, line)
+			directiveOffsets = append(directiveOffsets, positions.Position(location).Offset)
 		}
 	}
 	result["build-constraints"] = strings.Join(constraints, "\n")
 	result["compiler-directives"] = strings.Join(directives, "\n")
+	fragments := map[string][]string{}
+	directiveIndex := 0
 	for _, declaration := range file.Decls {
 		var key string
 		switch node := declaration.(type) {
@@ -411,9 +423,17 @@ func declarations(source string) (map[string]string, bool) {
 				}
 			}
 		}
+		// Bind directives to their next or enclosing declaration so relocation cannot disappear from the hints.
+		for directiveIndex < len(directives) && directiveOffsets[directiveIndex] < positions.Position(declaration.End()).Offset {
+			fragments[key] = append(fragments[key], directives[directiveIndex]+"\n")
+			directiveIndex++
+		}
 		var output bytes.Buffer
 		_ = format.Node(&output, positions, declaration)
-		result[key] += output.String()
+		fragments[key] = append(fragments[key], output.String())
+	}
+	for key, parts := range fragments {
+		result[key] = strings.Join(parts, "")
 	}
 	return result, false
 }

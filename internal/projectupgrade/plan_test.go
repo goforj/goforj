@@ -2,6 +2,7 @@ package projectupgrade
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -240,7 +241,7 @@ func TestDeclarationHintsIncludeCompilerContracts(t *testing.T) {
 	before := "//go:build linux\n\npackage old\n//go:embed old.txt\nvar Asset string\n"
 	after := "//go:build windows\n\npackage changed\n//go:embed new.txt\nvar Asset string\n"
 	changed, invalid := changedDeclarations(before, after)
-	if invalid || !reflect.DeepEqual(changed, []string{"build-constraints", "compiler-directives", "package"}) {
+	if invalid || !reflect.DeepEqual(changed, []string{"build-constraints", "compiler-directives", "package", "var Asset"}) {
 		t.Fatalf("compiler contracts=%v invalid=%v", changed, invalid)
 	}
 	before = "package example\nconst Text = `\n//go:embed pretend.txt\n`\n"
@@ -491,5 +492,97 @@ func TestFrameworkOwnershipTransitionsRequireExplicitReview(t *testing.T) {
 	}
 	if plan.Files[0].Action != "review-ownership-transition" || plan.Files[0].PreviousOwnership != "seed" || plan.Files[0].CurrentDigest != "" {
 		t.Fatal("owner source was silently reclassified")
+	}
+}
+
+// TestRetiredMigrationsCannotBecomeNewWork prevents a reference-only migration from being resurrected or removed.
+func TestRetiredMigrationsCannotBecomeNewWork(t *testing.T) {
+	for _, present := range []bool{false, true} {
+		t.Run(fmt.Sprint(present), func(t *testing.T) {
+			root := t.TempDir()
+			target := testSnapshot("package auth\n")
+			baseline := testSnapshot("package auth\n")
+			name := "migrations/retired.up.sql"
+			baseline.Artifacts = append(baseline.Artifacts, Artifact{Path: name, Ownership: "migration", Source: "historical SQL"})
+			if present {
+				writeFixture(t, root, name, "app migration history")
+			}
+			plan, err := Build(root, target, &baseline)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, file := range plan.Files {
+				if file.Path != name {
+					continue
+				}
+				found = true
+				if !present || file.Action != "preserve-retired-migration" || file.CurrentDigest != "" {
+					t.Fatalf("retired migration has unsafe policy: %+v", file)
+				}
+			}
+			if present != found {
+				t.Fatalf("retired migration presence=%v, planned=%v", present, found)
+			}
+		})
+	}
+}
+
+// TestUnknownBaselineModeDoesNotHideOwnerChanges keeps absent reference metadata from treating an executable-bit change as pristine.
+func TestUnknownBaselineModeDoesNotHideOwnerChanges(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not preserve Unix executable bits")
+	}
+	root := t.TempDir()
+	baseline := testSnapshot("package auth\nfunc Login(){old()}\n")
+	target := testSnapshot("package auth\nfunc Login(){next()}\n")
+	target.Artifacts[0].Mode = 0o644
+	name := target.Artifacts[0].Path
+	writeFixture(t, root, name, baseline.Artifacts[0].Source)
+	if err := os.Chmod(filepath.Join(root, filepath.FromSlash(name)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Build(root, target, &baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Files[0].Action != "reconcile" || !plan.Files[0].ModeChanged {
+		t.Fatalf("missing baseline mode concealed owner drift: %+v", plan.Files[0])
+	}
+}
+
+// BenchmarkDeclarationHintsRepeatedInitializers exercises valid repeated declaration keys without quadratic fingerprint concatenation.
+func BenchmarkDeclarationHintsRepeatedInitializers(b *testing.B) {
+	source := "package app\n" + strings.Repeat("func init(){ record() }\n", 2500)
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, invalid := declarations(source); invalid {
+			b.Fatal("valid repeated initializers were rejected")
+		}
+	}
+}
+
+// TestDeclarationHintsBindDirectivesToDeclarations detects compiler-policy movement even when the file-wide directive list is unchanged.
+func TestDeclarationHintsBindDirectivesToDeclarations(t *testing.T) {
+	before := "package app\n//go:noinline\nfunc First(){}\nfunc Second(){}\n"
+	after := "package app\nfunc First(){}\n//go:noinline\nfunc Second(){}\n"
+	changed, invalid := changedDeclarations(before, after)
+	if invalid || !reflect.DeepEqual(changed, []string{"First", "Second"}) {
+		t.Fatalf("directive movement lost declaration ownership: changed=%v invalid=%v", changed, invalid)
+	}
+}
+
+// TestDeclarationHintsPreserveRepeatedInitializerOrder protects valid repeated keys while their fingerprints are assembled without repeated copying.
+func TestDeclarationHintsPreserveRepeatedInitializerOrder(t *testing.T) {
+	for _, test := range []struct {
+		before, after, key string
+	}{
+		{"func init(){first()}\nfunc init(){second()}\n", "func init(){second()}\nfunc init(){first()}\n", "init"},
+		{"var _ = first()\nvar _ = second()\n", "var _ = second()\nvar _ = first()\n", "var _"},
+	} {
+		changed, invalid := changedDeclarations("package app\n"+test.before, "package app\n"+test.after)
+		if invalid || !reflect.DeepEqual(changed, []string{test.key}) {
+			t.Fatalf("initializer order lost: changed=%v invalid=%v", changed, invalid)
+		}
 	}
 }

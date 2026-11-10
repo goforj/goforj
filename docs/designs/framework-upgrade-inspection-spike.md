@@ -61,7 +61,7 @@ application source and environment values never enter the snapshot protocol.
 | Framework templates | Compare current, incoming, and optional reference bytes; report declaration changes for Go |
 | Framework raw assets | Compare exact digests; require review for differences or retirement |
 | App-owned seeds | Preserve app source, routes, lifecycle hooks, frontend sources, and owner Wire contribution files |
-| Database migrations | Preserve existing migration history; missing incoming migrations require review |
+| Database migrations | Preserve existing history, including retired files; missing incoming migrations require review, while absent retired files stay absent |
 | Shared semantic files | Review dependency/configuration contracts separately from template replacement |
 | Private environment layers | Preserve without reading or fingerprinting values |
 | App-derived output | Regenerate from actual reconciled app inputs; do not label app-specific bytes as dirty |
@@ -104,8 +104,9 @@ historical configuration changes or prove that an app adopted the supplied
 baseline. Engine metadata is diagnostic, not cryptographic provenance.
 
 Go declaration hints retain package names, build constraints, and Go compiler
-directives while omitting ordinary comments and formatting. They can still include
-semantically equivalent implementation changes. Disjoint declarations can depend
+directives associated with their next or enclosing declaration while omitting
+ordinary comments and formatting. They can still include semantically equivalent
+implementation changes. Disjoint declarations can depend
 on one another. A test explicitly verifies that non-overlapping declarations do
 not authorize a clean automatic upgrade.
 
@@ -194,6 +195,11 @@ experiment; it is not a production auth change in this PR.
 | Replace request authentication with the framework default | Compiles, but fails the impersonation round-trip test |
 | Restore the app request method and retain the state fix | Full suite passes with 106 tests/subtests |
 
+The runner requires the final passing test identities to include every baseline
+identity plus all three new regression identities, with no skipped tests. Both
+replay and expiry must fail before the fix; compiler failures and a failing parent
+test alone cannot satisfy that negative control.
+
 Only `oauth_state.go` and the added regression test differ in the final auth source
 inventory. Impersonation, Discord flow, identity persistence, and other customized
 auth source remain byte-for-byte unchanged. The experiment demonstrates one
@@ -225,6 +231,23 @@ changes, compiler directives, and ambiguous JSON. Three bounded fuzz campaigns
 exercised snapshot validation, JSON framing, and Go declaration hints for more
 than 770,000 combined inputs without failures. This is additional evidence, not a
 proof of arbitrary app compatibility.
+
+A further review reproduced and corrected two misleading classifications: absent
+retired migrations were reported as new work, and unknown baseline mode metadata
+could hide a current executable-bit change. Existing retired migrations now have
+an explicit preservation action, absent retired migrations stay absent, and
+unproven mode drift requires reconciliation. Another regression covers moving a
+compiler directive between declarations without changing the file-wide directive
+list. Repeated initializer order remains visible in declaration hints.
+
+The same pass removed quadratic concatenation for repeated declaration names.
+On a local Apple M4 Max benchmark with 2,500 initializers, two runs decreased from
+85.7 MB allocated per operation and 13.3 to 13.5 ms to 4.0 MB and 4.4 to 6.3 ms.
+These measurements describe this synthetic inspection workload only. The auth
+experiment's evidence checks also have direct Python tests for skipped tests,
+missing baseline identities, compiler failures, and incomplete negative controls.
+The reference copier also tests case-insensitive environment-layer exclusion and
+symlink exclusion so those private paths never enter a disposable app copy.
 
 The Windows CI failure on the earlier revision came from a MySQL readiness test
 that indexed beyond its three shell responses after an unexpected extra probe.
