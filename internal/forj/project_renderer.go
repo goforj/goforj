@@ -3776,7 +3776,7 @@ func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl strin
 	}
 	newContent = formatted
 	if p.inspection != nil {
-		p.inspection.record(destPath, tmpl, newContent, ownership, mode)
+		p.inspection.record(destPath, tmpl, ownership, mode)
 	}
 	if existingContent, err := p.workspace.readFile(destPath); err == nil {
 		if bytes.Equal(existingContent, newContent) {
@@ -4149,7 +4149,7 @@ func (p *ProjectRenderer) copyRawFileToDest(path, dest string) error {
 		return err
 	}
 	if p.inspection != nil {
-		p.inspection.record(dest, path, content, "framework-asset", 0o644)
+		p.inspection.record(dest, path, "framework-asset", 0o644)
 	}
 	if err := p.workspace.ensureDir(filepath.Dir(dest)); err != nil {
 		return err

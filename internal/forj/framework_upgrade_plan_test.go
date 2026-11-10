@@ -2,6 +2,7 @@ package forj
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/goforj/goforj/internal/projectupgrade"
@@ -38,6 +40,167 @@ func frameworkUpgradeFixture(t *testing.T, oauth bool) string {
 		writeProjectRendererTestFile(t, filepath.Join(root, name), source)
 	}
 	return root
+}
+
+// TestDiscoveredAppsKeepInheritedRenderSettings prevents discovery from turning inherited starter, showcase, or help settings into defaults.
+func TestDiscoveredAppsKeepInheritedRenderSettings(t *testing.T) {
+	root := t.TempDir()
+	original := &project.Config{ProjectName: "Inherited App", GoModuleName: "example.com/inherited", Render: project.RenderConfig{
+		Components: project.Components{CLI: true, WebUI: true, WebAPI: true}, StarterKit: project.StarterKitVue, StarterKitOptions: project.NewStarterKitOptions(false), HelpFormat: project.HelpFormatGuided,
+	}}
+	source, err := yaml.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeProjectRendererTestFile(t, filepath.Join(root, ".goforj.yml"), string(source))
+	writeProjectRendererTestFile(t, filepath.Join(root, "app/billing/lifecycle.go"), "package billingapp\n")
+	projection, err := frameworkUpgradeConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := project.AppForName("billing")
+	if appRenderStarterKit(projection, app) != appRenderStarterKit(original, app) || appRenderComponentLibrary(projection, app) != appRenderComponentLibrary(original, app) || appRenderHelpFormat(projection, app) != appRenderHelpFormat(original, app) {
+		t.Fatal("discovery changed inherited render settings")
+	}
+	snapshot, err := frameworkSnapshotForConfig(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.Path == "cmd/billing/frontend/package.json" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("discovered App lost its inherited starter source")
+	}
+}
+
+// TestFrameworkInputsAreFrozenAndRechecked rejects changed intent while deliberately ignoring owner-only settings.
+func TestFrameworkInputsAreFrozenAndRechecked(t *testing.T) {
+	root := frameworkUpgradeFixture(t, true)
+	projection, err := frameworkUpgradeConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := frameworkSnapshotForConfig(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.ReadFile(filepath.Join(root, ".goforj.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeProjectRendererTestFile(t, filepath.Join(root, ".goforj.yml"), string(source)+"\nowner_setting: ignored-private-value\n")
+	if err := verifyFrameworkInputs(root, snapshot.InputsDigest); err != nil {
+		t.Fatal(err)
+	}
+	writeProjectRendererTestFile(t, filepath.Join(root, "app/newworker/lifecycle.go"), "package newworkerapp\n")
+	if err := verifyFrameworkInputs(root, snapshot.InputsDigest); err == nil {
+		t.Fatal("accepted App discovery changes during planning")
+	}
+	frozen, err := frameworkSnapshotForConfig(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(snapshot, frozen) {
+		t.Fatal("frozen recipe reread changed live project intent")
+	}
+}
+
+// TestRendererCancellationAndDeadlineRemainObservable bounds subprocess lifecycle without exposing child diagnostics.
+func TestRendererCancellationAndDeadlineRemainObservable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable fixtures")
+	}
+	projection, err := frameworkUpgradeConfig(frameworkUpgradeFixture(t, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "slow-renderer")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexec sleep 5\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := frameworkSnapshotFromRenderer(ctx, projection, binary); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error=%v", err)
+	}
+	ctx, cancel = context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if _, err := frameworkSnapshotFromRenderer(ctx, projection, binary); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("deadline error=%v", err)
+	}
+	if time.Since(started) > 3*time.Second {
+		t.Fatal("renderer survived its deadline")
+	}
+}
+
+// TestInactiveResourceOutputsRemainOwnerControlled avoids claiming a generated-looking file when its generator is not selected.
+func TestInactiveResourceOutputsRemainOwnerControlled(t *testing.T) {
+	root := t.TempDir()
+	config := &project.Config{GoModuleName: "example.com/cli", Render: project.RenderConfig{Components: project.Components{CLI: true}}}
+	source, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeProjectRendererTestFile(t, filepath.Join(root, ".goforj.yml"), string(source))
+	writeProjectRendererTestFile(t, filepath.Join(root, "internal/caches/accessors_gen.go"), "owner generated-looking file")
+	snapshot, err := frameworkUpgradeSnapshot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.Path == "internal/caches/accessors_gen.go" {
+			t.Fatal("inactive cache generator claimed owner source")
+		}
+	}
+	plan, err := projectupgrade.Build(root, snapshot, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range plan.Files {
+		if file.Path == "internal/caches" && file.Action != "preserve" {
+			t.Fatal("owner cache directory was not preserved")
+		}
+	}
+}
+
+// TestSnapshotJSONRejectsAmbiguity bounds the renderer protocol independently of its typed payload validation.
+func TestSnapshotJSONRejectsAmbiguity(t *testing.T) {
+	if err := validateSnapshotJSON([]byte{'"', 0xff, '"'}); err == nil {
+		t.Fatal("accepted invalid UTF-8 protocol text")
+	}
+	for _, source := range []string{`{"protocol":3,"protocol":2}`, `{"protocol":3,"Protocol":3}`, `{"ſcope":"framework"}`, `{"artifacts":[{"path":"a","path":"b"}]}`, `{} {}`, strings.Repeat("[", 40) + strings.Repeat("]", 40), `{"broken":`, ``} {
+		if err := validateSnapshotJSON([]byte(source)); err == nil {
+			t.Fatalf("accepted ambiguous or malformed JSON: %q", source)
+		}
+	}
+	if err := validateSnapshotJSON([]byte(`{"artifacts":[{"source":"{\\\"path\\\":1,\\\"path\\\":2}"}]}`)); err != nil {
+		t.Fatal("source string parsed as protocol metadata", err)
+	}
+}
+
+// TestFrameworkPlanningAcceptsLocalModuleNames follows project creation's local Go module grammar rather than publication constraints.
+func TestFrameworkPlanningAcceptsLocalModuleNames(t *testing.T) {
+	root := t.TempDir()
+	writeProjectRendererTestFile(t, filepath.Join(root, ".goforj.yml"), "module_name: forj\nrender:\n  components: [cli]\n")
+	if _, err := frameworkUpgradeSnapshot(root); err != nil {
+		t.Fatal("valid local module rejected", err)
+	}
+	for _, module := range []string{"go", "toolchain", "example.com/app/v1", " forj "} {
+		config := &project.Config{GoModuleName: module, Render: project.RenderConfig{Components: project.Components{CLI: true}}}
+		source, err := yaml.Marshal(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeProjectRendererTestFile(t, filepath.Join(root, ".goforj.yml"), string(source))
+		if _, err := frameworkUpgradeConfig(root); err == nil {
+			t.Fatalf("accepted invalid module %q", module)
+		}
+	}
 }
 
 // TestFrameworkUpgradeSnapshotIsPureAndComponentGated proves snapshots render current authoritative templates without reading private env values or writing output.
@@ -141,6 +304,17 @@ func TestFrameworkUpgradeSnapshotMatchesRenderer(t *testing.T) {
 			}
 			if compared < 50 {
 				t.Fatalf("insufficient framework parity coverage: %d", compared)
+			}
+			if starter == project.StarterKitTemplHTMX {
+				derivedTempl := false
+				for _, artifact := range snapshot.Artifacts {
+					if artifact.Ownership == "app-derived" && strings.HasSuffix(artifact.Path, "_templ.go") {
+						derivedTempl = true
+					}
+				}
+				if !derivedTempl {
+					t.Fatal("templ compiler sidecars were not classified as app-derived")
+				}
 			}
 
 		})
@@ -278,7 +452,7 @@ func TestFrameworkUpgradeOrchestratesRendererProtocol(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "renderer-side-effect")); !os.IsNotExist(err) {
 		t.Fatal("child renderer ran in the application directory")
 	}
-	for _, invalid := range []string{"not json", string(encoded) + "\n{}", strings.Replace(string(encoded), `"protocol":2`, `"protocol":99`, 1), strings.Replace(string(encoded), `"protocol":2`, `"unknown":1,"protocol":2`, 1)} {
+	for _, invalid := range []string{"not json", string(encoded) + "\n{}", strings.Replace(string(encoded), `"protocol":3`, `"protocol":99`, 1), strings.Replace(string(encoded), `"protocol":3`, `"unknown":1,"protocol":3`, 1)} {
 		if _, err := externalFrameworkSnapshot(root, snapshotRendererScript(t, invalid)); err == nil {
 			t.Fatal("accepted incompatible protocol")
 		}

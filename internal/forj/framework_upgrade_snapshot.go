@@ -1,7 +1,6 @@
 package forj
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -9,12 +8,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/goforj/goforj/internal/apiindex"
+	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/internal/projectupgrade"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/version"
-	"golang.org/x/mod/module"
 	"gopkg.in/yaml.v3"
 )
 
@@ -24,9 +24,9 @@ type frameworkRenderInventory struct {
 }
 
 // record preserves template provenance while classifying initial frontend sources as app-owned seeds.
-func (inventory *frameworkRenderInventory) record(destination, template string, content []byte, ownership string, mode fs.FileMode) {
+func (inventory *frameworkRenderInventory) record(destination, template string, ownership string, mode fs.FileMode) {
 	destination = filepath.ToSlash(destination)
-	if strings.HasPrefix(template, "starter-kits/") || strings.Contains(destination, "/frontend/") {
+	if strings.HasPrefix(template, "starter-kits/") || strings.HasPrefix(template, "demo/frontend/") {
 		ownership = "seed"
 	}
 	if strings.HasPrefix(destination, "migrations/") && isMigrationSQLFile(destination) {
@@ -37,18 +37,18 @@ func (inventory *frameworkRenderInventory) record(destination, template string, 
 
 // frameworkUpgradeConfig projects supported render intent while stripping secrets, commands, local replacements, and owner extras.
 func frameworkUpgradeConfig(root string) (*project.Config, error) {
-	workspace, err := resolveProjectRenderWorkspace(root)
+	source, err := projectupgrade.ReadInput(root, ".goforj.yml")
 	if err != nil {
 		return nil, err
 	}
-	if err := workspace.rejectEnvironmentSpecialFile(".goforj.yml"); err != nil {
-		return nil, err
+	original := &project.Config{}
+	if err := yaml.Unmarshal(source, original); err != nil {
+		return nil, fmt.Errorf("decode .goforj.yml: %w", err)
 	}
-	original, err := workspace.loadProjectConfig()
-	if err != nil {
-		return nil, err
+	if original.GoModuleName != strings.TrimSpace(original.GoModuleName) {
+		return nil, fmt.Errorf("module_name must not contain surrounding whitespace")
 	}
-	if err := module.CheckPath(original.GoModuleName); err != nil {
+	if err := validateNewProjectModulePath(original.GoModuleName); err != nil {
 		return nil, fmt.Errorf("framework inspection requires a valid module_name: %w", err)
 	}
 	config := &project.Config{ProjectName: original.ProjectName, GoModuleName: original.GoModuleName,
@@ -68,7 +68,10 @@ func frameworkUpgradeConfig(root string) (*project.Config, error) {
 	}
 	for _, app := range discovery.NamedApps() {
 		if _, exists := config.Apps[app.Name]; !exists {
-			config.Apps[app.Name] = project.AppConfig{Components: appRenderComponents(original, app)}
+			config.Apps[app.Name] = project.AppConfig{
+				Components: appRenderComponents(original, app), StarterKit: appRenderStarterKit(original, app),
+				StarterKitOptions: original.Render.StarterKitOptions, HelpFormat: appRenderHelpFormat(original, app),
+			}
 		}
 	}
 	return config, nil
@@ -114,7 +117,12 @@ func frameworkUpgradeSnapshot(root string) (projectupgrade.Snapshot, error) {
 	if err != nil {
 		return projectupgrade.Snapshot{}, err
 	}
-	inputs, err := json.Marshal(config)
+	return frameworkSnapshotForConfig(config)
+}
+
+// frameworkSnapshotForConfig freezes one projected input recipe for all participating renderers.
+func frameworkSnapshotForConfig(config *project.Config) (projectupgrade.Snapshot, error) {
+	inputsDigest, err := frameworkInputsDigest(config)
 	if err != nil {
 		return projectupgrade.Snapshot{}, err
 	}
@@ -136,8 +144,13 @@ func frameworkUpgradeSnapshot(root string) (projectupgrade.Snapshot, error) {
 	if err := renderer.Render(ComponentRenderInput{root: staging, renderAll: true, initializeProject: true, resourcePlan: resources}); err != nil {
 		return projectupgrade.Snapshot{}, err
 	}
-	snapshot := projectupgrade.Snapshot{Protocol: projectupgrade.ProtocolVersion, Scope: "framework", InputsDigest: projectupgrade.Digest(inputs),
+	snapshot := projectupgrade.Snapshot{Protocol: projectupgrade.ProtocolVersion, Scope: "framework", InputsDigest: inputsDigest,
 		Engine: projectupgrade.Engine{Version: version.Version, Commit: version.Commit, Dirty: version.Dirty}, Artifacts: []projectupgrade.Artifact{}}
+	derivedPaths := frameworkDerivedPaths(config)
+	derived := map[string]bool{}
+	for _, name := range derivedPaths {
+		derived[name] = true
+	}
 	err = filepath.WalkDir(staging, func(physical string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -150,6 +163,9 @@ func frameworkUpgradeSnapshot(root string) (projectupgrade.Snapshot, error) {
 			return err
 		}
 		name := filepath.ToSlash(relative)
+		if derived[name] {
+			return nil
+		}
 		if strings.Contains(name, "/frontend/dist/") {
 			return nil
 		}
@@ -161,10 +177,8 @@ func frameworkUpgradeSnapshot(root string) (projectupgrade.Snapshot, error) {
 		switch {
 		case strings.HasPrefix(filepath.Base(name), ".env"):
 			artifact.Ownership = "private"
-		case name == "go.mod" || name == ".goforj.yml" || name == ".gitignore" || name == ".db-relationships.yaml":
+		case name == "go.mod" || name == "go.sum" || name == ".goforj.yml" || name == ".gitignore" || name == ".db-relationships.yaml":
 			artifact.Ownership = "semantic"
-		case !known && strings.Contains(name, "/frontend/"):
-			artifact.Ownership = "seed"
 		case !known:
 			artifact.Ownership = "generated-context"
 		}
@@ -184,8 +198,18 @@ func frameworkUpgradeSnapshot(root string) (projectupgrade.Snapshot, error) {
 	if err != nil {
 		return projectupgrade.Snapshot{}, err
 	}
-	for _, name := range frameworkDerivedPaths(config) {
-		snapshot.Artifacts = append(snapshot.Artifacts, projectupgrade.Artifact{Path: name, Ownership: "app-derived"})
+	snapshot.Artifacts = append(snapshot.Artifacts, projectupgrade.Artifact{Path: "go.sum", Ownership: "semantic"})
+	for _, name := range derivedPaths {
+		ownership := "app-derived"
+		if name == generate.ObservabilityTargetsPath {
+			ownership = "conditional-derived"
+		}
+		snapshot.Artifacts = append(snapshot.Artifacts, projectupgrade.Artifact{Path: name, Ownership: ownership})
+	}
+	for _, artifact := range append([]projectupgrade.Artifact(nil), snapshot.Artifacts...) {
+		if strings.HasPrefix(artifact.Template, "starter-kits/templ-htmx/") && strings.HasSuffix(artifact.Path, ".templ") {
+			snapshot.Artifacts = append(snapshot.Artifacts, projectupgrade.Artifact{Path: strings.TrimSuffix(artifact.Path, ".templ") + "_templ.go", Ownership: "app-derived"})
+		}
 	}
 	sort.Slice(snapshot.Artifacts, func(i, j int) bool { return snapshot.Artifacts[i].Path < snapshot.Artifacts[j].Path })
 	return snapshot, projectupgrade.ValidateSnapshot(snapshot)
@@ -193,16 +217,26 @@ func frameworkUpgradeSnapshot(root string) (projectupgrade.Snapshot, error) {
 
 // frameworkDerivedPaths lists actual generator contracts independently of a particular component's runtime implementation.
 func frameworkDerivedPaths(config *project.Config) []string {
-	paths := []string{"app/wire/wire_gen.go", "internal/database/connections_gen.go", "cmd/app/frontend/dist"}
+	components := project.ProjectComponents(config)
+	paths := generate.OutputPaths(generate.GenerationSelection{Cache: components.Cache, Queue: components.Jobs, Storage: components.Storage,
+		Events: components.Events, Mail: components.Mail, Database: components.HasDatabase(), Observability: components.Observability})
+	paths = append(paths, "app/wire/wire_gen.go")
+	if appRenderComponents(config, project.DefaultApp()).WebAPI || appRenderComponents(config, project.DefaultApp()).WebUI {
+		paths = append(paths, apiindex.OutputPaths(project.DefaultApp())...)
+	}
+	if appRenderComponents(config, project.DefaultApp()).WebUI {
+		paths = append(paths, "cmd/app/frontend/dist")
+	}
 	for name := range config.Apps {
 		if name != project.DefaultAppName {
 			paths = append(paths, "app/"+name+"/wire/wire_gen.go")
-			paths = append(paths, "cmd/"+name+"/frontend/dist")
-		}
-	}
-	for _, resource := range []string{"caches", "queues", "storages", "events", "mail"} {
-		for _, output := range []string{"manager_gen.go", "accessors_gen.go"} {
-			paths = append(paths, "internal/"+resource+"/"+output)
+			app := project.AppForName(name)
+			if appRenderComponents(config, app).WebAPI || appRenderComponents(config, app).WebUI {
+				paths = append(paths, apiindex.OutputPaths(app)...)
+			}
+			if appRenderComponents(config, project.AppForName(name)).WebUI {
+				paths = append(paths, "cmd/"+name+"/frontend/dist")
+			}
 		}
 	}
 	return paths

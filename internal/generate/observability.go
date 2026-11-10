@@ -123,7 +123,7 @@ func generateObservabilityFiles(input generationInput) (int, error) {
 	content = append(content, '\n')
 
 	changed, err := writeObservabilityTargets(
-		filepath.Join(input.projectDir, "containers", "observability", "vmagent", "metrics-targets.json"),
+		filepath.Join(input.projectDir, ObservabilityTargetsPath),
 		content,
 	)
 	if err != nil {

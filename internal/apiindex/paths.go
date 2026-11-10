@@ -13,6 +13,12 @@ import (
 // apiIndexCacheFilename stays private because the cache is an implementation detail rather than a generated contract artifact.
 const apiIndexCacheFilename = ".api_index.cache"
 
+// OutputPaths identifies the public artifacts derived from one App's routes and types, excluding private indexing caches.
+func OutputPaths(target project.App) []string {
+	artifacts := defaultPaths(target)
+	return []string{filepath.ToSlash(artifacts.out), filepath.ToSlash(artifacts.diagnostics), filepath.ToSlash(artifacts.openAPI)}
+}
+
 // paths binds source discovery and all artifacts to one active app.
 type paths struct {
 	root             string

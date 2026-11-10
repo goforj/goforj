@@ -12,7 +12,7 @@ import (
 
 // testSnapshot supplies a reproducible comparison reference without claiming application adoption.
 func testSnapshot(source string) Snapshot {
-	return Snapshot{Protocol: ProtocolVersion, Scope: "framework", Engine: Engine{Version: "v0.1.0"}, InputsDigest: Digest([]byte("inputs")), Artifacts: []Artifact{{Path: "internal/auth/service.go", Source: source}}}
+	return Snapshot{Protocol: ProtocolVersion, Scope: "framework", Engine: Engine{Version: "v0.1.0"}, InputsDigest: Digest([]byte("inputs")), Artifacts: []Artifact{{Ownership: "framework-template", Path: "internal/auth/service.go", Source: source}}}
 }
 
 // writeFixture keeps all upgrade experiments outside repository working trees.
@@ -56,8 +56,8 @@ func TestBuildActionMatrix(t *testing.T) {
 				value := testSnapshot(old)
 				baseline = &value
 				if test.noOld {
-					baseline.Artifacts = append(baseline.Artifacts, Artifact{Path: "internal/auth/new.go", Source: old})
-					target.Artifacts = append(target.Artifacts, Artifact{Path: "internal/auth/collision.go", Source: next})
+					baseline.Artifacts = append(baseline.Artifacts, Artifact{Ownership: "framework-template", Path: "internal/auth/new.go", Source: old})
+					target.Artifacts = append(target.Artifacts, Artifact{Ownership: "framework-template", Path: "internal/auth/collision.go", Source: next})
 					writeFixture(t, root, "internal/auth/collision.go", local)
 				}
 			}
@@ -150,7 +150,7 @@ func TestBuildRetirementsAndConfigurationChangesNeverGuessOwnership(t *testing.T
 	root := t.TempDir()
 	target := testSnapshot("package auth\n")
 	baseline := target
-	baseline.Artifacts = append(append([]Artifact{}, baseline.Artifacts...), Artifact{Path: "internal/auth/retired.go", Source: "package auth\n"})
+	baseline.Artifacts = append(append([]Artifact{}, baseline.Artifacts...), Artifact{Ownership: "framework-template", Path: "internal/auth/retired.go", Source: "package auth\n"})
 	writeFixture(t, root, "internal/auth/retired.go", "package auth\nfunc Custom() {}\n")
 	plan, err := Build(root, target, &baseline)
 	if err != nil {
@@ -206,6 +206,21 @@ func TestValidateSnapshotRejectsUnsafeContracts(t *testing.T) {
 		{"digest bytes", func(s *Snapshot) { s.Artifacts[0].Digest = strings.Repeat("x", 64) }},
 		{"source mismatch", func(s *Snapshot) { s.Artifacts[0].Digest = Digest([]byte("other source")) }},
 		{"missing asset digest", func(s *Snapshot) { s.Artifacts[0].Ownership = "framework-asset"; s.Artifacts[0].Source = "" }},
+		{"missing ownership", func(s *Snapshot) { s.Artifacts[0].Ownership = "" }},
+		{"empty template source mismatch", func(s *Snapshot) { s.Artifacts[0].Source = ""; s.Artifacts[0].Digest = Digest([]byte("not empty")) }},
+		{"raw asset source", func(s *Snapshot) {
+			s.Artifacts[0].Ownership = "framework-asset"
+			s.Artifacts[0].Digest = Digest([]byte(s.Artifacts[0].Source))
+		}},
+		{"prefix collision", func(s *Snapshot) { s.Artifacts = append(s.Artifacts, Artifact{Path: "internal", Ownership: "seed"}) }},
+		{"case collision", func(s *Snapshot) {
+			copy := s.Artifacts[0]
+			copy.Path = strings.ToUpper(copy.Path)
+			s.Artifacts = append(s.Artifacts, copy)
+		}},
+		{"git case alias", func(s *Snapshot) { s.Artifacts[0].Path = ".GIT/config" }},
+		{"trailing dot alias", func(s *Snapshot) { s.Artifacts[0].Path = ".git./config" }},
+		{"environment case alias", func(s *Snapshot) { s.Artifacts[0].Path = ".ENV" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := testSnapshot("package auth\n")
@@ -217,6 +232,83 @@ func TestValidateSnapshotRejectsUnsafeContracts(t *testing.T) {
 				t.Fatal("build accepted unsafe snapshot")
 			}
 		})
+	}
+}
+
+// TestDeclarationHintsIncludeCompilerContracts catches changes hidden in package headers or actual directive comments.
+func TestDeclarationHintsIncludeCompilerContracts(t *testing.T) {
+	before := "//go:build linux\n\npackage old\n//go:embed old.txt\nvar Asset string\n"
+	after := "//go:build windows\n\npackage changed\n//go:embed new.txt\nvar Asset string\n"
+	changed, invalid := changedDeclarations(before, after)
+	if invalid || !reflect.DeepEqual(changed, []string{"build-constraints", "compiler-directives", "package"}) {
+		t.Fatalf("compiler contracts=%v invalid=%v", changed, invalid)
+	}
+	before = "package example\nconst Text = `\n//go:embed pretend.txt\n`\n"
+	after = "package example\nconst Text = `\n//go:embed other.txt\n`\n"
+	changed, invalid = changedDeclarations(before, after)
+	if invalid || !reflect.DeepEqual(changed, []string{"const Text"}) {
+		t.Fatalf("raw string treated as compiler directive: %v", changed)
+	}
+}
+
+// TestAlreadyReconciledDeclarationsAreNotOverlaps avoids reporting a conflict when app and target made the identical change.
+func TestAlreadyReconciledDeclarationsAreNotOverlaps(t *testing.T) {
+	root := t.TempDir()
+	baseline := testSnapshot("package auth\nfunc Login(){old()}\n")
+	target := testSnapshot("package auth\nfunc Login(){fixed()}\n")
+	writeFixture(t, root, "internal/auth/service.go", target.Artifacts[0].Source)
+	plan, err := Build(root, target, &baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Files[0].Overlaps) != 0 || plan.Files[0].Action != "matches-target" {
+		t.Fatalf("resolved declaration reported as overlapping: %+v", plan.Files[0])
+	}
+}
+
+// TestRequiredAndRetiredDerivedArtifactsRemainVisible avoids hiding required new output or deleting output from a disabled generator.
+func TestRequiredAndRetiredDerivedArtifactsRemainVisible(t *testing.T) {
+	root := t.TempDir()
+	target := testSnapshot("package auth\n")
+	target.Artifacts = append(target.Artifacts, Artifact{Path: "internal/events/accessors_gen.go", Ownership: "app-derived"}, Artifact{Path: "containers/observability/vmagent/metrics-targets.json", Ownership: "conditional-derived"})
+	baseline := testSnapshot("package auth\n")
+	baseline.Artifacts = append(baseline.Artifacts, Artifact{Path: "internal/queues/accessors_gen.go", Ownership: "app-derived"})
+	writeFixture(t, root, "internal/queues/accessors_gen.go", "owner customized queue output")
+	plan, err := Build(root, target, &baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := map[string]string{}
+	for _, file := range plan.Files {
+		actions[file.Path] = file.Action
+	}
+	for name, action := range map[string]string{"internal/events/accessors_gen.go": "generate-derived-after-reconciliation", "internal/queues/accessors_gen.go": "review-retired-derived", "containers/observability/vmagent/metrics-targets.json": "review-derived-policy"} {
+		if actions[name] != action {
+			t.Fatalf("%s=%s, want %s", name, actions[name], action)
+		}
+	}
+}
+
+// TestExecutableOwnerDriftIsNotPristine ensures an upstream content change cannot hide an app-specific executable-bit change.
+func TestExecutableOwnerDriftIsNotPristine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix executable bits")
+	}
+	root := t.TempDir()
+	baseline := testSnapshot("package auth\nfunc Old(){}\n")
+	baseline.Artifacts[0].Mode = 0o644
+	target := testSnapshot("package auth\nfunc New(){}\n")
+	target.Artifacts[0].Mode = 0o644
+	writeFixture(t, root, "internal/auth/service.go", baseline.Artifacts[0].Source)
+	if err := os.Chmod(filepath.Join(root, "internal/auth/service.go"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := Build(root, target, &baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Files[0].Action != "reconcile" || !plan.Files[0].ModeChanged {
+		t.Fatalf("owner mode was treated as pristine: %+v", plan.Files[0])
 	}
 }
 
@@ -304,7 +396,7 @@ func TestFrameworkOwnershipPoliciesSeparateRawAssetsSeedsSemanticAndDerived(t *t
 	root := t.TempDir()
 	target := testSnapshot("package auth\n")
 	target.Artifacts = []Artifact{
-		{Path: "internal/http/server.go", Source: "package http\n", Mode: 0o644},
+		{Ownership: "framework-template", Path: "internal/http/server.go", Source: "package http\n", Mode: 0o644},
 		{Path: "containers/logo.png", Ownership: "framework-asset", Digest: Digest([]byte{0xff, 0, 0xfe})},
 		{Path: "cmd/app/frontend/src/App.vue", Ownership: "seed"},
 		{Path: "app/worker/lifecycle.go", Ownership: "seed"},

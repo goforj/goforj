@@ -233,14 +233,14 @@ func generateCacheFiles(input generationInput) (int, error) {
 		return 0, fmt.Errorf("failed to format generated cache accessors: %w", err)
 	}
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, "internal", "caches", "manager_gen.go"), formattedManager)
+	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, CacheManagerPath), formattedManager)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, "internal", "caches", "accessors_gen.go"), formattedAccessors)
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, CacheAccessorsPath), formattedAccessors)
 	if err != nil {
 		return written, err
 	}

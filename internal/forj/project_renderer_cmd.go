@@ -16,7 +16,7 @@ type RenderCmd struct {
 	Timings        bool     `help:"Print render phase timings"`
 	Plan           bool     `help:"Inspect a framework upgrade without changing the project"`
 	JSON           bool     `help:"Print the experimental framework upgrade plan as JSON"`
-	FromRenderer   string   `help:"Comparison renderer executable supporting framework snapshot protocol v2"`
+	FromRenderer   string   `help:"Comparison renderer executable supporting the framework snapshot protocol"`
 	TargetRenderer string   `help:"Target renderer executable; defaults to this binary"`
 	Snapshot       bool     `help:"Emit the experimental framework renderer snapshot protocol" hidden:""`
 }

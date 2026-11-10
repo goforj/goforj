@@ -210,14 +210,14 @@ func generateEventFiles(input generationInput) (int, error) {
 		return 0, fmt.Errorf("failed to format generated events accessors: %w", err)
 	}
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, "internal", "events", "manager_gen.go"), formattedManager)
+	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, EventsManagerPath), formattedManager)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, "internal", "events", "accessors_gen.go"), formattedAccessors)
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, EventsAccessorsPath), formattedAccessors)
 	if err != nil {
 		return written, err
 	}

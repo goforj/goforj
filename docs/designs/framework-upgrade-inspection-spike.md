@@ -25,7 +25,7 @@ forj render --plan --json \
 ```
 
 The target defaults to the user-facing binary. It orchestrates renderer processes
-through experimental snapshot protocol v2 (`render --snapshot`). Component-only
+through experimental snapshot protocol v3 (`render --snapshot`). Component-only
 `--only` selection is not part of framework upgrade planning.
 
 Renderer processes receive disposable workspaces with projected configuration
@@ -65,12 +65,18 @@ application source and environment values never enter the snapshot protocol.
 | Shared semantic files | Review dependency/configuration contracts separately from template replacement |
 | Private environment layers | Preserve without reading or fingerprinting values |
 | App-derived output | Regenerate from actual reconciled app inputs; do not label app-specific bytes as dirty |
+| Conditional derived output | Review operator/runtime ownership policy before deciding to regenerate |
 | Unknown neighbors | Preserve without opening their contents |
 | Unclassified scaffold output | Report for explicit ownership review |
 
 Derived contracts cover cache, queue, storage, event, and mail managers/accessors;
-database connection generation; default and named App Wire output; and frontend
-build directories. A filename ending in `_gen.go` is insufficient evidence of
+database connection generation; default and named App Wire and API-index/OpenAPI
+output; templ compiler sidecars from actual starter sources; and selected frontend
+build directories. Resource and API-index paths come from shared catalogs used by
+the generators themselves. Only active output contracts are claimed. Missing
+outputs require generation, and retired outputs require review. Metrics discovery
+targets have conditional ownership because runtime policy can delegate them to an
+operator. A filename ending in `_gen.go` is insufficient evidence of
 ownership. Unknown generated-looking files remain preserved owner additions.
 
 Framework-owned differences produce actions such as `review-unversioned`,
@@ -88,13 +94,17 @@ The projection retains project/module names, component selections, starter-kit
 options, help formats, and named App participation/discovery. It deliberately
 excludes arbitrary owner configuration and private environment layers. Resource
 selection therefore uses component defaults, not inferred production drivers.
-Driver-dependent differences and owner extension behavior require review.
+Driver-dependent differences and owner extension behavior require review. The
+input digest uses a dedicated versioned recipe (contract v1), independent of
+incidental configuration schema changes. One frozen recipe is passed to both
+renderers, with configuration and App discovery rechecked before returning results.
 
 Both renderers receive the same current projected inputs. This does not recover
 historical configuration changes or prove that an app adopted the supplied
 baseline. Engine metadata is diagnostic, not cryptographic provenance.
 
-Go declaration hints omit comments and formatting but can still include
+Go declaration hints retain package names, build constraints, and Go compiler
+directives while omitting ordinary comments and formatting. They can still include
 semantically equivalent implementation changes. Disjoint declarations can depend
 on one another. A test explicitly verifies that non-overlapping declarations do
 not authorize a clean automatic upgrade.
@@ -102,6 +112,18 @@ not authorize a clean automatic upgrade.
 Named Apps participate in framework snapshots and Wire classification. The
 snapshot serializes its App rendering so inventory capture remains deterministic;
 ordinary rendering retains its existing concurrency.
+
+Managed files are opened through a rooted filesystem handle. Inspection rejects
+symlinks, bounds source reads to 4 MiB, streams raw-asset digests up to 64 MiB,
+and verifies file identity and compared state before returning a plan. Opaque
+private, seeded, and owner files are not opened. These checks detect common
+concurrent edits; inspection is not a filesystem transaction or an executable
+sandbox for supplied renderer binaries.
+
+Peer responses require strict, bounded JSON: canonical field names, no duplicate
+keys, valid UTF-8, limited nesting, and exactly one document. Artifacts require
+explicit ownership, portable paths without case collisions or file/directory
+overlap, and matching source digests. Ambiguous or incompatible peers fail closed.
 
 ## Reproducible reference inspection
 
@@ -133,15 +155,17 @@ The framework-wide run preserved every copied byte and file mode:
 
 | Inventory | Ship | Ditracker |
 | --- | ---: | ---: |
-| Total plan records | 1,143 | 631 |
-| Managed templates | 288 | 267 |
+| Total plan records | 1,145 | 636 |
+| Managed templates | 287 | 266 |
 | Managed raw assets | 13 | 13 |
 | Existing migrations preserved | 42 | 42 |
 | Owner seeds preserved | 520 | 12 |
-| Derived output contracts present | 16 | 12 |
-| Unknown owner additions preserved | 257 | 278 |
+| Derived output contracts present | 19 | 15 |
+| Missing active derived outputs | 0 | 1 |
+| Conditional derived output policies | 1 | 1 |
+| Unknown owner additions preserved | 255 | 278 |
 | Private environment contracts | 3 | 3 |
-| Shared semantic contracts | 4 | 4 |
+| Shared semantic contracts | 5 | 5 |
 | Files requiring reconciliation against the supplied reference | 4 | 4 |
 
 These records are transient inspection results, not files added to either app.
@@ -188,10 +212,25 @@ raw assets, migrations, owner seeds, derived output, malformed/unsafe snapshots,
 unknown additions, and template-output parity against ordinary rendering.
 
 The root Go suite, vet, focused race suite, and relevant nested modules are
-validated with workspace resolution disabled. Before generalizing the scope,
-the maximal MySQL composition also passed ordinary render, component contracts,
-Wire, build, and generated Go tests. The two protocol peers emit framework-wide
+validated with workspace resolution disabled. The reviewed build also passed the maximal MySQL composition through ordinary
+render, component contracts, Wire, build, and generated Go tests. The two protocol peers emit framework-wide
 snapshots and preserve the real reference projects' copied bytes and modes.
+
+The review included separate passes over input/compatibility preservation,
+artifact ownership and generation, filesystem/concurrency boundaries, and the
+cross-renderer protocol. Regression tests cover discovered-App inheritance,
+local-only module names, inactive component outputs, conditional metrics targets,
+missing/retired generation contracts, symlink replacement, concurrent managed-file
+changes, compiler directives, and ambiguous JSON. Three bounded fuzz campaigns
+exercised snapshot validation, JSON framing, and Go declaration hints for more
+than 770,000 combined inputs without failures. This is additional evidence, not a
+proof of arbitrary app compatibility.
+
+The Windows CI failure on the earlier revision came from a MySQL readiness test
+that indexed beyond its three shell responses after an unexpected extra probe.
+The sequencing test now injects deterministic responses; the separate shell
+contract test still verifies the probe script. No production readiness behavior
+changed.
 
 The inspector does not implement AI reconciliation or publication. The next
 steps are historical renderer/input recovery, resource-intent capture without

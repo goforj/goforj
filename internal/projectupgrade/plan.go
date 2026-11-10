@@ -9,6 +9,7 @@ import (
 	"go/ast"
 	"go/format"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"io/fs"
 	"os"
@@ -20,7 +21,7 @@ import (
 )
 
 // ProtocolVersion identifies the experimental renderer snapshot contract.
-const ProtocolVersion = 2
+const ProtocolVersion = 3
 
 // Snapshot contains reproducible scaffold output and ownership, never application or environment contents.
 type Snapshot struct {
@@ -88,25 +89,22 @@ func validArtifactPath(name string) bool {
 		return false
 	}
 	for _, part := range strings.Split(name, "/") {
-		if part == ".git" {
+		if strings.EqualFold(part, ".git") || strings.TrimRight(part, " .") != part {
 			return false
 		}
 	}
 	return true
 }
 
-// artifactOwnership retains the managed-template default for internally constructed comparison fixtures.
+// artifactOwnership returns only explicitly declared ownership so incomplete manifests cannot claim application source by default.
 func artifactOwnership(artifact Artifact) string {
-	if artifact.Ownership == "" {
-		return "framework-template"
-	}
 	return artifact.Ownership
 }
 
 // privateArtifact identifies environment layers without reading their values or fingerprints.
 func privateArtifact(name string) bool {
 	for _, part := range strings.Split(name, "/") {
-		if strings.HasPrefix(part, ".env") {
+		if strings.HasPrefix(strings.ToLower(part), ".env") {
 			return true
 		}
 	}
@@ -128,9 +126,10 @@ func ValidateSnapshot(snapshot Snapshot) error {
 		return fmt.Errorf("renderer snapshot requires provenance and 1 to 16384 artifacts")
 	}
 	seen := map[string]bool{}
+	portableNames := map[string]bool{}
 	for _, artifact := range snapshot.Artifacts {
 		name := artifact.Path
-		if !validArtifactPath(name) || seen[name] || len(artifact.Source) > 4<<20 || artifact.Mode > 0o777 {
+		if !validArtifactPath(name) || seen[name] || portableNames[strings.ToLower(name)] || len(artifact.Source) > 4<<20 || artifact.Mode > 0o777 {
 			return fmt.Errorf("invalid or duplicate framework artifact path, size, or mode: %q", name)
 		}
 		if artifact.Template != "" && !validArtifactPath(artifact.Template) {
@@ -144,7 +143,13 @@ func ValidateSnapshot(snapshot Snapshot) error {
 			if artifact.Ownership == "framework-asset" && artifact.Digest == "" {
 				return fmt.Errorf("raw assets require an exact output digest")
 			}
-		case "seed", "private", "semantic", "app-derived", "generated-context":
+			if artifact.Ownership == "framework-asset" && artifact.Source != "" {
+				return fmt.Errorf("raw assets must use digest-only payloads")
+			}
+			if artifact.Ownership != "framework-asset" && artifact.Digest != "" && Digest([]byte(artifact.Source)) != artifact.Digest {
+				return fmt.Errorf("template source does not match its digest")
+			}
+		case "seed", "private", "semantic", "app-derived", "conditional-derived", "generated-context":
 			if artifact.Source != "" || artifact.Digest != "" {
 				return fmt.Errorf("non-managed artifacts must not contain source or digests")
 			}
@@ -163,6 +168,14 @@ func ValidateSnapshot(snapshot Snapshot) error {
 			}
 		}
 		seen[name] = true
+		portableNames[strings.ToLower(name)] = true
+	}
+	for name := range seen {
+		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+			if portableNames[strings.ToLower(parent)] {
+				return fmt.Errorf("artifact paths overlap as file and directory: %q", name)
+			}
+		}
 	}
 	return nil
 }
@@ -201,10 +214,12 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	root, err = filepath.EvalSymlinks(absolute)
+	filesystem, err := os.OpenRoot(absolute)
 	if err != nil {
 		return Plan{}, err
 	}
+	defer filesystem.Close()
+	observations := map[string]observedFile{}
 	incoming, previous := artifactMap(target), map[string]Artifact{}
 	if baseline != nil {
 		previous = artifactMap(*baseline)
@@ -240,27 +255,37 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 			file.Action = "review-semantic"
 		case "migration":
 			file.Action = "preserve-migration"
-			if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(name))); os.IsNotExist(err) {
+			if _, err := filesystem.Lstat(filepath.FromSlash(name)); os.IsNotExist(err) {
 				file.Action = "review-new-migration"
 			} else if err != nil {
 				return Plan{}, err
 			}
 		case "app-derived":
-			if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(name))); os.IsNotExist(err) {
-				continue
+			if _, err := filesystem.Lstat(filepath.FromSlash(name)); os.IsNotExist(err) {
+				if !hasNext {
+					continue
+				}
+				file.Action = "generate-derived-after-reconciliation"
 			} else if err != nil {
 				return Plan{}, err
+			} else if !hasNext {
+				file.Action = "review-retired-derived"
+			} else {
+				file.Action = "regenerate-after-reconciliation"
 			}
-			file.Action = "regenerate-after-reconciliation"
 		case "generated-context":
 			file.Action = "review-generated-context"
+		case "conditional-derived":
+			file.Action = "review-derived-policy"
 		default:
-			current, exists, err := readRegular(root, name)
+			current, observation, err := readManaged(filesystem, name, ownership != "framework-asset")
 			if err != nil {
 				return Plan{}, err
 			}
+			observations[name] = observation
+			exists := observation.exists
 			if exists {
-				file.CurrentDigest = Digest(current)
+				file.CurrentDigest = observation.digest
 			}
 			if hasNext {
 				file.TargetDigest = artifactDigest(next)
@@ -269,12 +294,9 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 				file.BaselineDigest = artifactDigest(old)
 			}
 			if exists && next.Mode != 0 && runtime.GOOS != "windows" {
-				info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(name)))
-				if err != nil {
-					return Plan{}, err
-				}
-				file.ModeChanged = uint32(info.Mode().Perm())&0o111 != next.Mode&0o111
+				file.ModeChanged = observation.mode&0o111 != next.Mode&0o111
 			}
+
 			switch {
 			case !hasNext:
 				file.Action = "review-retirement"
@@ -288,7 +310,7 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 				file.Action = "review-unversioned"
 			case !hasOld:
 				file.Action = "review-collision"
-			case file.CurrentDigest == file.BaselineDigest:
+			case file.CurrentDigest == file.BaselineDigest && (old.Mode == 0 || runtime.GOOS == "windows" || observation.mode&0o111 == old.Mode&0o111):
 				file.Action = "upstream-only-relative-to-baseline"
 			case file.TargetDigest == file.BaselineDigest:
 				file.Action = "preserve-local-relative-to-baseline"
@@ -304,7 +326,7 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 					file.UpstreamDifferences, invalid = changedDeclarations(old.Source, next.Source)
 					file.InvalidGo = file.InvalidGo || invalid
 					for _, declaration := range file.LocalDifferences {
-						if contains(file.UpstreamDifferences, declaration) {
+						if contains(file.UpstreamDifferences, declaration) && contains(file.TargetDifferences, declaration) {
 							file.Overlaps = append(file.Overlaps, declaration)
 						}
 					}
@@ -313,46 +335,20 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 		}
 		plan.Files = append(plan.Files, file)
 	}
-	if err := preserveUnknown(root, "", paths, &plan); err != nil {
+	prefixes := map[string]bool{}
+	for name := range paths {
+		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+			prefixes[parent] = true
+		}
+	}
+	if err := preserveUnknown(filesystem, "", paths, prefixes, &plan); err != nil {
+		return Plan{}, err
+	}
+	if err := verifyObservations(filesystem, observations); err != nil {
 		return Plan{}, err
 	}
 	sort.Slice(plan.Files, func(i, j int) bool { return plan.Files[i].Path < plan.Files[j].Path })
 	return plan, nil
-}
-
-// preserveUnknown inventories additions only along catalogued directories and never follows symlinks or opens owner files.
-func preserveUnknown(root, directory string, known map[string]bool, plan *Plan) error {
-	entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(directory)))
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		name := path.Join(directory, entry.Name())
-		if entry.Name() == ".git" || known[name] {
-			continue
-		}
-		if privateArtifact(name) {
-			plan.Files = append(plan.Files, File{Path: name, Ownership: "private", Action: "preserve-private"})
-			continue
-		}
-		descendant := false
-		if entry.IsDir() {
-			for candidate := range known {
-				if strings.HasPrefix(candidate, name+"/") {
-					descendant = true
-					break
-				}
-			}
-		}
-		if descendant {
-			if err := preserveUnknown(root, name, known, plan); err != nil {
-				return err
-			}
-			continue
-		}
-		plan.Files = append(plan.Files, File{Path: name, Ownership: "unknown-neighbor", Action: "preserve"})
-	}
-	return nil
 }
 
 // artifactMap retains explicit presence independently from empty source contents.
@@ -364,37 +360,6 @@ func artifactMap(snapshot Snapshot) map[string]Artifact {
 	return result
 }
 
-// readRegular rejects symlinked ancestors and bounds reads without following application paths outside the project.
-func readRegular(root, name string) ([]byte, bool, error) {
-	parts := strings.Split(name, "/")
-	current := root
-	for index, part := range parts {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		if err != nil {
-			return nil, false, fmt.Errorf("inspect %s: %w", name, err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, false, fmt.Errorf("inspect %s: symlinks are not supported", name)
-		}
-		if index != len(parts)-1 {
-			if !info.IsDir() {
-				return nil, false, fmt.Errorf("inspect %s: parent is not a directory", name)
-			}
-			continue
-		}
-		if !info.Mode().IsRegular() || info.Size() > 4<<20 {
-			return nil, false, fmt.Errorf("inspect %s: expected a regular file of at most 4 MiB", name)
-		}
-		data, err := os.ReadFile(current)
-		return data, true, err
-	}
-	return nil, false, fmt.Errorf("empty artifact path")
-}
-
 // declarations fingerprints Go declarations while ignoring source positions and formatting differences.
 func declarations(source string) (map[string]string, bool) {
 	positions := token.NewFileSet()
@@ -402,7 +367,27 @@ func declarations(source string) (map[string]string, bool) {
 	if err != nil {
 		return nil, true
 	}
-	result := map[string]string{}
+	result := map[string]string{"package": file.Name.Name}
+	var constraints, directives []string
+	var lexer scanner.Scanner
+	lexer.Init(positions.AddFile("directives.go", -1, len(source)), []byte(source), nil, scanner.ScanComments)
+	for {
+		_, kind, line := lexer.Scan()
+		if kind == token.EOF {
+			break
+		}
+		if kind != token.COMMENT {
+			continue
+		}
+		if strings.HasPrefix(line, "//go:build ") || strings.HasPrefix(line, "// +build ") {
+			constraints = append(constraints, line)
+		}
+		if strings.HasPrefix(line, "//go:") && !strings.HasPrefix(line, "//go:build ") {
+			directives = append(directives, line)
+		}
+	}
+	result["build-constraints"] = strings.Join(constraints, "\n")
+	result["compiler-directives"] = strings.Join(directives, "\n")
 	for _, declaration := range file.Decls {
 		var key string
 		switch node := declaration.(type) {
