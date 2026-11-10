@@ -1,6 +1,6 @@
 # Observability
 
-This project renders a touchless local observability stack around the app's Prometheus-compatible metrics.
+This project renders a touchless local observability stack around the app's Prometheus-compatible metrics{{ if .Components.Grafana }} and OpenTelemetry traces{{ end }}.
 
 Use this stack when you want a local production-style view of the generated app without wiring external infrastructure by hand.
 
@@ -15,6 +15,10 @@ Use this stack when you want a local production-style view of the generated app 
   - forwards samples into VictoriaMetrics
 
 {{- if .Components.Grafana }}
+- `tempo`
+  - receives OTLP spans and stores traces in a persistent Docker volume
+  - provisioned as the Tempo datasource in Grafana
+
 - `grafana`
   - preprovisioned datasource and first-party dashboards
   - default local URL: `http://localhost:13001`
@@ -42,6 +46,9 @@ Use this stack when you want a local production-style view of the generated app 
 | VictoriaMetrics | `8428` | Local metrics storage and query API |
 {{- if .Components.Grafana }}
 | Grafana | `13001` | Local dashboard UI |
+| Tempo | `13200` | Local trace query API (`TEMPO_HTTP_PORT`) |
+| Tempo OTLP HTTP | `14318` | Host app trace ingestion (`TEMPO_OTLP_HTTP_PORT`) |
+| Tempo OTLP gRPC | `14317` | Host app trace ingestion (`TEMPO_OTLP_GRPC_PORT`) |
 {{- end }}
 
 `METRICS_PORT` is the primary shared-port default for the default app.
@@ -129,12 +136,23 @@ Framework-owned instrumentation can also be toggled per surface through the `MET
 - Framework-owned transport endpoints like `/metrics` itself and Lighthouse source routes are excluded from application HTTP request metrics.
 
 {{- if .Components.Grafana }}
+## Request Traces
+
+The `grafana` Compose profile includes Tempo, its persistent storage, a provisioned datasource, and [Traces Overview](http://localhost:13001/d/goforj-traces-overview). With `APP_ENV=local`, generated apps export automatically when that profile is active. Start the stack with `docker-compose up -d --build`, run `forj dev`, and request an application route. Open Traces Overview, select a service, and click a trace to inspect the span waterfall. Grafana Explore also supports TraceQL queries such as `{}`.
+
+Application spans created with standard OpenTelemetry APIs appear alongside framework spans. Lighthouse continues to show its richer local capture using the same OTel trace IDs.
+
+Explicit `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` settings override local Tempo. Use standard OTLP endpoint and header settings for Grafana Cloud or another backend. `OTEL_TRACES_EXPORTER=none` disables export; `OTEL_SDK_DISABLED=true` disables recording. Automatic export is inactive in production, staging, and test processes. See `internal/inspects/README.md` for sampling and instrumentation.
+
+The generated stack is for local development. Tempo has no built-in authentication and its published ports bind locally by default. Configure authentication, access controls, retention, and durable storage for a production deployment. Removing the Docker volume deletes its local trace history.
+
 ## Grafana
 
 Grafana is provisioned with:
 
-- datasource: VictoriaMetrics
+- datasources: VictoriaMetrics (metrics), Tempo (traces)
 - dashboards:
+  - Traces Overview
 {{- if .ProjectComponents.Cache }}
   - Cache Overview
 {{- end }}
@@ -163,7 +181,7 @@ Grafana is provisioned with:
 
 The dashboards are authored against GoForj's metric contract rather than generic third-party dashboard imports.
 
-Every generated dashboard includes an App filter backed by the emitted `app` metric label. Primitive dashboards also include filters for named accessors when applicable.
+Metric dashboards include an App filter backed by the emitted `app` metric label. Traces Overview uses the OpenTelemetry service name. Primitive dashboards also include filters for named accessors when applicable.
 
 {{- if .ProjectComponents.Cache }}
 - Cache Overview can be filtered to one named cache.

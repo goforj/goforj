@@ -1,0 +1,60 @@
+package inspects
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/goforj/env/v2"
+)
+
+// localTraceEndpoint limits automatic export to the generated local Grafana stack, outside test processes.
+func localTraceEndpoint(protocol string) (string, error) {
+	if "{{ and .ProjectComponents.Grafana .ProjectComponents.Observability .ProjectComponents.Docker }}" != "true" || env.IsAppEnvTesting() {
+		return "", nil
+	}
+	return traceEndpointForRuntime(protocol, env.IsHostEnvironment() || env.IsDockerInDocker())
+}
+
+// traceEndpointForRuntime follows the active Compose profile and its published host ports without changing OTEL settings.
+func traceEndpointForRuntime(protocol string, host bool) (string, error) {
+	if !env.IsAppEnvLocal() {
+		return "", nil
+	}
+	active := false
+	for _, profile := range strings.Split(os.Getenv("COMPOSE_PROFILES"), ",") {
+		if profile = strings.TrimSpace(profile); profile == "grafana" || profile == "*" {
+			active = true
+			break
+		}
+	}
+	if !active {
+		return "", nil
+	}
+	port, setting, published := "4318", "TEMPO_OTLP_HTTP_PORT", "14318"
+	if protocol == "grpc" {
+		port, setting, published = "4317", "TEMPO_OTLP_GRPC_PORT", "14317"
+	}
+	if !host {
+		return "http://tempo:" + port, nil
+	}
+	if value := strings.TrimSpace(os.Getenv(setting)); value != "" {
+		published = value
+	}
+	value, err := strconv.Atoi(published)
+	if err != nil || value < 1 || value > 65535 {
+		return "", fmt.Errorf("%s must be a port between 1 and 65535", setting)
+	}
+	address := strings.TrimSpace(os.Getenv("IP_ADDRESS"))
+	if address == "" || address == "0.0.0.0" {
+		address = "127.0.0.1"
+	} else if address == "::" {
+		address = "::1"
+	}
+	if net.ParseIP(address) == nil {
+		return "", fmt.Errorf("IP_ADDRESS must be an IP address")
+	}
+	return "http://" + net.JoinHostPort(address, strconv.Itoa(value)), nil
+}

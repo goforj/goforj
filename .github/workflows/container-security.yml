@@ -109,6 +109,9 @@ jobs:
     name: template image (${{ matrix.name }})
     needs: template-image-inventory
     runs-on: ubuntu-latest
+    env:
+      # Tempo's multi-platform archive fails Docker export analysis; other images use the pulled copy.
+      TRIVY_IMAGE_SRC: ${{ startsWith(matrix.ref, 'grafana/tempo:') && 'remote' || 'docker,containerd,podman,remote' }}
     strategy:
       fail-fast: false
       max-parallel: 3

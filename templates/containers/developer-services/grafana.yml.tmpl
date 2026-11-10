@@ -1,6 +1,10 @@
 {{- define "developer-service-grafana-volumes" }}
   grafana:
     driver: local
+{{- if .Components.Grafana }}
+  tempo:
+    driver: local
+{{- end }}
 {{ end -}}
 
 {{- define "developer-service-grafana-services" }}
@@ -17,6 +21,9 @@
 {{- end }}
     depends_on:
       - victoriametrics
+{{- if .Components.Grafana }}
+      - tempo
+{{- end }}
     ports:
       - ${IP_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-13001}:3000
     environment:
@@ -29,6 +36,25 @@
     networks:
       - backend
 {{- if .Components.Grafana }}
+
+  tempo:
+    profiles: [grafana]
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    build:
+      context: ./containers/observability/tempo
+    command: ["-target=all", "-config.file=/etc/tempo.yaml"]
+    environment:
+      - TZ=${TZ:-UTC}
+    ports:
+      - ${IP_ADDRESS:-127.0.0.1}:${TEMPO_HTTP_PORT:-13200}:3200
+      - ${IP_ADDRESS:-127.0.0.1}:${TEMPO_OTLP_GRPC_PORT:-14317}:4317
+      - ${IP_ADDRESS:-127.0.0.1}:${TEMPO_OTLP_HTTP_PORT:-14318}:4318
+    volumes:
+      - tempo:/var/tempo
+    networks:
+      - backend
 
   grafana-seed:
     profiles: [grafana]

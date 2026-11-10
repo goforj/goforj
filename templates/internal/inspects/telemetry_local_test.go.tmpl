@@ -1,0 +1,73 @@
+package inspects
+
+import "testing"
+
+// TestLocalTraceEndpointDoesNotExportFromTests prevents normal generated tests from contacting Docker services.
+func TestLocalTraceEndpointDoesNotExportFromTests(t *testing.T) {
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("COMPOSE_PROFILES", "grafana")
+	got, err := localTraceEndpoint("http/protobuf")
+	if err != nil || got != "" {
+		t.Fatalf("test process endpoint = %q, %v", got, err)
+	}
+}
+
+// TestTraceEndpointForRuntime covers local profile selection, host routing, and dormant invalid configuration.
+func TestTraceEndpointForRuntime(t *testing.T) {
+	for _, tc := range []struct {
+		name, environment, profiles, protocol, httpPort, grpcPort, want string
+		host, invalid                                                   bool
+	}{
+		{name: "host", environment: "local", profiles: "grafana", host: true, want: "http://127.0.0.1:14318"},
+		{name: "container", environment: "local", profiles: "grafana", want: "http://tempo:4318"},
+		{name: "grpc host", environment: "local", profiles: "grafana", protocol: "grpc", host: true, want: "http://127.0.0.1:14317"},
+		{name: "grpc container", environment: "local", profiles: "grafana", protocol: "grpc", want: "http://tempo:4317"},
+		{name: "custom http", environment: "local", profiles: "other, grafana ", httpPort: "15418", host: true, want: "http://127.0.0.1:15418"},
+		{name: "custom grpc", environment: "local", profiles: "*", protocol: "grpc", grpcPort: "15417", host: true, want: "http://127.0.0.1:15417"},
+		{name: "production", environment: "production", profiles: "grafana", httpPort: "invalid", host: true},
+		{name: "staging", environment: "staging", profiles: "grafana", host: true},
+		{name: "disabled", environment: "local", profiles: "victoriametrics", httpPort: "invalid", host: true},
+		{name: "exact profile", environment: "local", profiles: "mygrafana", host: true},
+		{name: "invalid port", environment: "local", profiles: "grafana", httpPort: "invalid", host: true, invalid: true},
+		{name: "zero port", environment: "local", profiles: "grafana", httpPort: "0", host: true, invalid: true},
+		{name: "large port", environment: "local", profiles: "grafana", grpcPort: "65536", protocol: "grpc", host: true, invalid: true},
+		{name: "container ignores host port", environment: "local", profiles: "grafana", httpPort: "invalid", want: "http://tempo:4318"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("IP_ADDRESS", "")
+			t.Setenv("APP_ENV", tc.environment)
+			t.Setenv("COMPOSE_PROFILES", tc.profiles)
+			t.Setenv("TEMPO_OTLP_HTTP_PORT", tc.httpPort)
+			t.Setenv("TEMPO_OTLP_GRPC_PORT", tc.grpcPort)
+			got, err := traceEndpointForRuntime(tc.protocol, tc.host)
+			if (err != nil) != tc.invalid || got != tc.want {
+				t.Fatalf("endpoint = %q, %v; want %q, invalid=%v", got, err, tc.want, tc.invalid)
+			}
+		})
+	}
+}
+
+// TestTraceEndpointHostAddress follows the Compose bind address, including IPv6 and wildcard binds.
+func TestTraceEndpointHostAddress(t *testing.T) {
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("COMPOSE_PROFILES", "grafana")
+	t.Setenv("TEMPO_OTLP_HTTP_PORT", "")
+	for _, tc := range []struct {
+		address, want string
+		invalid       bool
+	}{
+		{address: "127.0.0.2", want: "http://127.0.0.2:14318"},
+		{address: "0.0.0.0", want: "http://127.0.0.1:14318"},
+		{address: "::", want: "http://[::1]:14318"},
+		{address: "::1", want: "http://[::1]:14318"},
+		{address: "invalid", invalid: true},
+	} {
+		t.Run(tc.address, func(t *testing.T) {
+			t.Setenv("IP_ADDRESS", tc.address)
+			got, err := traceEndpointForRuntime("http/protobuf", true)
+			if got != tc.want || (err != nil) != tc.invalid {
+				t.Fatalf("endpoint = %q, %v; want %q, invalid=%v", got, err, tc.want, tc.invalid)
+			}
+		})
+	}
+}

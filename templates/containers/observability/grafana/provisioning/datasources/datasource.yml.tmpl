@@ -8,3 +8,17 @@ datasources:
     url: http://victoriametrics:8428
     isDefault: true
     editable: false
+
+  - name: Tempo
+    uid: goforj-tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: false
+    editable: false
+    jsonData:
+      httpMethod: GET
+      nodeGraph:
+        enabled: true
+      streamingEnabled:
+        search: false

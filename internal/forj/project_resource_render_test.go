@@ -30,6 +30,7 @@ var developmentServiceComposeOverrideKeys = []string{
 	"MEMCACHED_PORT", "MEMCACHED_MEMORY_MB",
 	"SFTPGO_SFTP_PORT", "SFTPGO_HTTP_PORT", "SFTPGO_ADMIN_USERNAME", "SFTPGO_ADMIN_PASSWORD",
 	"ADMINER_PORT", "JAEGER_UI_PORT", "JAEGER_OTLP_GRPC_PORT", "JAEGER_OTLP_HTTP_PORT",
+	"TEMPO_HTTP_PORT", "TEMPO_OTLP_GRPC_PORT", "TEMPO_OTLP_HTTP_PORT",
 	"QDRANT_HTTP_PORT", "QDRANT_GRPC_PORT", "TEMPORAL_GRPC_PORT", "TEMPORAL_UI_PORT",
 	"KEYCLOAK_HTTP_PORT", "KEYCLOAK_MEMORY_LIMIT", "KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME", "KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD",
 	"MOCKSERVER_PORT", "MOCKSERVER_MEMORY_LIMIT", "MOCKSERVER_LOG_LEVEL",
@@ -210,7 +211,7 @@ func TestDeveloperServiceCatalogMatchesRenderedSurfaces(t *testing.T) {
 		"meilisearch":     {"meilisearch"},
 		"mailpit":         {"mailpit"},
 		"victoriametrics": {"victoriametrics", "vmagent"},
-		"grafana":         {"grafana", "grafana-seed", "victoriametrics", "vmagent"},
+		"grafana":         {"grafana", "grafana-seed", "tempo", "victoriametrics", "vmagent"},
 	}
 	for _, profile := range profiles {
 		got := ownersByProfile[profile]

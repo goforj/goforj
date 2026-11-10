@@ -4,7 +4,15 @@
 
 ## OpenTelemetry
 
-Tracing support is included in every app. New projects include a commented OpenTelemetry section in `.env`. Export is off until configured, so local development does not require a collector. Uncomment `OTEL_EXPORTER_OTLP_ENDPOINT` and point it at your collector to enable OTLP HTTP/protobuf export. No code changes are needed; the service name defaults to the Go module path and current app name.
+Tracing support is included in every app. New projects include a commented OpenTelemetry section in `.env`. The service name defaults to the Go module path and current app name.
+
+{{- if and .ProjectComponents.Grafana .ProjectComponents.Observability .ProjectComponents.Docker }}
+The generated local Grafana stack receives traces automatically through Tempo when `APP_ENV=local` and the `grafana` Compose profile is active. Start the stack with `docker-compose up -d --build`, run `forj dev`, and open [Traces Overview](http://localhost:13001/d/goforj-traces-overview). No datasource setup or active `OTEL_*` settings are needed. Test processes never activate this default.
+
+Host apps use `127.0.0.1:14318`; container apps use `tempo:4318`. gRPC uses host port `14317` or container port `4317`. Host routing follows `IP_ADDRESS` and the `TEMPO_OTLP_HTTP_PORT` / `TEMPO_OTLP_GRPC_PORT` overrides. Explicit OTLP endpoints take precedence. Set `OTEL_TRACES_EXPORTER=none` to keep only Lighthouse, or disable the `grafana` profile to stop automatic export. Production and staging require explicit exporter configuration.
+{{- else }}
+Export is off until configured, so local development does not require a collector. Uncomment `OTEL_EXPORTER_OTLP_ENDPOINT` and point it at your collector to enable OTLP HTTP/protobuf export. No code changes are needed.
+{{- end }}
 
 For an explicit exporter selection and service name:
 
