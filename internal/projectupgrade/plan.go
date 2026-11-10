@@ -10,17 +10,19 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
 
 // ProtocolVersion identifies the experimental renderer snapshot contract.
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
-// Snapshot contains only reproducible, non-secret template output, never application or environment contents.
+// Snapshot contains reproducible scaffold output and ownership, never application or environment contents.
 type Snapshot struct {
 	Protocol     int        `json:"protocol"`
 	Scope        string     `json:"scope"`
@@ -36,10 +38,14 @@ type Engine struct {
 	Dirty   bool   `json:"dirty"`
 }
 
-// Artifact is an incoming framework template, not a declaration of ownership over neighboring files.
+// Artifact describes one scaffold path or downstream generator contract without claiming ownership over its neighbors.
 type Artifact struct {
-	Path   string `json:"path"`
-	Source string `json:"source"`
+	Path      string `json:"path"`
+	Source    string `json:"source,omitempty"`
+	Digest    string `json:"digest,omitempty"`
+	Ownership string `json:"ownership,omitempty"`
+	Template  string `json:"template,omitempty"`
+	Mode      uint32 `json:"mode,omitempty"`
 }
 
 // Plan describes comparisons for review and deliberately carries no permission to apply them.
@@ -57,6 +63,7 @@ type Plan struct {
 type File struct {
 	Path                string   `json:"path"`
 	Ownership           string   `json:"ownership"`
+	PreviousOwnership   string   `json:"previous_ownership,omitempty"`
 	Action              string   `json:"action"`
 	CurrentDigest       string   `json:"current_digest,omitempty"`
 	BaselineDigest      string   `json:"baseline_digest,omitempty"`
@@ -66,6 +73,7 @@ type File struct {
 	UpstreamDifferences []string `json:"upstream_differences,omitempty"`
 	Overlaps            []string `json:"overlaps,omitempty"`
 	InvalidGo           bool     `json:"invalid_go,omitempty"`
+	ModeChanged         bool     `json:"mode_changed,omitempty"`
 }
 
 // Digest fingerprints exact output so reconstruction can be checked without storing baseline copies in an app.
@@ -74,9 +82,40 @@ func Digest(source []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// ValidateSnapshot limits foreign renderer output to the advertised, bounded auth source surface.
+// validArtifactPath confines every renderer artifact to a relative project path without platform-specific escapes.
+func validArtifactPath(name string) bool {
+	if !fs.ValidPath(name) || name == "." || path.Clean(name) != name || strings.ContainsAny(name, "\\:\x00") {
+		return false
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == ".git" {
+			return false
+		}
+	}
+	return true
+}
+
+// artifactOwnership retains the managed-template default for internally constructed comparison fixtures.
+func artifactOwnership(artifact Artifact) string {
+	if artifact.Ownership == "" {
+		return "framework-template"
+	}
+	return artifact.Ownership
+}
+
+// privateArtifact identifies environment layers without reading their values or fingerprints.
+func privateArtifact(name string) bool {
+	for _, part := range strings.Split(name, "/") {
+		if strings.HasPrefix(part, ".env") {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateSnapshot bounds a framework manifest and rejects source payloads for private, seeded, semantic, or derived artifacts.
 func ValidateSnapshot(snapshot Snapshot) error {
-	if snapshot.Protocol != ProtocolVersion || snapshot.Scope != "auth" {
+	if snapshot.Protocol != ProtocolVersion || snapshot.Scope != "framework" {
 		return fmt.Errorf("unsupported renderer snapshot protocol or scope")
 	}
 	if len(snapshot.InputsDigest) != 64 {
@@ -85,32 +124,65 @@ func ValidateSnapshot(snapshot Snapshot) error {
 	if _, err := hex.DecodeString(snapshot.InputsDigest); err != nil {
 		return fmt.Errorf("renderer snapshot input digest is invalid")
 	}
-	if snapshot.Engine.Version == "" || len(snapshot.Artifacts) == 0 || len(snapshot.Artifacts) > 256 {
-		return fmt.Errorf("renderer snapshot requires provenance and 1 to 256 artifacts")
+	if snapshot.Engine.Version == "" || len(snapshot.Artifacts) == 0 || len(snapshot.Artifacts) > 16384 {
+		return fmt.Errorf("renderer snapshot requires provenance and 1 to 16384 artifacts")
 	}
 	seen := map[string]bool{}
 	for _, artifact := range snapshot.Artifacts {
 		name := artifact.Path
-		allowed := name == "internal/mail/auth_delivery.go" || (path.Dir(name) == "internal/auth" && (strings.HasSuffix(name, ".go") || name == "internal/auth/README.md"))
-		if !allowed || path.Clean(name) != name || strings.Contains(name, "\\") || strings.ContainsRune(name, 0) || seen[name] || len(artifact.Source) > 4<<20 {
-			return fmt.Errorf("invalid or duplicate auth artifact path or size: %q", name)
+		if !validArtifactPath(name) || seen[name] || len(artifact.Source) > 4<<20 || artifact.Mode > 0o777 {
+			return fmt.Errorf("invalid or duplicate framework artifact path, size, or mode: %q", name)
+		}
+		if artifact.Template != "" && !validArtifactPath(artifact.Template) {
+			return fmt.Errorf("invalid source template path")
+		}
+		switch artifactOwnership(artifact) {
+		case "framework-template", "framework-asset", "migration":
+			if privateArtifact(name) {
+				return fmt.Errorf("environment artifacts must remain private")
+			}
+			if artifact.Ownership == "framework-asset" && artifact.Digest == "" {
+				return fmt.Errorf("raw assets require an exact output digest")
+			}
+		case "seed", "private", "semantic", "app-derived", "generated-context":
+			if artifact.Source != "" || artifact.Digest != "" {
+				return fmt.Errorf("non-managed artifacts must not contain source or digests")
+			}
+		default:
+			return fmt.Errorf("unsupported artifact ownership")
+		}
+		if artifact.Digest != "" {
+			if len(artifact.Digest) != 64 {
+				return fmt.Errorf("invalid artifact digest")
+			}
+			if _, err := hex.DecodeString(artifact.Digest); err != nil {
+				return fmt.Errorf("invalid artifact digest")
+			}
+			if artifact.Source != "" && Digest([]byte(artifact.Source)) != artifact.Digest {
+				return fmt.Errorf("artifact source does not match its digest")
+			}
 		}
 		seen[name] = true
-	}
-	if !seen["internal/auth/service.go"] {
-		return fmt.Errorf("auth snapshot requires internal/auth/service.go")
 	}
 	return nil
 }
 
-// Build compares exact output while preserving missing files and treating every supplied baseline as unverified provenance.
+// artifactDigest supports source-bearing templates and digest-only raw assets without storing binary baseline copies.
+func artifactDigest(artifact Artifact) string {
+	if artifact.Digest != "" {
+		return artifact.Digest
+	}
+	return Digest([]byte(artifact.Source))
+}
+
+// Build classifies a framework-wide manifest without treating owner, private, semantic, or derived bytes as template drift.
 func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
-	plan := Plan{Protocol: ProtocolVersion, Scope: "auth", Target: target.Engine, BaselineProvenance: "unknown", Files: []File{}, Notes: []string{
-		"Experimental inspection only: no application files, dependencies, migrations, or generated output are changed.",
-		"A supplied baseline is a comparison reference, not proof that this application adopted it. Both renderers use current inputs; historical input changes remain unknown.",
-		"Declaration overlap is a review hint, not a semantic merge or proof of security compatibility. Inspect callers, persistence, frontend expectations, and regression tests.",
-		"Scope: shared auth templates and neighboring auth files, plus selected derived-output context. Wiring, routes, migrations, frontend, and other framework surfaces require separate review.",
-		"Derived output must be regenerated from actual application inputs after source reconciliation. This inspector does not judge whether derived bytes are correct.",
+	plan := Plan{Protocol: ProtocolVersion, Scope: "framework", Target: target.Engine, BaselineProvenance: "unknown", Files: []File{}, Notes: []string{
+		"Experimental framework inspection only: no application files, dependencies, migrations, or generated output are changed.",
+		"A supplied baseline is a comparison reference, not proof that this application adopted it. Both renderers use current projected configuration; historical input changes remain unknown.",
+		"Artifacts come from the ordinary renderer scaffold phase, including named Apps. Runtime environment and owner extension inputs are not copied; driver-dependent output uses component defaults and requires review.",
+		"Seeded application files and neighboring owner additions are preserved. Environment layers are private; dependency and configuration files require semantic review.",
+		"Declaration overlap is a review hint, not a semantic merge or proof of compatibility. App-derived output must be regenerated from actual reconciled application inputs; the planner does not judge its bytes.",
 	}}
 	if err := ValidateSnapshot(target); err != nil {
 		return Plan{}, err
@@ -133,7 +205,7 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	incoming, previous := artifactMap(target), map[string]string{}
+	incoming, previous := artifactMap(target), map[string]Artifact{}
 	if baseline != nil {
 		previous = artifactMap(*baseline)
 	}
@@ -145,99 +217,151 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 		paths[name] = true
 	}
 	for _, name := range sortedKeys(paths) {
-		current, exists, err := readRegular(root, name)
-		if err != nil {
-			return Plan{}, err
-		}
 		next, hasNext := incoming[name]
 		old, hasOld := previous[name]
-		file := File{Path: name, Ownership: "framework-template"}
-		if exists {
-			file.CurrentDigest = Digest(current)
+		artifact := next
+		if !hasNext {
+			artifact = old
 		}
-		if hasNext {
-			file.TargetDigest = Digest([]byte(next))
+		ownership := artifactOwnership(artifact)
+		file := File{Path: name, Ownership: ownership}
+		if hasNext && hasOld && artifactOwnership(old) != ownership {
+			file.PreviousOwnership = artifactOwnership(old)
+			file.Action = "review-ownership-transition"
+			plan.Files = append(plan.Files, file)
+			continue
 		}
-		if hasOld {
-			file.BaselineDigest = Digest([]byte(old))
-		}
-		switch {
-		case !hasNext:
-			file.Action = "review-retirement"
-		case !exists:
-			file.Action = "review-missing"
-		case string(current) == next:
-			file.Action = "matches-target"
-		case baseline == nil:
-			file.Action = "review-unversioned"
-		case !hasOld:
-			file.Action = "review-collision"
-		case string(current) == old:
-			file.Action = "upstream-only-relative-to-baseline"
-		case next == old:
-			file.Action = "preserve-local-relative-to-baseline"
+		switch ownership {
+		case "seed":
+			file.Action = "preserve-seed"
+		case "private":
+			file.Action = "preserve-private"
+		case "semantic":
+			file.Action = "review-semantic"
+		case "migration":
+			file.Action = "preserve-migration"
+			if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(name))); os.IsNotExist(err) {
+				file.Action = "review-new-migration"
+			} else if err != nil {
+				return Plan{}, err
+			}
+		case "app-derived":
+			if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(name))); os.IsNotExist(err) {
+				continue
+			} else if err != nil {
+				return Plan{}, err
+			}
+			file.Action = "regenerate-after-reconciliation"
+		case "generated-context":
+			file.Action = "review-generated-context"
 		default:
-			file.Action = "reconcile"
-		}
-		if exists && hasNext && strings.HasSuffix(name, ".go") {
-			file.TargetDifferences, file.InvalidGo = changedDeclarations(string(current), next)
+			current, exists, err := readRegular(root, name)
+			if err != nil {
+				return Plan{}, err
+			}
+			if exists {
+				file.CurrentDigest = Digest(current)
+			}
+			if hasNext {
+				file.TargetDigest = artifactDigest(next)
+			}
 			if hasOld {
-				var invalid bool
-				file.LocalDifferences, invalid = changedDeclarations(old, string(current))
-				file.InvalidGo = file.InvalidGo || invalid
-				file.UpstreamDifferences, invalid = changedDeclarations(old, next)
-				file.InvalidGo = file.InvalidGo || invalid
-				for _, declaration := range file.LocalDifferences {
-					if contains(file.UpstreamDifferences, declaration) {
-						file.Overlaps = append(file.Overlaps, declaration)
+				file.BaselineDigest = artifactDigest(old)
+			}
+			if exists && next.Mode != 0 && runtime.GOOS != "windows" {
+				info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(name)))
+				if err != nil {
+					return Plan{}, err
+				}
+				file.ModeChanged = uint32(info.Mode().Perm())&0o111 != next.Mode&0o111
+			}
+			switch {
+			case !hasNext:
+				file.Action = "review-retirement"
+			case !exists:
+				file.Action = "review-missing"
+			case file.CurrentDigest == file.TargetDigest && file.ModeChanged:
+				file.Action = "review-mode"
+			case file.CurrentDigest == file.TargetDigest:
+				file.Action = "matches-target"
+			case baseline == nil:
+				file.Action = "review-unversioned"
+			case !hasOld:
+				file.Action = "review-collision"
+			case file.CurrentDigest == file.BaselineDigest:
+				file.Action = "upstream-only-relative-to-baseline"
+			case file.TargetDigest == file.BaselineDigest:
+				file.Action = "preserve-local-relative-to-baseline"
+			default:
+				file.Action = "reconcile"
+			}
+			if exists && hasNext && next.Source != "" && strings.HasSuffix(name, ".go") {
+				file.TargetDifferences, file.InvalidGo = changedDeclarations(string(current), next.Source)
+				if hasOld && old.Source != "" {
+					var invalid bool
+					file.LocalDifferences, invalid = changedDeclarations(old.Source, string(current))
+					file.InvalidGo = file.InvalidGo || invalid
+					file.UpstreamDifferences, invalid = changedDeclarations(old.Source, next.Source)
+					file.InvalidGo = file.InvalidGo || invalid
+					for _, declaration := range file.LocalDifferences {
+						if contains(file.UpstreamDifferences, declaration) {
+							file.Overlaps = append(file.Overlaps, declaration)
+						}
 					}
 				}
 			}
 		}
 		plan.Files = append(plan.Files, file)
 	}
-	// The catalog owns individual artifacts, never the directory containing owner additions.
-	entries, err := os.ReadDir(filepath.Join(root, "internal/auth"))
-	if err != nil && !os.IsNotExist(err) {
+	if err := preserveUnknown(root, "", paths, &plan); err != nil {
 		return Plan{}, err
-	}
-	for _, entry := range entries {
-		name := "internal/auth/" + entry.Name()
-		if !paths[name] {
-			plan.Files = append(plan.Files, File{Path: name, Ownership: "unknown-neighbor", Action: "preserve"})
-		}
-	}
-	for _, name := range derivedContextPaths() {
-		_, exists, err := readRegular(root, name)
-		if err != nil {
-			return Plan{}, err
-		}
-		if exists {
-			plan.Files = append(plan.Files, File{Path: name, Ownership: "app-derived", Action: "regenerate-after-reconciliation"})
-		}
 	}
 	sort.Slice(plan.Files, func(i, j int) bool { return plan.Files[i].Path < plan.Files[j].Path })
 	return plan, nil
 }
 
-// artifactMap retains explicit presence independently from empty source contents.
-func artifactMap(snapshot Snapshot) map[string]string {
-	result := make(map[string]string, len(snapshot.Artifacts))
-	for _, artifact := range snapshot.Artifacts {
-		result[artifact.Path] = artifact.Source
+// preserveUnknown inventories additions only along catalogued directories and never follows symlinks or opens owner files.
+func preserveUnknown(root, directory string, known map[string]bool, plan *Plan) error {
+	entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(directory)))
+	if err != nil {
+		return err
 	}
-	return result
+	for _, entry := range entries {
+		name := path.Join(directory, entry.Name())
+		if entry.Name() == ".git" || known[name] {
+			continue
+		}
+		if privateArtifact(name) {
+			plan.Files = append(plan.Files, File{Path: name, Ownership: "private", Action: "preserve-private"})
+			continue
+		}
+		descendant := false
+		if entry.IsDir() {
+			for candidate := range known {
+				if strings.HasPrefix(candidate, name+"/") {
+					descendant = true
+					break
+				}
+			}
+		}
+		if descendant {
+			if err := preserveUnknown(root, name, known, plan); err != nil {
+				return err
+			}
+			continue
+		}
+		plan.Files = append(plan.Files, File{Path: name, Ownership: "unknown-neighbor", Action: "preserve"})
+	}
+	return nil
 }
 
-// derivedContextPaths enumerates known generator contracts rather than guessing ownership from a filename suffix.
-func derivedContextPaths() []string {
-	paths := []string{"app/wire/wire_gen.go"}
-	for _, resource := range []string{"caches", "queues", "storages"} {
-		for _, output := range []string{"accessors_gen.go", "manager_gen.go"} {
-			paths = append(paths, "internal/"+resource+"/"+output)
-		}
+// artifactMap retains explicit presence independently from empty source contents.
+func artifactMap(snapshot Snapshot) map[string]Artifact {
+	result := make(map[string]Artifact, len(snapshot.Artifacts))
+	for _, artifact := range snapshot.Artifacts {
+		result[artifact.Path] = artifact
 	}
-	return paths
+	return result
 }
 
 // readRegular rejects symlinked ancestors and bounds reads without following application paths outside the project.

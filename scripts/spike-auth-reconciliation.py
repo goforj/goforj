@@ -101,7 +101,7 @@ def main():
     parser.add_argument("--forj", required=True, type=Path)
     parser.add_argument("--ditracker", required=True, type=Path)
     arguments = parser.parse_args()
-    helpers = runpy.run_path(str(Path(__file__).with_name("spike-auth-upgrade.py")))
+    helpers = runpy.run_path(str(Path(__file__).with_name("spike-framework-upgrade.py")))
     workspace = Path(tempfile.mkdtemp(prefix="goforj-auth-reconciliation-", dir="/tmp"))
     root = workspace / "ditracker"
     root.mkdir()
@@ -134,7 +134,7 @@ def main():
     if green["exit_code"] or green["passed_tests_and_subtests"] < 3:
         raise RuntimeError("security regression still fails after the candidate fix")
     binary = arguments.forj.expanduser().resolve(strict=True)
-    snapshot = json.loads(subprocess.check_output([str(binary), "render", "--only", "auth", "--snapshot"], cwd=root, env=environment, text=True, timeout=30))
+    snapshot = json.loads(subprocess.check_output([str(binary), "render", "--snapshot"], cwd=root, env=environment, text=True, timeout=30))
     incoming = next(artifact["source"] for artifact in snapshot["artifacts"] if artifact["path"] == "internal/auth/service.go")
     method = re.search(r"(?ms)^func \(s \*Service\) AuthenticateRequest\(.*?^}", incoming)
     if method is None:

@@ -49,7 +49,7 @@ def main():
     parser.add_argument("--from-renderer", type=Path)
     arguments = parser.parse_args()
     binary = arguments.forj.expanduser().resolve(strict=True)
-    workspace = Path(tempfile.mkdtemp(prefix="goforj-auth-upgrade-", dir="/tmp"))
+    workspace = Path(tempfile.mkdtemp(prefix="goforj-framework-upgrade-", dir="/tmp"))
     results = []
     environment = {key: value for key, value in os.environ.items() if key in ("PATH", "HOME")}
     environment.update({"TMPDIR": "/tmp", "APP_ENV": "local"})
@@ -60,7 +60,7 @@ def main():
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
         copy_committed_app(source, destination)
         before = tree_digest(destination)
-        command = [str(binary), "render", "--only", "auth", "--plan", "--json"]
+        command = [str(binary), "render", "--plan", "--json"]
         if arguments.from_renderer:
             command += ["--from-renderer", str(arguments.from_renderer.expanduser().resolve(strict=True))]
         result = subprocess.run(command, cwd=destination, env=environment, capture_output=True, text=True, timeout=90)
@@ -74,7 +74,10 @@ def main():
         results.append({
             "project": source.name,
             "revision": revision,
+            "scope": plan["scope"],
+            "planned_artifacts": len(plan["files"]),
             "unchanged_bytes_and_modes": unchanged,
+            "ownerships": dict(sorted(collections.Counter(file["ownership"] for file in plan["files"]).items())),
             "actions": dict(sorted(collections.Counter(file["action"] for file in plan["files"]).items())),
         })
     summary = {"workspace": str(workspace), "references": results}

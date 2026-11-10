@@ -12,13 +12,13 @@ type RenderCmd struct {
 	renderer *ProjectRenderer
 
 	Components     []string `help:"Components to render"`
-	Only           string   `help:"Render OpenAPI handlers (openapi), or inspect auth with --plan"`
+	Only           string   `help:"Render OpenAPI handlers (openapi), or inspect framework upgrades with --plan"`
 	Timings        bool     `help:"Print render phase timings"`
-	Plan           bool     `help:"Inspect an auth upgrade without changing the project (requires --only auth)"`
-	JSON           bool     `help:"Print the experimental auth upgrade plan as JSON"`
-	FromRenderer   string   `help:"Comparison renderer executable supporting auth snapshot protocol v1"`
+	Plan           bool     `help:"Inspect a framework upgrade without changing the project"`
+	JSON           bool     `help:"Print the experimental framework upgrade plan as JSON"`
+	FromRenderer   string   `help:"Comparison renderer executable supporting framework snapshot protocol v2"`
 	TargetRenderer string   `help:"Target renderer executable; defaults to this binary"`
-	Snapshot       bool     `help:"Emit the experimental auth renderer snapshot protocol" hidden:""`
+	Snapshot       bool     `help:"Emit the experimental framework renderer snapshot protocol" hidden:""`
 }
 
 // Signature returns the command-line contract used for registration.
@@ -36,12 +36,12 @@ func NewCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *RenderCmd {
 
 // Run executes the command.
 func (c *RenderCmd) Run() error {
-	inspection, err := c.authInspectionRequested()
+	inspection, err := c.frameworkInspectionRequested()
 	if err != nil {
 		return err
 	}
 	if inspection {
-		return c.runAuthUpgradeInspectionStdout()
+		return c.runFrameworkUpgradeInspectionStdout()
 	}
 	if c.Only != "" {
 		if c.Only != "openapi" {

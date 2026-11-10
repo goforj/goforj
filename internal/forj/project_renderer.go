@@ -142,6 +142,7 @@ type ProjectRenderer struct {
 	writeEnvironmentFile    func(string, []byte, fs.FileMode) error
 	tidyModule              func(*ProjectRenderer) error
 	generateWire            func(*ProjectRenderer) error
+	inspection              *frameworkRenderInventory
 }
 
 type renderStats struct {
@@ -866,9 +867,24 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
-			title:     "Auth Components Rendering",
-			enabled:   projectComponents.Auth && projectComponents.HasDatabase(),
-			templates: authBaseTemplates(),
+			title:   "Auth Components Rendering",
+			enabled: projectComponents.Auth && projectComponents.HasDatabase(),
+			templates: []string{
+				"internal/mail/auth_delivery.go.tmpl",
+				"internal/auth/README.md.tmpl",
+				"internal/auth/controller.go.tmpl",
+				"internal/auth/delivery.go.tmpl",
+				"internal/auth/bootstrap_cmd.go.tmpl",
+				"internal/auth/create_user_cmd.go.tmpl",
+				"internal/auth/email_verification.go.tmpl",
+				"internal/auth/login_attempt.go.tmpl",
+				"internal/auth/service_integration_test.go.tmpl",
+				"internal/auth/password_reset.go.tmpl",
+				"internal/auth/set_password_cmd.go.tmpl",
+				"internal/auth/service.go.tmpl",
+				"internal/auth/session.go.tmpl",
+				"internal/auth/user.go.tmpl",
+			},
 			action: func() error {
 				if !input.renderAll {
 					if err := p.writeTemplateMappings([]templateMapping{
@@ -918,9 +934,18 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
-			title:     "OAuth Components Rendering",
-			enabled:   projectComponents.Auth && projectComponents.OAuth && projectComponents.HasDatabase(),
-			templates: authOAuthTemplates(),
+			title:   "OAuth Components Rendering",
+			enabled: projectComponents.Auth && projectComponents.OAuth && projectComponents.HasDatabase(),
+			templates: []string{
+				"internal/auth/identity.go.tmpl",
+				"internal/auth/oauth_provider.go.tmpl",
+				"internal/auth/oauth_provider_apple.go.tmpl",
+				"internal/auth/oauth_provider_github.go.tmpl",
+				"internal/auth/oauth_provider_google.go.tmpl",
+				"internal/auth/oauth_provider_microsoft.go.tmpl",
+				"internal/auth/oauth_integration_test.go.tmpl",
+				"internal/auth/oauth_state.go.tmpl",
+			},
 			action: func() error {
 				return p.writeTemplateMappingsOnce([]templateMapping{
 					mapTemplate("migrations/2026_04_09_000006_auth_identities.mysql.up.sql.tmpl"),
@@ -1132,6 +1157,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		}
 
 		p.printStepSummary(step.title, before, time.Since(started))
+	}
+	if p.inspection != nil {
+		return nil
 	}
 
 	// Run go mod tidy to ensure all dependencies are downloaded
@@ -2215,7 +2243,7 @@ func (p *ProjectRenderer) renderTimingEnabled() bool {
 
 // streamRenderTimings centralizes stream render timings behavior so callers follow the same contract.
 func (p *ProjectRenderer) streamRenderTimings() bool {
-	return runningInsideDevCommand() && p.renderTimingEnabled()
+	return p.inspection == nil && runningInsideDevCommand() && p.renderTimingEnabled()
 }
 
 // appendRenderLine centralizes append render line behavior so callers follow the same contract.
@@ -2524,6 +2552,12 @@ func (p *ProjectRenderer) renderNamedApps() error {
 		app := apps[0]
 		if err := p.renderApp(app); err != nil {
 			return fmt.Errorf("render app %s: %w", app.Name, err)
+		}
+	} else if len(apps) > 1 && p.inspection != nil {
+		for _, app := range apps {
+			if err := p.renderApp(app); err != nil {
+				return err
+			}
 		}
 	} else if len(apps) > 1 {
 		errs := make([]error, len(apps))
@@ -3641,7 +3675,7 @@ func (p *ProjectRenderer) copyFrontendPlaceholderAsset(dest string, templatePath
 
 // renderTemplateFile renders ordinary scaffold files while transactional environment files use the atomic variant.
 func (p *ProjectRenderer) renderTemplateFile(destPath, tmpl string, data any) error {
-	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, false, 0o644)
+	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, false, 0o644, "framework-template")
 }
 
 // renderTemplateIfMissing preserves owner files while surfacing filesystem failures that are not simple absence.
@@ -3658,12 +3692,12 @@ func (p *ProjectRenderer) renderTemplateIfMissing(destPath string, tmpl string, 
 
 // renderTemplateFileAtomically renders a template through a same-directory replacement file.
 func (p *ProjectRenderer) renderTemplateFileAtomically(destPath, tmpl string, data any) error {
-	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, true, 0o644)
+	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, true, 0o644, "framework-template")
 }
 
 // renderPrivateTemplateFileAtomically creates new local environment files without granting group or world access.
 func (p *ProjectRenderer) renderPrivateTemplateFileAtomically(destPath, tmpl string, data any) error {
-	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, true, 0o600)
+	return p.renderTemplateFileWithAtomicWrite(destPath, tmpl, data, true, 0o600, "private")
 }
 
 // parseProjectTemplate composes catalog fragments only for the generated Compose surface.
@@ -3716,7 +3750,7 @@ func developerServiceTemplateName(definition devservices.Definition, section str
 }
 
 // renderTemplateFileWithAtomicWrite shares rendering while reserving atomic replacement for transactional files.
-func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl string, data any, atomic bool, mode fs.FileMode) error {
+func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl string, data any, atomic bool, mode fs.FileMode, ownership string) error {
 	tmplBytes, err := templatesFS.ReadFile(tmpl)
 	if err != nil {
 		return err
@@ -3741,6 +3775,9 @@ func (p *ProjectRenderer) renderTemplateFileWithAtomicWrite(destPath, tmpl strin
 		return err
 	}
 	newContent = formatted
+	if p.inspection != nil {
+		p.inspection.record(destPath, tmpl, newContent, ownership, mode)
+	}
 	if existingContent, err := p.workspace.readFile(destPath); err == nil {
 		if bytes.Equal(existingContent, newContent) {
 			p.stats.recordSkipped(destPath)
@@ -4111,6 +4148,9 @@ func (p *ProjectRenderer) copyRawFileToDest(path, dest string) error {
 	if err != nil {
 		return err
 	}
+	if p.inspection != nil {
+		p.inspection.record(dest, path, content, "framework-asset", 0o644)
+	}
 	if err := p.workspace.ensureDir(filepath.Dir(dest)); err != nil {
 		return err
 	}
@@ -4135,7 +4175,7 @@ func (p *ProjectRenderer) writeTemplatesOnce(tmpls []string) error {
 			continue
 		}
 
-		if err := p.renderTemplateFile(dest, path, p.config); err != nil {
+		if err := p.renderTemplateFileWithAtomicWrite(dest, path, p.config, false, 0o644, "seed"); err != nil {
 			return err
 		}
 	}
@@ -4153,7 +4193,7 @@ func (p *ProjectRenderer) writeTemplateMappingsOnce(mappings []templateMapping) 
 			p.stats.recordSkipped(mapping.dest)
 			continue
 		}
-		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, p.config); err != nil {
+		if err := p.renderTemplateFileWithAtomicWrite(mapping.dest, mapping.tmpl, p.config, false, 0o644, "seed"); err != nil {
 			return err
 		}
 	}
@@ -4172,7 +4212,7 @@ func (p *ProjectRenderer) writeTemplateMappingsOnceForApp(app project.App, mappi
 			p.stats.recordSkipped(mapping.dest)
 			continue
 		}
-		if err := p.renderTemplateFile(mapping.dest, mapping.tmpl, data); err != nil {
+		if err := p.renderTemplateFileWithAtomicWrite(mapping.dest, mapping.tmpl, data, false, 0o644, "seed"); err != nil {
 			return err
 		}
 	}

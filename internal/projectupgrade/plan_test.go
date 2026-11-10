@@ -5,13 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 // testSnapshot supplies a reproducible comparison reference without claiming application adoption.
 func testSnapshot(source string) Snapshot {
-	return Snapshot{Protocol: ProtocolVersion, Scope: "auth", Engine: Engine{Version: "v0.1.0"}, InputsDigest: Digest([]byte("inputs")), Artifacts: []Artifact{{Path: "internal/auth/service.go", Source: source}}}
+	return Snapshot{Protocol: ProtocolVersion, Scope: "framework", Engine: Engine{Version: "v0.1.0"}, InputsDigest: Digest([]byte("inputs")), Artifacts: []Artifact{{Path: "internal/auth/service.go", Source: source}}}
 }
 
 // writeFixture keeps all upgrade experiments outside repository working trees.
@@ -98,6 +99,7 @@ func TestBuildPreservesNeighborsAndSeparatesDerivedOutput(t *testing.T) {
 	root := t.TempDir()
 	baseline := testSnapshot("package auth\ntype Service struct{}\nfunc (s *Service) Refresh() { original() }\n")
 	target := testSnapshot("package auth\ntype Service struct{}\nfunc (s *Service) Refresh() { fixed() }\n")
+	target.Artifacts = append(target.Artifacts, Artifact{Path: "internal/caches/accessors_gen.go", Ownership: "app-derived"})
 	current := "package auth\ntype Service struct{}\nfunc (s *Service) Refresh() { original(); preserveActor() }\n"
 	writeFixture(t, root, "internal/auth/service.go", current)
 	writeFixture(t, root, "internal/auth/session_sign_in.go", "package auth\n// app-specific identity\n")
@@ -182,14 +184,28 @@ func TestValidateSnapshotRejectsUnsafeContracts(t *testing.T) {
 		{"digest encoding", func(s *Snapshot) { s.InputsDigest = strings.Repeat("x", 64) }},
 		{"engine", func(s *Snapshot) { s.Engine.Version = "" }},
 		{"empty artifacts", func(s *Snapshot) { s.Artifacts = nil }},
-		{"too many artifacts", func(s *Snapshot) { s.Artifacts = make([]Artifact, 257) }},
+		{"too many artifacts", func(s *Snapshot) { s.Artifacts = make([]Artifact, 16385) }},
 		{"traversal", func(s *Snapshot) { s.Artifacts[0].Path = "internal/auth/../../.env" }},
 		{"absolute", func(s *Snapshot) { s.Artifacts[0].Path = "/internal/auth/service.go" }},
 		{"windows separator", func(s *Snapshot) { s.Artifacts[0].Path = "internal/auth/a\\b.go" }},
 		{"nul", func(s *Snapshot) { s.Artifacts[0].Path = "internal/auth/a\x00.go" }},
 		{"duplicate", func(s *Snapshot) { s.Artifacts = append(s.Artifacts, s.Artifacts[0]) }},
 		{"oversize", func(s *Snapshot) { s.Artifacts[0].Source = strings.Repeat("x", (4<<20)+1) }},
-		{"missing service", func(s *Snapshot) { s.Artifacts[0].Path = "internal/auth/user.go" }},
+		{"unsafe template", func(s *Snapshot) { s.Artifacts[0].Template = "../private" }},
+		{"git metadata", func(s *Snapshot) { s.Artifacts[0].Path = ".git/config" }},
+		{"unsafe mode", func(s *Snapshot) { s.Artifacts[0].Mode = 0o7777 }},
+		{"unknown ownership", func(s *Snapshot) { s.Artifacts[0].Ownership = "overwrite" }},
+		{"private source", func(s *Snapshot) { s.Artifacts[0].Ownership = "private" }},
+		{"private managed path", func(s *Snapshot) { s.Artifacts[0].Path = ".env" }},
+		{"opaque digest", func(s *Snapshot) {
+			s.Artifacts[0].Source = ""
+			s.Artifacts[0].Ownership = "seed"
+			s.Artifacts[0].Digest = Digest(nil)
+		}},
+		{"digest length", func(s *Snapshot) { s.Artifacts[0].Digest = "short" }},
+		{"digest bytes", func(s *Snapshot) { s.Artifacts[0].Digest = strings.Repeat("x", 64) }},
+		{"source mismatch", func(s *Snapshot) { s.Artifacts[0].Digest = Digest([]byte("other source")) }},
+		{"missing asset digest", func(s *Snapshot) { s.Artifacts[0].Ownership = "framework-asset"; s.Artifacts[0].Source = "" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := testSnapshot("package auth\n")
@@ -206,7 +222,7 @@ func TestValidateSnapshotRejectsUnsafeContracts(t *testing.T) {
 
 // TestBuildRejectsSpecialFiles prevents file and ancestor symlinks from redirecting inspection outside the app.
 func TestBuildRejectsSpecialFiles(t *testing.T) {
-	for _, kind := range []string{"ancestor", "file", "directory", "oversize", "parent-file", "derived-symlink"} {
+	for _, kind := range []string{"ancestor", "file", "directory", "oversize", "parent-file"} {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
 			outside := t.TempDir()
@@ -280,5 +296,108 @@ func TestDisjointDeclarationsStillRequireReconciliation(t *testing.T) {
 	}
 	if plan.Files[0].Action != "reconcile" || len(plan.Files[0].Overlaps) != 0 {
 		t.Fatalf("disjoint changes were treated as safely mergeable: %+v", plan.Files[0])
+	}
+}
+
+// TestFrameworkOwnershipPoliciesSeparateRawAssetsSeedsSemanticAndDerived proves the planner is independent of any auth-specific inventory.
+func TestFrameworkOwnershipPoliciesSeparateRawAssetsSeedsSemanticAndDerived(t *testing.T) {
+	root := t.TempDir()
+	target := testSnapshot("package auth\n")
+	target.Artifacts = []Artifact{
+		{Path: "internal/http/server.go", Source: "package http\n", Mode: 0o644},
+		{Path: "containers/logo.png", Ownership: "framework-asset", Digest: Digest([]byte{0xff, 0, 0xfe})},
+		{Path: "cmd/app/frontend/src/App.vue", Ownership: "seed"},
+		{Path: "app/worker/lifecycle.go", Ownership: "seed"},
+		{Path: "go.mod", Ownership: "semantic"},
+		{Path: ".env", Ownership: "private"},
+		{Path: "internal/events/accessors_gen.go", Ownership: "app-derived"},
+		{Path: "internal/generated-context.go", Ownership: "generated-context"},
+	}
+	writeFixture(t, root, "internal/http/server.go", "package http\n")
+	if err := os.Chmod(filepath.Join(root, "internal/http/server.go"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, root, "containers/logo.png", string([]byte{0xff, 0, 0xfe}))
+	writeFixture(t, root, "cmd/app/frontend/src/App.vue", "owner content")
+	writeFixture(t, root, ".env", "SECRET_CANARY=must-not-be-read")
+	writeFixture(t, root, "internal/events/accessors_gen.go", "owner-specific generated output")
+	plan, err := Build(root, target, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]File{}
+	for _, file := range plan.Files {
+		files[file.Path] = file
+	}
+	wanted := map[string]string{"internal/http/server.go": "review-mode", "containers/logo.png": "matches-target", "cmd/app/frontend/src/App.vue": "preserve-seed", "app/worker/lifecycle.go": "preserve-seed", "go.mod": "review-semantic", ".env": "preserve-private", "internal/events/accessors_gen.go": "regenerate-after-reconciliation", "internal/generated-context.go": "review-generated-context"}
+	if runtime.GOOS == "windows" {
+		wanted["internal/http/server.go"] = "matches-target"
+	}
+	for name, action := range wanted {
+		if files[name].Action != action {
+			t.Fatalf("%s action=%s, want %s", name, files[name].Action, action)
+		}
+	}
+	if files[".env"].CurrentDigest != "" || files["go.mod"].CurrentDigest != "" || files["cmd/app/frontend/src/App.vue"].CurrentDigest != "" {
+		t.Fatal("non-managed source was fingerprinted")
+	}
+}
+
+// TestDerivedSymlinksAreNotRead keeps derived inspection separate from the later publication boundary.
+func TestDerivedSymlinksAreNotRead(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "internal/auth/service.go", "package auth\n")
+	if err := os.MkdirAll(filepath.Join(root, "internal/caches"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "absent-secret"), filepath.Join(root, "internal/caches/accessors_gen.go")); err != nil {
+		t.Fatal(err)
+	}
+	target := testSnapshot("package auth\n")
+	target.Artifacts = append(target.Artifacts, Artifact{Path: "internal/caches/accessors_gen.go", Ownership: "app-derived"})
+	plan, err := Build(root, target, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range plan.Files {
+		if file.Path == "internal/caches/accessors_gen.go" && (file.CurrentDigest != "" || file.Action != "regenerate-after-reconciliation") {
+			t.Fatal("derived symlink was treated as source")
+		}
+	}
+}
+
+// TestFrameworkMigrationsRemainImmutableAndMissingOnesRequireReview distinguishes new schema work from rewriting deployed history.
+func TestFrameworkMigrationsRemainImmutableAndMissingOnesRequireReview(t *testing.T) {
+	root := t.TempDir()
+	target := testSnapshot("package auth\n")
+	target.Artifacts = []Artifact{{Path: "migrations/existing.up.sql", Ownership: "migration", Source: "new framework SQL"}, {Path: "migrations/new.up.sql", Ownership: "migration", Source: "new migration SQL"}}
+	writeFixture(t, root, "migrations/existing.up.sql", "owner migration SQL")
+	plan, err := Build(root, target, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range plan.Files {
+		if file.Path == "migrations/existing.up.sql" && (file.Action != "preserve-migration" || file.CurrentDigest != "") {
+			t.Fatal("existing migration history was compared as replaceable source")
+		}
+		if file.Path == "migrations/new.up.sql" && file.Action != "review-new-migration" {
+			t.Fatal("new schema migration was hidden among owner seeds")
+		}
+	}
+}
+
+// TestFrameworkOwnershipTransitionsRequireExplicitReview prevents new renderer policies from silently claiming previously owner-seeded files.
+func TestFrameworkOwnershipTransitionsRequireExplicitReview(t *testing.T) {
+	root := t.TempDir()
+	target := testSnapshot("package auth\n")
+	baseline := testSnapshot("")
+	baseline.Artifacts[0].Ownership = "seed"
+	writeFixture(t, root, "internal/auth/service.go", "owner-controlled source")
+	plan, err := Build(root, target, &baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Files[0].Action != "review-ownership-transition" || plan.Files[0].PreviousOwnership != "seed" || plan.Files[0].CurrentDigest != "" {
+		t.Fatal("owner source was silently reclassified")
 	}
 }
