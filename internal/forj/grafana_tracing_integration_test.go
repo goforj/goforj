@@ -76,7 +76,7 @@ func TestRenderedGrafanaTraceDefaults(t *testing.T) {
 			settings := map[string]string{
 				"APP_ENV": tc.environment, "COMPOSE_PROFILES": tc.profiles,
 				"TEMPO_OTLP_HTTP_PORT": localURL.Port(), "IP_ADDRESS": "127.0.0.1",
-				"OTEL_TRACES_EXPORTER": tc.exporter, "OTEL_EXPORTER_OTLP_ENDPOINT": "", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "",
+				"OTEL_LOGS_EXPORTER": "none", "OTEL_TRACES_EXPORTER": tc.exporter, "OTEL_EXPORTER_OTLP_ENDPOINT": "", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "",
 				"OTEL_SDK_DISABLED": "false", "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
 				"OTEL_TRACES_SAMPLER": "always_on", "LIGHTHOUSE_ENABLED": "false",
 			}
