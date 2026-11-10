@@ -866,24 +866,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
-			title:   "Auth Components Rendering",
-			enabled: projectComponents.Auth && projectComponents.HasDatabase(),
-			templates: []string{
-				"internal/mail/auth_delivery.go.tmpl",
-				"internal/auth/README.md.tmpl",
-				"internal/auth/controller.go.tmpl",
-				"internal/auth/delivery.go.tmpl",
-				"internal/auth/bootstrap_cmd.go.tmpl",
-				"internal/auth/create_user_cmd.go.tmpl",
-				"internal/auth/email_verification.go.tmpl",
-				"internal/auth/login_attempt.go.tmpl",
-				"internal/auth/service_integration_test.go.tmpl",
-				"internal/auth/password_reset.go.tmpl",
-				"internal/auth/set_password_cmd.go.tmpl",
-				"internal/auth/service.go.tmpl",
-				"internal/auth/session.go.tmpl",
-				"internal/auth/user.go.tmpl",
-			},
+			title:     "Auth Components Rendering",
+			enabled:   projectComponents.Auth && projectComponents.HasDatabase(),
+			templates: authBaseTemplates(),
 			action: func() error {
 				if !input.renderAll {
 					if err := p.writeTemplateMappings([]templateMapping{
@@ -933,18 +918,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
-			title:   "OAuth Components Rendering",
-			enabled: projectComponents.Auth && projectComponents.OAuth && projectComponents.HasDatabase(),
-			templates: []string{
-				"internal/auth/identity.go.tmpl",
-				"internal/auth/oauth_provider.go.tmpl",
-				"internal/auth/oauth_provider_apple.go.tmpl",
-				"internal/auth/oauth_provider_github.go.tmpl",
-				"internal/auth/oauth_provider_google.go.tmpl",
-				"internal/auth/oauth_provider_microsoft.go.tmpl",
-				"internal/auth/oauth_integration_test.go.tmpl",
-				"internal/auth/oauth_state.go.tmpl",
-			},
+			title:     "OAuth Components Rendering",
+			enabled:   projectComponents.Auth && projectComponents.OAuth && projectComponents.HasDatabase(),
+			templates: authOAuthTemplates(),
 			action: func() error {
 				return p.writeTemplateMappingsOnce([]templateMapping{
 					mapTemplate("migrations/2026_04_09_000006_auth_identities.mysql.up.sql.tmpl"),
