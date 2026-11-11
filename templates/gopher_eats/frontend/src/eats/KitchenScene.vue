@@ -17,7 +17,7 @@ const labels: Record<string,string> = {
         <rect width="34" height="34" fill="var(--scene-kitchen)" />
         <path d="M34 0H0V34" fill="none" stroke="var(--scene-tile)" stroke-width="1" />
       </pattern>
-      <radialGradient id="oven-glow"><stop stop-color="#ffdb77" /><stop offset="1" stop-color="#bc5737" /></radialGradient>
+      <radialGradient id="oven-glow"><stop stop-color="#ffd47b" /><stop offset=".55" stop-color="#f28a42" /><stop offset="1" stop-color="#a3442e" stop-opacity="0" /></radialGradient>
     </defs>
     <rect width="900" height="260" fill="url(#kitchen-tiles)" />
     <rect x="162" y="75" width="102" height="7" rx="3" fill="#d4c2ad" />
@@ -59,15 +59,28 @@ const labels: Record<string,string> = {
           <rect x="425" y="164" width="39" height="5" rx="2" fill="#bd9161" />
         </g>
         <g v-else-if="stage === 'baking' || stage === 'retrying'">
-          <path d="M450 169V112Q450 53 535 53Q620 53 620 112V169Z" fill="#ca9c73" />
-          <path d="M468 156V116Q468 73 535 73Q602 73 602 116V156Z" fill="#6a4f3e" />
-          <path d="M478 151V119Q478 84 535 84Q592 84 592 119V151Z" fill="url(#oven-glow)" />
-          <path d="M450 112H620M468 80L487 93M535 55V76M601 80L581 94" stroke="#e6c6a2" stroke-width="5" />
-          <g v-if="stage === 'baking'" class="oven-flames" fill="#ffbc4f"><path d="M489 144Q478 132 492 117Q489 131 501 130Q511 140 502 145Z" /><path d="M569 145Q555 132 570 111Q568 127 581 126Q593 139 581 145Z" /></g>
-          <ellipse cx="535" cy="149" rx="36" ry="8" :fill="stage === 'retrying' ? '#6a493a' : '#f6bd64'" />
-          <ellipse cx="535" cy="147" rx="29" ry="5" :fill="stage === 'retrying' ? '#49372f' : '#ed8050'" />
-          <g class="oven-steam" :stroke="stage === 'retrying' ? '#a7a99d' : '#fffdf5'" stroke-width="4" fill="none" stroke-linecap="round"><path d="M516 42Q508 32 517 22" /><path d="M538 37Q530 27 539 17" /><path d="M559 44Q551 34 560 24" /></g>
-          <rect x="441" y="162" width="188" height="9" rx="4" fill="#b5825c" />
+          <ellipse cx="539" cy="171" rx="104" ry="8" fill="#b8836820" />
+          <path d="M446 164V112Q446 45 537 45Q628 45 628 112V164Z" fill="#b85d42" />
+          <path d="M453 160V112Q453 53 537 53Q621 53 621 112V160Z" fill="#d88760" />
+          <path d="M472 157V116Q472 76 537 76Q602 76 602 116V157Z" fill="#472c27" />
+          <path d="M482 153V117Q482 87 537 87Q592 87 592 117V153Z" fill="#2e2424" />
+          <path d="M446 112H472M602 112H628M456 82L478 91M478 59L493 80M510 47L515 74M564 48L558 74M596 61L581 81M618 84L597 95" stroke="#f1bb8c" stroke-width="5" />
+          <path d="M453 136H472M602 136H621" stroke="#b85d42" stroke-width="3" />
+          <path d="M481 153V140Q537 125 593 140V153Z" fill="#7f4632" />
+          <ellipse v-if="stage === 'baking'" class="hearth-glow" cx="537" cy="135" rx="54" ry="22" fill="url(#oven-glow)" opacity=".55" />
+          <g stroke="#432b26" stroke-width="5" stroke-linecap="round"><path d="M488 143L509 149M489 150L507 142M565 147L587 141M566 140L584 150" /></g>
+          <g v-if="stage === 'baking'" class="oven-flames">
+            <g class="flame-left"><path d="M488 143Q477 131 492 110Q489 125 500 124Q497 111 506 105Q502 126 513 131Q519 147 504 150Z" fill="#f47a35" /><path d="M492 144Q485 135 495 125Q492 137 502 132Q511 142 503 147Z" fill="#ffd66f" /><path d="M498 146Q493 140 500 135Q499 142 505 142L503 147Z" fill="#fff0ac" /></g>
+            <g class="flame-right"><path d="M568 149Q553 138 567 120Q566 130 572 130Q583 122 578 108Q596 126 589 138Q599 149 582 152Z" fill="#f47a35" /><path d="M573 147Q566 139 574 130Q574 139 581 136Q589 145 581 150Z" fill="#ffd66f" /><path d="M577 149Q573 144 579 140Q578 146 583 146L581 150Z" fill="#fff0ac" /></g>
+          </g>
+          <rect x="437" y="158" width="200" height="13" rx="4" fill="#b45b40" />
+          <rect x="440" y="158" width="194" height="4" rx="2" fill="#e7a579" />
+          <g v-if="stage === 'baking'" class="pizza-peel"><path d="M401 151L515 157" stroke="#b58251" stroke-width="6" stroke-linecap="round" /><ellipse cx="537" cy="155" rx="37" ry="6" fill="#c9c5b9" /><ellipse cx="537" cy="154" rx="34" ry="5" fill="#e6e1d5" /></g>
+          <ellipse cx="537" cy="150" rx="33" ry="7" :fill="stage === 'retrying' ? '#6a493a' : '#d99a4c'" />
+          <ellipse cx="537" cy="148" rx="29" ry="5" :fill="stage === 'retrying' ? '#49372f' : '#f4c466'" />
+          <ellipse v-if="stage === 'baking'" cx="537" cy="147" rx="24" ry="3" fill="#ef8451" />
+          <g v-if="stage === 'baking'" fill="#b94432"><ellipse cx="525" cy="146" rx="3" ry="1.5" /><ellipse cx="540" cy="149" rx="3" ry="1.5" /><ellipse cx="549" cy="146" rx="3" ry="1.5" /></g>
+          <g class="oven-steam" :stroke="stage === 'retrying' ? '#8d817a' : '#c1a48d'" stroke-width="3" opacity=".7" fill="none" stroke-linecap="round"><path d="M518 36Q511 27 519 17" /><path d="M539 31Q532 21 540 11" /><path d="M560 36Q553 27 561 17" /></g>
         </g>
         <g v-else-if="stage === 'ready'" class="pickup-box">
           <path d="M450 126H600L638 151H487Z" fill="#eacb91" stroke="#cfad75" stroke-width="2" />
@@ -112,9 +125,20 @@ const labels: Record<string,string> = {
 .flour {
   animation: flour-puff 1.4s ease-out infinite;
 }
-.oven-flames {
-  animation: flame .5s ease-in-out infinite alternate;
-  transform-origin: 535px 147px;
+.flame-left, .flame-right {
+  animation: flame .65s ease-in-out infinite alternate;
+  transform-box: fill-box;
+  transform-origin: center bottom;
+}
+.flame-right {
+  animation-delay: -.3s;
+  animation-duration: .85s;
+}
+.hearth-glow {
+  animation: hearth-glow 1.8s ease-in-out infinite alternate;
+}
+@keyframes hearth-glow {
+  to { opacity: .8; }
 }
 .oven-steam {
   animation: steam 1.7s ease-in-out infinite;

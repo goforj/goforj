@@ -49,8 +49,8 @@ button:disabled {
   opacity: .55;
 }
 header {
-  min-height: 80px;
-  padding: 16px max(24px, calc((100vw - 1280px)/2));
+  min-height: 64px;
+  padding: 10px max(24px, calc((100vw - 1280px)/2));
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -117,19 +117,19 @@ header {
 main {
   max-width: 1280px;
   margin: auto;
-  padding: 42px 24px 30px;
+  padding: 16px 24px 30px;
 }
 .intro {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 30px;
-  margin-bottom: 34px;
+  margin-bottom: 14px;
 }
 h1 {
-  font: 700 clamp(32px, 3.7vw, 49px)/1.12 'Space Grotesk', sans-serif;
-  letter-spacing: -2px;
-  margin: 12px 0;
+  font: 700 clamp(26px, 2.6vw, 34px)/1.12 'Space Grotesk', sans-serif;
+  letter-spacing: -1.2px;
+  margin: 0 0 6px;
 }
 h1 span {
   color: var(--primary);
@@ -151,7 +151,7 @@ p {
 .intro-note {
   display: grid;
   gap: 6px;
-  padding: 16px 20px;
+  padding: 12px 16px;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: #fafafa;
@@ -179,7 +179,7 @@ p {
   box-shadow: 0 3px 20px #18181b04;
 }
 .menu {
-  padding: 23px;
+  padding: 18px;
 }
 .section-label {
   font: 700 18px 'Space Grotesk', sans-serif;
@@ -188,7 +188,7 @@ p {
 }
 .menu-note {
   font-size: 12px;
-  margin-bottom: 22px;
+  margin-bottom: 12px;
 }
 .pizza-choice {
   position: relative;
@@ -200,7 +200,7 @@ p {
   background: white;
   border: 1px solid var(--border);
   border-radius: 13px;
-  padding: 12px 25px 12px 10px;
+  padding: 8px 25px 8px 10px;
   margin: 10px 0;
   color: var(--foreground);
   transition: border-color .15s, background .15s, box-shadow .15s;
@@ -230,8 +230,8 @@ p {
   border-radius: 50%;
 }
 .pizza-icon {
-  width: 56px;
-  flex: 0 0 56px;
+  width: 48px;
+  flex: 0 0 48px;
 }
 .pizza-art {
   display: block;
@@ -252,7 +252,7 @@ p {
 }
 .divider {
   border-top: 1px solid var(--border);
-  margin: 24px 0;
+  margin: 16px 0;
 }
 .switch-label {
   display: flex;
@@ -260,7 +260,7 @@ p {
   gap: 10px;
   font-size: 12px;
   font-weight: 550;
-  margin: 17px 0;
+  margin: 12px 0;
   cursor: pointer;
 }
 .switch-label input {
@@ -291,7 +291,7 @@ p {
   width: 100%;
   font-size: 14px;
   font-weight: 650;
-  margin-top: 24px;
+  margin-top: 16px;
   transition: background .15s, transform .15s;
 }
 .primary:hover:not(:disabled) {
@@ -327,7 +327,7 @@ p {
   gap: 5px;
   color: var(--muted-foreground);
   font-size: 10px;
-  margin-top: 19px;
+  margin-top: 12px;
 }
 .menu-foot svg {
   width: 12px;
@@ -336,8 +336,11 @@ p {
 .content {
   min-width: 0;
 }
+.tracker {
+  scroll-margin-top: 16px;
+}
 .tracker-header {
-  padding: 25px 26px 24px;
+  padding: 16px 26px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -383,7 +386,7 @@ p {
 }
 .stages {
   display: flex;
-  padding: 0 26px 24px;
+  padding: 0 26px 16px;
   gap: 6px;
 }
 .stage {
@@ -470,6 +473,49 @@ p {
   font-weight: 650;
   letter-spacing: .5px;
   color: #4e5561;
+}
+.service-handoff {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  letter-spacing: 0;
+}
+.service-node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 9px;
+  border-radius: 999px;
+  text-transform: capitalize;
+  color: var(--muted-foreground);
+  transition: color .2s, background .2s;
+}
+.service-node.active {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+.service-node.complete {
+  color: var(--foreground);
+}
+.service-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .35;
+}
+.service-node.active .service-dot {
+  opacity: 1;
+}
+.scene .service-node svg {
+  width: 10px;
+  height: 10px;
+  color: var(--primary);
+}
+.handoff-arrow {
+  color: #a1a1aa;
+  font-size: 11px;
 }
 #courier {
   transition: transform .4s linear;
@@ -665,6 +711,17 @@ footer {
     transform: translateY(-5px);
   }
 }
+.stage.current:not(:last-child) .stage-icon {
+  animation: stage-pulse 1.6s ease-out infinite;
+}
+@keyframes stage-pulse {
+  0% {
+    box-shadow: 0 0 0 0 #df2d2040;
+  }
+  75%, 100% {
+    box-shadow: 0 0 0 9px #df2d2000;
+  }
+}
 @media(prefers-reduced-motion:reduce) {
   *, *:before, *:after {
     animation: none!important;
@@ -736,14 +793,14 @@ footer {
     gap: 12px;
   }
   main {
-    padding: 28px 18px;
+    padding: 16px 18px;
   }
   header {
     padding-left: 18px;
     padding-right: 18px;
   }
   .intro {
-    margin-bottom: 26px;
+    margin-bottom: 16px;
   }
   .menu {
     padding: 23px;
@@ -751,11 +808,11 @@ footer {
 }
 @media(max-width:600px) {
   header {
-    min-height: 72px;
+    min-height: 64px;
     gap: 12px;
     flex-wrap: wrap;
-    padding-top: 15px;
-    padding-bottom: 15px;
+    padding-top: 10px;
+    padding-bottom: 10px;
   }
   .brand {
     font-size: 20px;
@@ -781,18 +838,17 @@ footer {
     gap: 0;
   }
   h1 {
-    font-size: 35px;
+    font-size: 26px;
     letter-spacing: -1.5px;
   }
   .intro p {
-    font-size: 12px;
-    max-width: 320px;
+    display: none;
   }
   .eyebrow {
     font-size: 9px;
   }
   .tracker-header {
-    padding: 22px 18px;
+    padding: 16px 18px;
     align-items: flex-start;
   }
   .order-title {

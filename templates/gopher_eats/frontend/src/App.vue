@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, type Component } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, type Component } from 'vue'
 import { ReceiptText, ChefHat, Flame, PackageCheck, Bike, House, ArrowUpRight, CircleCheck, Pizza as PizzaIcon } from '@lucide/vue'
 import Neighborhood from './eats/Neighborhood.vue'
 import KitchenScene from './eats/KitchenScene.vue'
 import PizzaArt from './eats/PizzaArt.vue'
 import { activityHistory, captions, menu, orderedHistory, stages, traceURL, type Order, type Pizza, type Progress } from './eats/model'
 
+const tracker = ref<HTMLElement>()
 const pizza = ref<Pizza>('margherita')
 const burn = ref(false), slow = ref(false), busy = ref(false), error = ref('')
 const connection = ref('Ready to order'), grafana = ref('http://127.0.0.1:13001')
 const history = ref<Progress[]>([]), orders = ref<Order[]>([])
 const activity = computed(() => activityHistory(history.value))
+const services = ['storefront', 'kitchen', 'delivery']
 const stageIcons: Record<string, Component> = { received: ReceiptText, preparing: ChefHat, baking: Flame, ready: PackageCheck, delivering: Bike, delivered: House }
 const last = computed(() => history.value.at(-1))
 const selected = computed(() => last.value?.order)
@@ -54,6 +56,11 @@ async function place(count = 1) {
       orders.value = [...orders.value, order as Order].slice(-8)
       await follow(order.id)
     }
+    await nextTick()
+    const bounds = tracker.value?.getBoundingClientRect()
+    if (bounds && (bounds.top < 0 || bounds.bottom > window.innerHeight)) {
+      tracker.value!.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
+    }
   } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not connect to the storefront.' }
   finally { busy.value = false }
 }
@@ -75,7 +82,7 @@ onUnmounted(() => { generation++; stream?.close() })
     <div class="header-right"><span class="tag">Made fresh. Tracked live.</span><span class="connection"><i class="live-dot" />{{ connection }}</span></div>
   </header>
   <main>
-    <div class="intro"><div><span class="eyebrow">YOUR NEIGHBORHOOD PIZZA CREW</span><h1>Good things are <span>on the way.</span></h1><p>From the first stretch of dough to your doorstep. Follow every moment.</p></div><div class="intro-note"><strong>Built with GoForj</strong><span>Storefront, kitchen &amp; delivery</span></div></div>
+    <div class="intro"><div><h1>Good things are <span>on the way.</span></h1><p>From the first stretch of dough to your doorstep. Follow every moment.</p></div><div class="intro-note"><strong>Built with GoForj</strong><span>Storefront, kitchen &amp; delivery</span></div></div>
     <div class="layout">
       <aside class="card menu">
         <h2 class="section-label">What's your slice?</h2><p class="menu-note">Your neighborhood gophers have you covered.</p>
@@ -90,10 +97,10 @@ onUnmounted(() => { generation++; stream?.close() })
       </aside>
       <section class="content" aria-label="Live order tracker">
         <nav v-if="orders.length > 1" class="order-tabs" aria-label="Your orders"><button v-for="order in orders" :key="order.id" class="secondary" :aria-pressed="selected?.id === order.id" @click="selectOrder(order.id)">Order #{{ order.id.slice(0,6).toUpperCase() }}</button></nav>
-        <div class="card">
+        <div ref="tracker" class="card tracker">
           <div class="tracker-header"><div><span class="eyebrow">{{ selected ? `ORDER #${selected.id.slice(0,6).toUpperCase()}` : 'YOUR NEXT FAVORITE ORDER' }}</span><h2 class="order-title">{{ title }}</h2></div><span class="pill" :data-stage="last?.stage || 'open'">{{ last?.stage.toUpperCase() || 'KITCHEN OPEN' }}</span></div>
           <div class="stages"><div v-for="(stage,index) in stages" :key="stage.key" class="stage" :class="{ done: index < current, current: index === current }" :aria-current="index === current ? 'step' : undefined"><span class="stage-icon"><component :is="stageIcons[stage.key]" aria-hidden="true" /></span>{{ stage.label }}</div></div>
-          <div class="scene" :class="{ 'scene--kitchen': last && !['delivering', 'delivered'].includes(last.stage) }"><span class="scene-label">{{ last ? (last.stage === 'delivered' ? 'ANOTHER HAPPY DOORSTEP' : `${last.service.toUpperCase()} IS ON IT`) : 'WELCOME TO THE NEIGHBORHOOD' }}</span><Neighborhood v-if="!last || ['delivering', 'delivered'].includes(last.stage)" :position="last?.position || 0" :transition-ms="last?.transition_ms || 400" /><KitchenScene v-else :stage="last.stage" /><div class="caption"><strong>{{ last ? captions[last.stage] || 'Something needs attention.' : 'Something delicious starts here.' }}</strong><small>{{ last?.stage === 'delivering' ? `Courier progress · ${last.position}%` : last?.stage === 'retrying' ? 'A real queue retry' : 'Made fresh by gophers' }}</small></div></div>
+          <div class="scene" :class="{ 'scene--kitchen': last && !['delivering', 'delivered'].includes(last.stage) }"><div class="scene-label service-handoff" aria-label="Order service handoffs"><template v-for="(service, index) in services" :key="service"><span v-if="index" class="handoff-arrow" aria-hidden="true">→</span><span class="service-node" :class="{ active: last?.service === service, complete: last && services.indexOf(last.service) > index }"><CircleCheck v-if="last && services.indexOf(last.service) > index" aria-hidden="true" /><i v-else class="service-dot" aria-hidden="true" />{{ service }}</span></template></div><Neighborhood v-if="!last || ['delivering', 'delivered'].includes(last.stage)" :position="last?.position || 0" :transition-ms="last?.transition_ms || 400" /><KitchenScene v-else :stage="last.stage" /><div class="caption"><strong>{{ last ? captions[last.stage] || 'Something needs attention.' : 'Something delicious starts here.' }}</strong><small>{{ last?.stage === 'delivering' ? `Courier progress · ${last.position}%` : last?.stage === 'retrying' ? 'A real queue retry' : 'Made fresh by gophers' }}</small></div></div>
           <div class="status-row"><p role="status" aria-live="polite">{{ last?.message || "Choose your pizza. We'll take care of the rest." }}</p><a v-if="selected" class="trace-link visible" :href="traceURL(grafana, selected.trace_id)" target="_blank" rel="noopener">View trace in Grafana <ArrowUpRight aria-hidden="true" /></a></div>
         </div>
         <div class="services" aria-label="Service architecture"><b>storefront</b><span class="arrow">→ HTTP →</span><b>kitchen</b><span class="arrow">→ NATS →</span><b>delivery</b><span class="arrow">→ events →</span><b>you</b></div>
