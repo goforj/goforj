@@ -15,7 +15,6 @@ import (
 
 	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/projectupgrade"
-	"github.com/goforj/goforj/project"
 )
 
 // boundedSnapshotOutput prevents incompatible child renderers from producing unbounded protocol diagnostics.
@@ -39,7 +38,7 @@ func externalFrameworkSnapshot(root, binary string) (projectupgrade.Snapshot, er
 }
 
 // frameworkSnapshotFromRenderer isolates a renderer while preserving a caller's cancellation and frozen input recipe.
-func frameworkSnapshotFromRenderer(ctx context.Context, config *project.Config, binary string) (projectupgrade.Snapshot, error) {
+func frameworkSnapshotFromRenderer(ctx context.Context, config *frameworkRenderIntent, binary string) (projectupgrade.Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return projectupgrade.Snapshot{}, fmt.Errorf("comparison renderer interrupted: %w", err)
 	}

@@ -13,7 +13,7 @@ import (
 // TestFrameworkInputContractIgnoresIncidentalConfiguration keeps metadata schema growth from blocking comparisons of identical render intent.
 func TestFrameworkInputContractIgnoresIncidentalConfiguration(t *testing.T) {
 	config := &project.Config{ProjectName: "Recipe", GoModuleName: "forj", Render: project.RenderConfig{Components: project.Components{CLI: true}}}
-	before, err := frameworkInputsDigest(config)
+	before, err := frameworkInputsDigest(&frameworkRenderIntent{Config: config})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,15 +21,15 @@ func TestFrameworkInputContractIgnoresIncidentalConfiguration(t *testing.T) {
 	config.Dev.Pre = []project.DevTask{{Name: "owner", Cmd: "never part of the render recipe"}}
 	config.Render.GoForjVersion = "unrelated-scaffold-provenance"
 	config.Extra = map[string]any{"secret": "not-in-render-recipe"}
-	after, err := frameworkInputsDigest(config)
+	after, err := frameworkInputsDigest(&frameworkRenderIntent{Config: config})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if before != after {
-		t.Fatal("incidental project configuration changed input contract v1")
+		t.Fatal("incidental project configuration changed input contract v2")
 	}
 	config.Render.StarterKitOptions = project.NewStarterKitOptions(false)
-	explicit, err := frameworkInputsDigest(config)
+	explicit, err := frameworkInputsDigest(&frameworkRenderIntent{Config: config})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestFrameworkInputContractIgnoresIncidentalConfiguration(t *testing.T) {
 		t.Fatal("an explicit optional feature selection was lost")
 	}
 	config.Apps = map[string]project.AppConfig{"worker": {Components: project.Components{CLI: true, Jobs: true}}}
-	named, err := frameworkInputsDigest(config)
+	named, err := frameworkInputsDigest(&frameworkRenderIntent{Config: config})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestFrameworkInputContractTracksAllComponents(t *testing.T) {
 				if named {
 					config.Apps["worker"] = project.AppConfig{}
 				}
-				before, err := frameworkInputsDigest(config)
+				before, err := frameworkInputsDigest(&frameworkRenderIntent{Config: config})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -72,7 +72,7 @@ func TestFrameworkInputContractTracksAllComponents(t *testing.T) {
 				} else {
 					config.Render.Components = components
 				}
-				after, err := frameworkInputsDigest(config)
+				after, err := frameworkInputsDigest(&frameworkRenderIntent{Config: config})
 				if err != nil || before == after {
 					t.Fatalf("named=%v: component was omitted from recipe: %v", named, err)
 				}
@@ -123,5 +123,61 @@ func TestFrameworkInputContractSelectionOrderIsStable(t *testing.T) {
 	}
 	if selection.ComponentLibrary != nil {
 		t.Fatal("an omitted engine default was materialized in the recipe")
+	}
+}
+
+// TestFrameworkInputDiscoveryTracksParticipation freezes discovery independently of explicit settings across renderer projections.
+func TestFrameworkInputDiscoveryTracksParticipation(t *testing.T) {
+	t.Setenv("TMPDIR", "/tmp")
+	root := t.TempDir()
+	config := &project.Config{ProjectName: "Discovery recipe", GoModuleName: "example.com/discovery", Render: project.RenderConfig{Components: project.Components{CLI: true}},
+		Apps: map[string]project.AppConfig{"worker": {Components: project.Components{CLI: true}}}}
+	if err := writeFrameworkProjection(root, &frameworkRenderIntent{Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	intent, err := frameworkUpgradeConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(intent.DiscoveredApps) != 0 || !reflect.DeepEqual(intent.Apps, config.Apps) {
+		t.Fatal("explicit settings synthesized filesystem discovery")
+	}
+	before, err := frameworkInputsDigest(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeProjectRendererTestFile(t, filepath.Join(root, "cmd/worker/main.go"), "package main\n")
+	if err := verifyFrameworkInputs(root, before); err == nil {
+		t.Fatal("accepted changed discovery for an explicitly configured App")
+	}
+	writeProjectRendererTestFile(t, filepath.Join(root, "cmd/inherited/main.go"), "package main\n")
+	intent, err = frameworkUpgradeConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(intent.DiscoveredApps, []string{"inherited", "worker"}) || !reflect.DeepEqual(intent.Apps, config.Apps) {
+		t.Fatal("discovery changed the explicit recipe or lost filesystem participation")
+	}
+	expected, err := frameworkInputsDigest(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerRoot := t.TempDir()
+	if err := writeFrameworkProjection(peerRoot, intent); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFrameworkInputs(peerRoot, expected); err != nil {
+		t.Fatalf("peer projection changed the frozen recipe: %v", err)
+	}
+	intent.DiscoveredApps[0], intent.DiscoveredApps[1] = intent.DiscoveredApps[1], intent.DiscoveredApps[0]
+	reordered, err := frameworkInputsDigest(intent)
+	if err != nil || reordered != expected || !reflect.DeepEqual(intent.DiscoveredApps, []string{"worker", "inherited"}) {
+		t.Fatalf("digest depended on discovery order or mutated intent: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, "cmd/inherited/main.go")); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFrameworkInputs(root, expected); err == nil {
+		t.Fatal("accepted removal of an inherited App")
 	}
 }

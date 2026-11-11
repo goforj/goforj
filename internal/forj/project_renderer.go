@@ -352,6 +352,15 @@ func (p *ProjectRenderer) beginRenderInvocation(root string) error {
 	return nil
 }
 
+// normalizeRenderComponents applies implicit scaffold capabilities before resource planning and App selection.
+func normalizeRenderComponents(render *project.RenderConfig) {
+	if render.Components.DemoApp {
+		render.Components.Auth = true
+		render.StarterKit = project.StarterKitNone
+	}
+	render.Components.ResolveDependencies()
+}
+
 // Render reconciles project-owned inputs before publishing a complete scaffold.
 func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.beginRenderInvocation(input.root); err != nil {
@@ -373,11 +382,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		}
 	}
 	configuredComponents := p.config.Render.Components
-	if p.config.Render.Components.DemoApp {
-		p.config.Render.Components.Auth = true
-		p.config.Render.StarterKit = project.StarterKitNone
-	}
-	p.config.Render.Components.ResolveDependencies()
+	normalizeRenderComponents(&p.config.Render)
 	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
 		return err
 	}
@@ -1238,11 +1243,7 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		return err
 	}
 	p.config = cfg
-	if p.config.Render.Components.DemoApp {
-		p.config.Render.Components.Auth = true
-		p.config.Render.StarterKit = project.StarterKitNone
-	}
-	p.config.Render.Components.ResolveDependencies()
+	normalizeRenderComponents(&p.config.Render)
 	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
 		return err
 	}

@@ -103,11 +103,17 @@ options, help formats, and named App participation/discovery. It deliberately
 excludes arbitrary owner configuration and private environment layers. Resource
 selection therefore uses component defaults, not inferred production drivers.
 Driver-dependent differences and owner extension behavior require review. The
-input digest uses a dedicated versioned recipe (contract v1), independent of
+input digest uses a dedicated versioned recipe (contract v2), independent of
 incidental configuration schema changes. One frozen recipe is passed to both
 renderers, with configuration and App discovery rechecked before returning results.
 Every supported persisted component flag participates, including `demo_app`, which
 is intentionally absent from the project wizard's component catalog.
+Resource planning and derived-output selection share the ordinary renderer's
+effective component normalization. Physical App discovery remains separate from
+explicit App configuration in the recipe and projection, preserving inherited
+settings without converting them into explicit selections. Contract v1 comparison
+binaries must be rebuilt with the matching input contract; incompatible recipes
+are rejected before comparison.
 
 Both renderers receive the same current projected inputs. This does not recover
 historical configuration changes or prove that an app adopted the supplied
@@ -131,6 +137,9 @@ and verifies file identity and compared state before returning a plan. Opaque
 private, seeded, and owner files are not opened. These checks detect common
 concurrent edits; inspection is not a filesystem transaction or an executable
 sandbox for supplied renderer binaries.
+Unix managed-file, directory-inventory, and App-discovery opens use nonblocking
+mode and validate descriptor types. Replacing a checked path with a FIFO cannot
+block those inspection opens before the state checks run.
 
 App marker discovery shares the ordinary renderer's marker catalog through a
 rooted filesystem. Discovery-root or marker symlinks cannot select Apps outside

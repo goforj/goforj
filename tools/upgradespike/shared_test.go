@@ -23,7 +23,7 @@ func TestParseTests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := testResult{ExitCode: 0, Passed: []string{"a::Parent/child"}, Failed: []string{"b::Parent/child"}, Skipped: []string{"a::Skipped"}, PackageFailures: []string{"b", "c"}, Packages: []string{"a", "b", "c", "empty"}}
+	expected := testResult{ExitCode: 0, Passed: []string{"a::Parent/child"}, Failed: []string{"b::Parent/child"}, Skipped: []string{"a::Skipped"}, PackageFailures: []string{"b", "c"}, Packages: []string{"a", "b", "c", "empty"}, IncompletePackages: []string{"a"}}
 	if !reflect.DeepEqual(result, expected) {
 		t.Fatalf("got %+v, want %+v", result, expected)
 	}
@@ -259,5 +259,63 @@ func TestRunGo(t *testing.T) {
 	result, err = runGo(ctx, root, root, "timeout", []string{"test", "./..."})
 	if err != nil || result.ExitCode != 124 {
 		t.Fatalf("deadline: %+v %v", result, err)
+	}
+}
+
+// TestParseTestsLifecycles keeps interruption evidence separate from completed assertion failures.
+func TestParseTestsLifecycles(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		events   string
+		tests    []string
+		packages []string
+	}{
+		{name: "interrupted subtest", events: `{"Action":"start","Package":"p"}
+{"Action":"run","Package":"p","Test":"TestPolicy"}
+{"Action":"run","Package":"p","Test":"TestPolicy/child"}
+{"Action":"fail","Package":"p"}`, tests: []string{"p::TestPolicy", "p::TestPolicy/child"}},
+		{name: "truncated package", events: `{"Action":"start","Package":"p"}`, packages: []string{"p"}},
+		{name: "truncated after passing test", events: `{"Action":"start","Package":"p"}
+{"Action":"run","Package":"p","Test":"TestPolicy"}
+{"Action":"pass","Package":"p","Test":"TestPolicy"}`, packages: []string{"p"}},
+		{name: "failure outside tests", events: `{"Action":"start","Package":"p"}
+{"Action":"pass","Package":"p","Test":"TestPolicy"}
+{"Action":"fail","Package":"p"}`},
+		{name: "build failure", events: `{"Action":"build-fail","ImportPath":"p"}`},
+		{name: "completed assertion", events: `{"Action":"start","Package":"p"}
+{"Action":"run","Package":"p","Test":"TestPolicy"}
+{"Action":"fail","Package":"p","Test":"TestPolicy"}
+{"Action":"fail","Package":"p"}`},
+		{name: "paused test unfinished", events: `{"Action":"start","Package":"p"}
+{"Action":"run","Package":"p","Test":"TestPolicy"}
+{"Action":"pause","Package":"p","Test":"TestPolicy"}
+{"Action":"pass","Package":"p"}`, tests: []string{"p::TestPolicy"}},
+		{name: "parallel skip completed", events: `{"Action":"start","Package":"p"}
+{"Action":"run","Package":"p","Test":"TestPolicy"}
+{"Action":"pause","Package":"p","Test":"TestPolicy"}
+{"Action":"cont","Package":"p","Test":"TestPolicy"}
+{"Action":"skip","Package":"p","Test":"TestPolicy"}
+{"Action":"pass","Package":"p"}`},
+		{name: "repeated execution interrupted", events: `{"Action":"start","Package":"p"}
+{"Action":"run","Package":"p","Test":"TestPolicy"}
+{"Action":"pass","Package":"p","Test":"TestPolicy"}
+{"Action":"run","Package":"p","Test":"TestPolicy"}
+{"Action":"fail","Package":"p"}`, tests: []string{"p::TestPolicy"}},
+		{name: "legacy terminal events", events: `{"Action":"pass","Package":"p","Test":"TestPolicy"}
+{"Action":"pass","Package":"p"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := parseTests(strings.NewReader(test.events), 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(result.IncompleteTests, test.tests) || !reflect.DeepEqual(result.IncompletePackages, test.packages) {
+				t.Fatalf("unexpected lifecycle evidence: %+v", result)
+			}
+			wantComplete := len(test.tests)+len(test.packages) == 0
+			if completeTestEvidence(result) != wantComplete {
+				t.Fatalf("completeness=%v want=%v", completeTestEvidence(result), wantComplete)
+			}
+		})
 	}
 }

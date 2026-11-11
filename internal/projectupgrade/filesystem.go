@@ -20,6 +20,60 @@ type observedFile struct {
 	captureSource bool
 }
 
+// inspectionFS keeps discovery opens and metadata within the caller-owned root.
+type inspectionFS struct {
+	root *os.Root
+}
+
+// InspectionFS provides confined read-only discovery without blocking on replacement FIFOs.
+// The caller must keep root open for the lifetime of the returned filesystem.
+func InspectionFS(root *os.Root) fs.FS {
+	return inspectionFS{root: root}
+}
+
+// Open validates descriptor types before discovery can read a concurrently replaced path.
+func (files inspectionFS) Open(name string) (fs.File, error) {
+	local, err := inspectionPath("open", name)
+	if err != nil {
+		return nil, err
+	}
+	file, err := openInspectionFile(files.root, local)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		file.Close()
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fmt.Errorf("expected a regular file or directory")}
+	}
+	return file, nil
+}
+
+// Stat uses rooted metadata directly so discovery never opens marker contents to inspect their type.
+func (files inspectionFS) Stat(name string) (fs.FileInfo, error) {
+	local, err := inspectionPath("stat", name)
+	if err != nil {
+		return nil, err
+	}
+	return files.root.Stat(local)
+}
+
+// inspectionPath preserves io/fs path rules and rejects platform-specific separators before rooted access.
+func inspectionPath(operation, name string) (string, error) {
+	if !fs.ValidPath(name) {
+		return "", &fs.PathError{Op: operation, Path: name, Err: fs.ErrInvalid}
+	}
+	local, err := filepath.Localize(name)
+	if err != nil {
+		return "", &fs.PathError{Op: operation, Path: name, Err: fs.ErrInvalid}
+	}
+	return local, nil
+}
+
 // ReadInput reads one bounded, stable project input through the same confined boundary as managed source inspection.
 func ReadInput(directory, name string) ([]byte, error) {
 	if !validArtifactPath(name) {
@@ -82,18 +136,11 @@ func readManaged(root *os.Root, name string, captureSource bool) ([]byte, observ
 	if !before.Mode().IsRegular() || before.Size() > limit {
 		return nil, observedFile{}, fmt.Errorf("inspect %s: expected a regular file of at most %d MiB", name, limit>>20)
 	}
-	file, err := root.Open(filepath.FromSlash(name))
-	if err != nil {
-		return nil, observedFile{}, fmt.Errorf("open %s: %w", name, err)
-	}
-	defer file.Close()
-	opened, err := file.Stat()
+	file, opened, err := openRegularFile(root, name, before)
 	if err != nil {
 		return nil, observedFile{}, err
 	}
-	if !opened.Mode().IsRegular() || !os.SameFile(before, opened) || before.Size() != opened.Size() || !before.ModTime().Equal(opened.ModTime()) {
-		return nil, observedFile{}, fmt.Errorf("inspect %s: file changed while opening", name)
-	}
+	defer file.Close()
 	var data []byte
 	var size int64
 	var digest string
@@ -125,6 +172,24 @@ func readManaged(root *os.Root, name string, captureSource bool) ([]byte, observ
 	return data, observedFile{exists: true, digest: digest, mode: uint32(opened.Mode().Perm()), captureSource: captureSource}, nil
 }
 
+// openRegularFile validates the opened descriptor because a checked path can be replaced before opening.
+func openRegularFile(root *os.Root, name string, before fs.FileInfo) (*os.File, fs.FileInfo, error) {
+	file, err := openInspectionFile(root, filepath.FromSlash(name))
+	if err != nil {
+		return nil, nil, fmt.Errorf("open %s: %w", name, err)
+	}
+	opened, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, nil, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(before, opened) || before.Size() != opened.Size() || !before.ModTime().Equal(opened.ModTime()) {
+		file.Close()
+		return nil, nil, fmt.Errorf("inspect %s: file changed while opening", name)
+	}
+	return file, opened, nil
+}
+
 // verifyObservations refuses a mixed or stale plan when any compared managed file changes during inspection.
 func verifyObservations(root *os.Root, observations map[string]observedFile) error {
 	for name, expected := range observations {
@@ -144,9 +209,18 @@ func preserveUnknown(root *os.Root, directory string, known, prefixes map[string
 	if directory == "" {
 		directory = "."
 	}
-	file, err := root.Open(filepath.FromSlash(directory))
+	file, err := openInspectionFile(root, filepath.FromSlash(directory))
 	if err != nil {
 		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return err
+	}
+	if !info.IsDir() {
+		file.Close()
+		return fmt.Errorf("inspect %s: expected a directory", directory)
 	}
 	entries, err := file.ReadDir(-1)
 	file.Close()

@@ -27,11 +27,13 @@ func TestAuthSuiteRequiresIdentities(t *testing.T) {
 // TestAuthSuiteRejectsIncompleteEvidence prevents process success from masking failed or skipped events.
 func TestAuthSuiteRejectsIncompleteEvidence(t *testing.T) {
 	cases := map[string]testResult{
-		"exit":            {ExitCode: 1, Passed: []string{"auth::Existing"}},
-		"empty":           {},
-		"skip":            {Passed: []string{"auth::Existing"}, Skipped: []string{"auth::Skipped"}},
-		"failed event":    {Passed: []string{"auth::Existing"}, Failed: []string{"auth::Broken"}},
-		"package failure": {Passed: []string{"auth::Existing"}, PackageFailures: []string{"auth"}},
+		"exit":               {ExitCode: 1, Passed: []string{"auth::Existing"}},
+		"empty":              {},
+		"unfinished test":    {Passed: []string{"auth::Existing"}, IncompleteTests: []string{"auth::Other"}},
+		"unfinished package": {Passed: []string{"auth::Existing"}, IncompletePackages: []string{"other"}},
+		"skip":               {Passed: []string{"auth::Existing"}, Skipped: []string{"auth::Skipped"}},
+		"failed event":       {Passed: []string{"auth::Existing"}, Failed: []string{"auth::Broken"}},
+		"package failure":    {Passed: []string{"auth::Existing"}, PackageFailures: []string{"auth"}},
 	}
 	for name, evidence := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -50,13 +52,15 @@ func TestAuthFailureRequiresEveryRegression(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := map[string]testResult{
-		"success":       {Failed: required},
-		"timeout":       {ExitCode: 124, Failed: required},
-		"compiler":      {ExitCode: 1, PackageFailures: []string{"auth"}},
-		"parent":        {ExitCode: 1, Failed: []string{"auth::Parent"}},
-		"partial":       {ExitCode: 1, Failed: required[:1]},
-		"skip":          {ExitCode: 1, Failed: required, Skipped: []string{"auth::Other"}},
-		"wrong package": {ExitCode: 1, Failed: []string{"other::Parent/replay", "other::Parent/expiry"}},
+		"success":            {Failed: required},
+		"unfinished test":    {ExitCode: 1, Failed: required, IncompleteTests: []string{"auth::Other"}},
+		"unfinished package": {ExitCode: 1, Failed: required, IncompletePackages: []string{"other"}},
+		"timeout":            {ExitCode: 124, Failed: required},
+		"compiler":           {ExitCode: 1, PackageFailures: []string{"auth"}},
+		"parent":             {ExitCode: 1, Failed: []string{"auth::Parent"}},
+		"partial":            {ExitCode: 1, Failed: required[:1]},
+		"skip":               {ExitCode: 1, Failed: required, Skipped: []string{"auth::Other"}},
+		"wrong package":      {ExitCode: 1, Failed: []string{"other::Parent/replay", "other::Parent/expiry"}},
 	}
 	for name, evidence := range cases {
 		t.Run(name, func(t *testing.T) {

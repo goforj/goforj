@@ -51,7 +51,7 @@ func TestAgentAssessmentRejectsFalseGreens(t *testing.T) {
 	if accepted, _ := assessResults(agentPassingResults(), []string{"modified_test.go"}); accepted {
 		t.Fatal("accepted protected edit")
 	}
-	for _, name := range []string{"exit", "empty-unit", "failed", "package-failure", "auth-identity", "new-skip", "holdout-empty", "holdout-parent-only", "build", "negative-control", "negative-control-timeout", "negative-control-exit-zero", "baseline-empty", "vanished-failed", "vanished-skipped", "vanished-package"} {
+	for _, name := range []string{"exit", "empty-unit", "failed", "package-failure", "auth-identity", "new-skip", "holdout-empty", "holdout-parent-only", "build", "negative-control", "negative-control-timeout", "negative-control-exit-zero", "baseline-empty", "baseline-failed-event", "baseline-package-failure", "vanished-failed", "vanished-skipped", "vanished-package"} {
 		t.Run(name, func(t *testing.T) {
 			results := agentPassingResults()
 			unit := results["app"]["unit"]
@@ -89,6 +89,10 @@ func TestAgentAssessmentRejectsFalseGreens(t *testing.T) {
 				results["baseline"]["holdout"] = control
 			case "baseline-empty":
 				baseline.Passed = nil
+			case "baseline-failed-event":
+				baseline.Failed = []string{"app::TestPolicy"}
+			case "baseline-package-failure":
+				baseline.PackageFailures = []string{"app"}
 			case "vanished-failed":
 				baseline.Failed = []string{"app::PreviouslyBroken"}
 			case "vanished-skipped":
@@ -110,6 +114,7 @@ func TestAgentAssessmentRejectsFalseGreens(t *testing.T) {
 		before, after := results["baseline"]["unit"], results["app"]["unit"]
 		switch field {
 		case "failed":
+			before.ExitCode = 1
 			before.Failed = []string{"app::Repaired"}
 			after.Passed = append(after.Passed, "app::Repaired")
 		case "skipped":
@@ -121,8 +126,8 @@ func TestAgentAssessmentRejectsFalseGreens(t *testing.T) {
 		}
 		results["baseline"]["unit"] = before
 		results["app"]["unit"] = after
-		if accepted, _ := assessResults(results, nil); !accepted {
-			t.Fatalf("repaired %s rejected", field)
+		if accepted, _ := assessResults(results, nil); accepted != (field != "failed") {
+			t.Fatalf("repaired %s accepted=%v", field, accepted)
 		}
 	}
 }
@@ -276,7 +281,7 @@ func TestAgentIncompleteBaselineBlocksAcceptance(t *testing.T) {
 			baseline.ExitCode = code
 			results["baseline"][suite] = baseline
 			accepted, regressions := assessResults(results, nil)
-			if accepted != (code == 0 || code == 1) {
+			if accepted != (code == 0) {
 				t.Fatalf("suite=%s code=%d accepted=%v", suite, code, accepted)
 			}
 			if !accepted && trialStatus(accepted, nil, regressions, nil, coverageLosses(results)) != "blocked" {
@@ -644,5 +649,120 @@ func TestAgentPreparationCopiesCommittedDependencies(t *testing.T) {
 	}
 	if metadata.SourceRevision != "frozen-revision" {
 		t.Fatalf("source revision=%s", metadata.SourceRevision)
+	}
+}
+
+// TestAgentIncompleteLifecyclesBlockEveryPhase rejects partial streams independently of command exit codes.
+func TestAgentIncompleteLifecyclesBlockEveryPhase(t *testing.T) {
+	for _, side := range []string{"baseline", "app"} {
+		for _, suite := range []string{"unit", "auth", "holdout", "build"} {
+			for _, field := range []string{"tests", "packages"} {
+				t.Run(side+"/"+suite+"/"+field, func(t *testing.T) {
+					results := agentPassingResults()
+					result := results[side][suite]
+					switch field {
+					case "tests":
+						result.IncompleteTests = []string{"p::TestPolicy/child"}
+					case "packages":
+						result.IncompletePackages = []string{"p"}
+					}
+					results[side][suite] = result
+					accepted, regressions := assessResults(results, nil)
+					if accepted || trialStatus(accepted, nil, regressions, nil, coverageLosses(results)) != "blocked" {
+						t.Fatal("incomplete evidence did not block measurement")
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestAgentRealGoBaselineLifecycles requires a successful baseline despite candidate repairs.
+func TestAgentRealGoBaselineLifecycles(t *testing.T) {
+	for _, mode := range []string{"signal", "test-main-exit", "assertion", "assertion-and-test-main-exit"} {
+		t.Run(mode, func(t *testing.T) {
+			if mode == "signal" && runtime.GOOS == "windows" {
+				t.Skip("Windows does not support signaling a process with SIGTERM")
+			}
+			root := t.TempDir()
+			app, evaluation := filepath.Join(root, "app"), filepath.Join(root, "evaluation")
+			agentWrite(t, filepath.Join(app, "go.mod"), "module example.com/lifecycle\n\ngo 1.20\n")
+			production := filepath.Join(app, "policy.go")
+			agentWrite(t, production, "package lifecycle\nconst oldPolicy = true\n")
+			tests := fmt.Sprintf(`package lifecycle
+import (
+ "os"
+ "syscall"
+ "testing"
+)
+const mode = %q
+// TestMain simulates termination after otherwise completed test execution.
+func TestMain(m *testing.M) {
+ code := m.Run()
+ if oldPolicy && (mode == "test-main-exit" || mode == "assertion-and-test-main-exit") { os.Exit(2) }
+ os.Exit(code)
+}
+// TestExisting provides passing evidence before the policy test.
+func TestExisting(t *testing.T) {}
+// TestPolicy exercises the production flag without changing test source.
+func TestPolicy(t *testing.T) {
+ if !oldPolicy && mode == "signal" { return }
+ t.Run("child", func(t *testing.T) {
+  switch mode {
+  case "signal":
+   process, err := os.FindProcess(os.Getpid())
+   if err != nil { t.Fatal(err) }
+   if err := process.Signal(syscall.SIGTERM); err != nil { t.Fatal(err) }
+   select {}
+  case "assertion", "assertion-and-test-main-exit": if oldPolicy { t.Fatal("old policy") }
+  }
+ })
+}
+`, mode)
+			testPath := filepath.Join(app, "policy_test.go")
+			agentWrite(t, testPath, tests)
+			if err := os.MkdirAll(evaluation, 0700); err != nil {
+				t.Fatal(err)
+			}
+			baseline, err := runGo(context.Background(), app, evaluation, "baseline", []string{"test", "-json", "-count=1", "./..."})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if baseline.ExitCode != 1 || !hasTestName(baseline.Passed, "TestExisting") {
+				t.Fatalf("baseline did not reproduce wrapped test-process failure: %+v", baseline)
+			}
+			if mode == "signal" && !reflect.DeepEqual(baseline.IncompleteTests, []string{"example.com/lifecycle::TestPolicy", "example.com/lifecycle::TestPolicy/child"}) {
+				t.Fatalf("lost interrupted identities: %+v", baseline)
+			}
+			if !reflect.DeepEqual(baseline.PackageFailures, []string{"example.com/lifecycle"}) {
+				t.Fatalf("lost TestMain failure: %+v", baseline)
+			}
+			agentWrite(t, production, "package lifecycle\nconst oldPolicy = false\n")
+			candidate, err := runGo(context.Background(), app, evaluation, "candidate", []string{"test", "-json", "-count=1", "./..."})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if candidate.ExitCode != 0 || !completeTestEvidence(candidate) {
+				t.Fatalf("candidate did not complete: %+v", candidate)
+			}
+			retained, err := os.ReadFile(testPath)
+			if err != nil || string(retained) != tests {
+				t.Fatalf("fixture tests changed: %v", err)
+			}
+			results := agentPassingResults()
+			results["baseline"]["unit"], results["app"]["unit"] = baseline, candidate
+			accepted, regressions := assessResults(results, nil)
+			if len(regressions["unit"]) != 0 || len(coverageLosses(results)["unit"].Tests) != 0 {
+				t.Fatal("fixture must isolate incomplete evidence without losing terminal test identities")
+			}
+			if mode == "assertion" || mode == "assertion-and-test-main-exit" {
+				if !completeTestEvidence(baseline) || len(baseline.Failed) != 2 {
+					t.Fatalf("completed assertion evidence lost: baseline=%+v candidate=%+v", baseline, candidate)
+				}
+			}
+			if accepted || trialStatus(accepted, nil, regressions, nil, coverageLosses(results)) != "blocked" {
+				t.Fatalf("failing baseline did not block measurement: %+v", baseline)
+			}
+		})
 	}
 }

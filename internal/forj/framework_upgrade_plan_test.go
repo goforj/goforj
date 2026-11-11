@@ -60,7 +60,7 @@ func TestDiscoveredAppsKeepInheritedRenderSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := project.AppForName("billing")
-	if appRenderStarterKit(projection, app) != appRenderStarterKit(original, app) || appRenderComponentLibrary(projection, app) != appRenderComponentLibrary(original, app) || appRenderHelpFormat(projection, app) != appRenderHelpFormat(original, app) {
+	if appRenderStarterKit(projection.Config, app) != appRenderStarterKit(original, app) || appRenderComponentLibrary(projection.Config, app) != appRenderComponentLibrary(original, app) || appRenderHelpFormat(projection.Config, app) != appRenderHelpFormat(original, app) {
 		t.Fatal("discovery changed inherited render settings")
 	}
 	snapshot, err := frameworkSnapshotForConfig(projection)
@@ -537,6 +537,8 @@ func TestFrameworkUpgradeWithoutAuthPlansCoreAndNamedApps(t *testing.T) {
 	writeProjectRendererTestFile(t, filepath.Join(root, ".goforj.yml"), string(encoded))
 	writeProjectRendererTestFile(t, filepath.Join(root, "internal/logger/app.go"), "package logger\nfunc OwnerLogging() {}\n")
 	writeProjectRendererTestFile(t, filepath.Join(root, "app/worker/wire/wire_gen.go"), "package wire\nfunc OwnerWorkerAccessor() {}\n")
+	writeProjectRendererTestFile(t, filepath.Join(root, "cmd/worker/main.go"), "package main\n")
+	writeProjectRendererTestFile(t, filepath.Join(root, "cmd/admin/main.go"), "package main\n")
 	before := openAPIUpgradeSnapshot(t, root)
 	snapshot, err := frameworkUpgradeSnapshot(root)
 	if err != nil {
@@ -591,7 +593,7 @@ func TestFrameworkUpgradeProjectionStripsOwnerSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err = yaml.Marshal(projection)
+	encoded, err = yaml.Marshal(projection.Config)
 	if err != nil {
 		t.Fatal(err)
 	}

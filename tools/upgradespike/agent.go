@@ -295,9 +295,14 @@ func coverageLosses(results trialResults) map[string]coverageLoss {
 func assessResults(results trialResults, protected []string) (bool, map[string][]string) {
 	accepted := len(protected) == 0 && results["baseline"]["holdout"].ExitCode == 1
 	regressions := map[string][]string{}
+	for _, suites := range results {
+		for _, result := range suites {
+			accepted = accepted && completeTestEvidence(result)
+		}
+	}
 	for _, suite := range []string{"unit", "auth"} {
 		baseline, candidate := results["baseline"][suite], results["app"][suite]
-		accepted = accepted && (baseline.ExitCode == 0 || baseline.ExitCode == 1)
+		accepted = accepted && baseline.ExitCode == 0 && len(baseline.Failed) == 0 && len(baseline.PackageFailures) == 0
 		regressions[suite] = difference(baseline.Passed, candidate.Passed)
 		accepted = accepted && len(regressions[suite]) == 0 && len(baseline.Passed) > 0 && len(candidate.Passed) > 0 && len(difference(candidate.Skipped, baseline.Skipped)) == 0
 	}

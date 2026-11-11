@@ -177,9 +177,12 @@ those packages from the upgrade checks. Previously failed or skipped test identi
 must remain observed; unchanged pre-existing failures still block acceptance. These
 local controls are not an executable sandbox.
 
-A timed-out or interrupted baseline cannot establish complete comparison evidence,
-so it prevents measured acceptance. Ordinary baseline failures remain available for
-comparison with a repaired candidate. Platform CI executes the planner and portable
+A successful unit and auth baseline is required for `measured-gates-pass`. Failed
+baselines remain useful partial evidence, even when a candidate repairs their
+assertions, but cannot qualify for measured acceptance. A terminated test binary
+can make `go test` exit with the same code as an assertion failure. The evaluator
+also tracks test and package lifecycle events and rejects unfinished executions.
+Platform CI executes the planner and portable
 experiment tests on macOS and Windows; fixtures requiring the pilot's POSIX `/tmp`
 environment explicitly skip Windows.
 

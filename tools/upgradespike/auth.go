@@ -153,7 +153,7 @@ func replaceAuthMethod(source []byte, receiver, receiverType, method string, rep
 
 // requireAuthSuite rejects incomplete execution even when the process reports success.
 func requireAuthSuite(result testResult, required []string) error {
-	if result.ExitCode != 0 || len(result.Passed) == 0 || len(result.Failed) != 0 || len(result.Skipped) != 0 || len(result.PackageFailures) != 0 {
+	if !completeTestEvidence(result) || result.ExitCode != 0 || len(result.Passed) == 0 || len(result.Failed) != 0 || len(result.Skipped) != 0 || len(result.PackageFailures) != 0 {
 		return errors.New("auth suite does not establish every required passing behavior")
 	}
 	for _, identity := range required {
@@ -166,7 +166,7 @@ func requireAuthSuite(result testResult, required []string) error {
 
 // requireAuthFailure requires each intended failing identity rather than accepting a compiler failure.
 func requireAuthFailure(result testResult, required []string) error {
-	if result.ExitCode != 1 || len(result.Skipped) != 0 || len(required) == 0 {
+	if !completeTestEvidence(result) || result.ExitCode != 1 || len(result.Skipped) != 0 || len(required) == 0 {
 		return errors.New("auth negative control did not fail behaviorally")
 	}
 	for _, identity := range required {

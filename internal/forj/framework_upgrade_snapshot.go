@@ -35,8 +35,30 @@ func (inventory *frameworkRenderInventory) record(destination, template string, 
 	inventory.artifacts[destination] = projectupgrade.Artifact{Path: destination, Ownership: ownership, Template: template, Mode: uint32(mode.Perm())}
 }
 
+// frameworkRenderIntent keeps filesystem participation separate from explicitly configured App selections.
+type frameworkRenderIntent struct {
+	*project.Config
+	DiscoveredApps []string
+}
+
+// namedApps includes generator participants without converting inherited Apps into explicit selections.
+func (intent *frameworkRenderIntent) namedApps() []string {
+	pending := make([]project.App, 0, len(intent.DiscoveredApps))
+	for _, name := range intent.DiscoveredApps {
+		pending = append(pending, project.AppForName(name))
+	}
+	apps := (projectlayout.Discovery{}).RuntimeApps(intent.Config, pending...)
+	names := make([]string, 0, len(apps)-1)
+	for _, app := range apps {
+		if app.Name != project.DefaultAppName {
+			names = append(names, app.Name)
+		}
+	}
+	return names
+}
+
 // frameworkUpgradeConfig projects supported render intent while stripping secrets, commands, local replacements, and owner extras.
-func frameworkUpgradeConfig(root string) (*project.Config, error) {
+func frameworkUpgradeConfig(root string) (*frameworkRenderIntent, error) {
 	source, err := projectupgrade.ReadInput(root, ".goforj.yml")
 	if err != nil {
 		return nil, err
@@ -67,24 +89,20 @@ func frameworkUpgradeConfig(root string) (*project.Config, error) {
 		return nil, err
 	}
 	defer filesystem.Close()
-	discovery, err := projectlayout.DiscoverFS(filesystem.FS())
+	discovery, err := projectlayout.DiscoverFS(projectupgrade.InspectionFS(filesystem))
 	if err != nil {
 		return nil, err
 	}
+	intent := &frameworkRenderIntent{Config: config, DiscoveredApps: []string{}}
 	for _, app := range discovery.NamedApps() {
-		if _, exists := config.Apps[app.Name]; !exists {
-			config.Apps[app.Name] = project.AppConfig{
-				Components: appRenderComponents(original, app), StarterKit: appRenderStarterKit(original, app),
-				StarterKitOptions: original.Render.StarterKitOptions, HelpFormat: appRenderHelpFormat(original, app),
-			}
-		}
+		intent.DiscoveredApps = append(intent.DiscoveredApps, app.Name)
 	}
-	return config, nil
+	return intent, nil
 }
 
 // writeFrameworkProjection creates only conventional discovery markers and neutral environment layers in a disposable workspace.
-func writeFrameworkProjection(root string, config *project.Config) error {
-	data, err := yaml.Marshal(config)
+func writeFrameworkProjection(root string, config *frameworkRenderIntent) error {
+	data, err := yaml.Marshal(config.Config)
 	if err != nil {
 		return err
 	}
@@ -99,10 +117,7 @@ func writeFrameworkProjection(root string, config *project.Config) error {
 			return err
 		}
 	}
-	for name := range config.Apps {
-		if name == project.DefaultAppName {
-			continue
-		}
+	for _, name := range config.DiscoveredApps {
 		app := project.AppForName(name)
 		for _, marker := range []string{app.Entrypoint, filepath.Join(app.AppDir, "root_cmd.go")} {
 			if err := os.MkdirAll(filepath.Dir(filepath.Join(root, marker)), 0o700); err != nil {
@@ -126,7 +141,7 @@ func frameworkUpgradeSnapshot(root string) (projectupgrade.Snapshot, error) {
 }
 
 // frameworkSnapshotForConfig freezes one projected input recipe for all participating renderers.
-func frameworkSnapshotForConfig(config *project.Config) (projectupgrade.Snapshot, error) {
+func frameworkSnapshotForConfig(config *frameworkRenderIntent) (projectupgrade.Snapshot, error) {
 	inputsDigest, err := frameworkInputsDigest(config)
 	if err != nil {
 		return projectupgrade.Snapshot{}, err
@@ -139,7 +154,10 @@ func frameworkSnapshotForConfig(config *project.Config) (projectupgrade.Snapshot
 	if err := writeFrameworkProjection(staging, config); err != nil {
 		return projectupgrade.Snapshot{}, err
 	}
-	resources, err := project.DefaultResourcePlan(project.ProjectComponents(config))
+	// Keep the declared recipe intact for peer renderers and input verification.
+	effective := *config.Config
+	normalizeRenderComponents(&effective.Render)
+	resources, err := project.DefaultResourcePlan(project.ProjectComponents(&effective))
 	if err != nil {
 		return projectupgrade.Snapshot{}, err
 	}
@@ -151,7 +169,7 @@ func frameworkSnapshotForConfig(config *project.Config) (projectupgrade.Snapshot
 	}
 	snapshot := projectupgrade.Snapshot{Protocol: projectupgrade.ProtocolVersion, Scope: "framework", InputsDigest: inputsDigest,
 		Engine: projectupgrade.Engine{Version: version.Version, Commit: version.Commit, Dirty: version.Dirty}, Artifacts: []projectupgrade.Artifact{}}
-	derivedPaths := frameworkDerivedPaths(config)
+	derivedPaths := frameworkDerivedPaths(&frameworkRenderIntent{Config: &effective, DiscoveredApps: config.DiscoveredApps})
 	derived := map[string]bool{}
 	for _, name := range derivedPaths {
 		derived[name] = true
@@ -221,25 +239,25 @@ func frameworkSnapshotForConfig(config *project.Config) (projectupgrade.Snapshot
 }
 
 // frameworkDerivedPaths lists actual generator contracts independently of a particular component's runtime implementation.
-func frameworkDerivedPaths(config *project.Config) []string {
-	components := project.ProjectComponents(config)
+func frameworkDerivedPaths(config *frameworkRenderIntent) []string {
+	components := project.ProjectComponents(config.Config)
 	paths := generate.OutputPaths(generate.GenerationSelection{Cache: components.Cache, Queue: components.Jobs, Storage: components.Storage,
 		Events: components.Events, Mail: components.Mail, Database: components.HasDatabase(), Observability: components.Observability})
 	paths = append(paths, "app/wire/wire_gen.go")
-	if appRenderComponents(config, project.DefaultApp()).WebAPI || appRenderComponents(config, project.DefaultApp()).WebUI {
+	if appRenderComponents(config.Config, project.DefaultApp()).WebAPI || appRenderComponents(config.Config, project.DefaultApp()).WebUI {
 		paths = append(paths, apiindex.OutputPaths(project.DefaultApp())...)
 	}
-	if appRenderComponents(config, project.DefaultApp()).WebUI {
+	if appRenderComponents(config.Config, project.DefaultApp()).WebUI {
 		paths = append(paths, "cmd/app/frontend/dist")
 	}
-	for name := range config.Apps {
+	for _, name := range config.namedApps() {
 		if name != project.DefaultAppName {
 			paths = append(paths, "app/"+name+"/wire/wire_gen.go")
 			app := project.AppForName(name)
-			if appRenderComponents(config, app).WebAPI || appRenderComponents(config, app).WebUI {
+			if appRenderComponents(config.Config, app).WebAPI || appRenderComponents(config.Config, app).WebUI {
 				paths = append(paths, apiindex.OutputPaths(app)...)
 			}
-			if appRenderComponents(config, project.AppForName(name)).WebUI {
+			if appRenderComponents(config.Config, project.AppForName(name)).WebUI {
 				paths = append(paths, "cmd/"+name+"/frontend/dist")
 			}
 		}

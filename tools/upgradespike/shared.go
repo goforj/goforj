@@ -232,20 +232,29 @@ func trialEnvironment() []string {
 
 // testResult retains test identities and package failures separately from command success.
 type testResult struct {
-	ExitCode        int      `json:"exit_code"`
-	Passed          []string `json:"passed"`
-	Failed          []string `json:"failed"`
-	Skipped         []string `json:"skipped"`
-	PackageFailures []string `json:"package_failures"`
-	Packages        []string `json:"packages"`
+	ExitCode           int      `json:"exit_code"`
+	Passed             []string `json:"passed"`
+	Failed             []string `json:"failed"`
+	Skipped            []string `json:"skipped"`
+	PackageFailures    []string `json:"package_failures"`
+	Packages           []string `json:"packages"`
+	IncompleteTests    []string `json:"incomplete_tests,omitempty"`
+	IncompletePackages []string `json:"incomplete_packages,omitempty"`
 }
 
-// parseTests retains failures even when the surrounding command reports success.
+// completeTestEvidence requires every observed execution to have a terminal event.
+func completeTestEvidence(result testResult) bool {
+	return len(result.IncompleteTests) == 0 && len(result.IncompletePackages) == 0
+}
+
+// parseTests retains failures and unfinished executions even when the command reports success.
 func parseTests(source io.Reader, exitCode int) (testResult, error) {
 	sets := make([]map[string]bool, 5)
 	for i := range sets {
 		sets[i] = map[string]bool{}
 	}
+	activeTests := map[string]bool{}
+	activePackages := map[string]bool{}
 	scanner := bufio.NewScanner(source)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -267,6 +276,10 @@ func parseTests(source io.Reader, exitCode int) (testResult, error) {
 			}
 		}
 		if event.Test != "" {
+			identity := pkg + "::" + event.Test
+			if event.Action == "run" {
+				activeTests[identity] = true
+			}
 			index := -1
 			switch event.Action {
 			case "pass":
@@ -277,10 +290,19 @@ func parseTests(source io.Reader, exitCode int) (testResult, error) {
 				index = 2
 			}
 			if index >= 0 {
-				sets[index][pkg+"::"+event.Test] = true
+				sets[index][identity] = true
+				delete(activeTests, identity)
 			}
-		} else if event.Action == "fail" || event.Action == "build-fail" {
-			sets[3][pkg] = true
+		} else {
+			switch event.Action {
+			case "start":
+				activePackages[pkg] = true
+			case "pass", "skip", "fail", "build-fail":
+				delete(activePackages, pkg)
+			}
+			if event.Action == "fail" || event.Action == "build-fail" {
+				sets[3][pkg] = true
+			}
 		}
 	}
 	lists := make([][]string, 5)
@@ -291,7 +313,16 @@ func parseTests(source io.Reader, exitCode int) (testResult, error) {
 		}
 		sort.Strings(lists[i])
 	}
-	return testResult{ExitCode: exitCode, Passed: lists[0], Failed: lists[1], Skipped: lists[2], PackageFailures: lists[3], Packages: lists[4]}, scanner.Err()
+	result := testResult{ExitCode: exitCode, Passed: lists[0], Failed: lists[1], Skipped: lists[2], PackageFailures: lists[3], Packages: lists[4]}
+	for identity := range activeTests {
+		result.IncompleteTests = append(result.IncompleteTests, identity)
+	}
+	for pkg := range activePackages {
+		result.IncompletePackages = append(result.IncompletePackages, pkg)
+	}
+	sort.Strings(result.IncompleteTests)
+	sort.Strings(result.IncompletePackages)
+	return result, scanner.Err()
 }
 
 // runGo retains complete command evidence and bounds each validation invocation.
