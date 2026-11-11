@@ -64,6 +64,8 @@ This is a fragment using `go.opentelemetry.io/otel` and `go.opentelemetry.io/ote
 
 For outbound HTTP, inject a client built with `manager.HTTPClient(http.DefaultClient)`, then use `http.NewRequestWithContext` with the execution context. The helper wraps a copy of the client, creates client spans, and injects W3C context without modifying the process-wide default client. Other clients can use their standard OTel instrumentation with the app's provider.
 
+Queue and event adapters use a 512-byte budget for vendor `tracestate`. Larger outgoing values are omitted. Unusable incoming state does not discard a valid `traceparent`; the shared message-carrier limits still apply.
+
 The helper's automatic URL attributes omit user information, query strings, and fragments. Automatic transport and response-body failures use a generic span status description while the original errors remain available to the caller. The actual outgoing URL is unchanged. Explicit application instrumentation retains its own capture policy.
 
 App-owned OTLP exporters return generic configuration, delivery, and shutdown error messages so automatic diagnostics cannot expose collector URLs, authentication headers, or response bodies. `errors.Is`, `errors.As`, and `errors.Unwrap` retain access to the underlying cause for explicit inspection. Application-registered exporters and processors retain their own diagnostic policy.

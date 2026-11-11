@@ -2,11 +2,14 @@ package inspects
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"maps"
 	"strings"
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"{{.GoModuleName}}/internal/runtime"
 )
@@ -122,6 +125,121 @@ func TestMessageContextPropagationPreservesFutureExtensions(t *testing.T) {
 		got := trace.SpanContextFromContext(propagator.Extract(context.Background(), map[string]string{"traceparent": parent + suffix}))
 		if !got.IsRemote() || !got.IsSampled() || got.TraceID().String() != "4bf92f3577b34da6a3ce929d0e0e4736" || got.SpanID().String() != "00f067aa0ba902b7" {
 			t.Fatal("unknown future-version fields changed core identity")
+		}
+	}
+}
+
+// TestMessageContextPropagationStateBudget preserves parent identity when optional state exceeds the transport budget.
+func TestMessageContextPropagationStateBudget(t *testing.T) {
+	largeMembers := make([]string, 32)
+	for index := range largeMembers {
+		largeMembers[index] = fmt.Sprintf("v%02d=%s", index, strings.Repeat("x", 256))
+	}
+	for _, test := range []struct {
+		name  string
+		state string
+		bytes int
+	}{
+		{"boundary", "a=" + strings.Repeat("x", 256) + ",b=" + strings.Repeat("y", 251), 512},
+		{"over_boundary", "a=" + strings.Repeat("x", 256) + ",b=" + strings.Repeat("y", 252), 513},
+		{"sdk_large", strings.Join(largeMembers[:2], ","), 521},
+		{"sdk_max_members", strings.Join(largeMembers, ","), 8351},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state, err := trace.ParseTraceState(test.state)
+			if err != nil || len(state.String()) != test.bytes {
+				t.Fatalf("state bytes=%d, error=%v", len(state.String()), err)
+			}
+			for _, flags := range []trace.TraceFlags{0, trace.FlagsSampled} {
+				identity := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}, TraceFlags: flags, TraceState: state})
+				producer := trace.ContextWithSpanContext(context.Background(), identity)
+				sdkHeaders := propagation.MapCarrier{}
+				propagation.TraceContext{}.Inject(producer, sdkHeaders)
+				if sdkHeaders["tracestate"] != test.state {
+					t.Fatal("SDK did not retain valid input state")
+				}
+				propagator := MessageContextPropagator{}
+				headers := propagator.Inject(producer)
+				if headers["traceparent"] != sdkHeaders["traceparent"] {
+					t.Fatal("injection changed parent identity or sampling flags")
+				}
+				wantState := state
+				if test.bytes > 512 {
+					wantState = trace.TraceState{}
+					if _, exists := headers["tracestate"]; exists {
+						t.Fatal("oversized state field was not omitted")
+					}
+				} else if headers["tracestate"] != test.state {
+					t.Fatal("state at the budget boundary changed")
+				}
+				encoded, err := json.Marshal(headers)
+				if err != nil || len(encoded) > 8192 {
+					t.Fatalf("carrier bytes=%d, error=%v", len(encoded), err)
+				}
+				for _, carrier := range []map[string]string{headers, sdkHeaders} {
+					before := maps.Clone(carrier)
+					got := trace.SpanContextFromContext(propagator.Extract(context.Background(), carrier))
+					if !got.Equal(identity.WithTraceState(wantState).WithRemote(true)) {
+						t.Fatal("round trip changed parent identity, flags, or expected state")
+					}
+					if !maps.Equal(carrier, before) {
+						t.Fatal("extraction mutated input headers")
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestMessageContextPropagationDiscardsInvalidState keeps optional metadata failures separate from parent validation.
+func TestMessageContextPropagationDiscardsInvalidState(t *testing.T) {
+	for _, flags := range []trace.TraceFlags{0, trace.FlagsSampled} {
+		identity := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}, TraceFlags: flags})
+		propagator := MessageContextPropagator{}
+		parent := propagator.Inject(trace.ContextWithSpanContext(context.Background(), identity))["traceparent"]
+		for _, test := range []struct {
+			name  string
+			state map[string]string
+		}{
+			{"malformed", map[string]string{"tracestate": "invalid"}},
+			{"oversized_malformed", map[string]string{"tracestate": strings.Repeat("x", 513)}},
+			{"duplicate_case", map[string]string{"tracestate": "a=one", "TraceState": "b=two"}},
+			{"duplicate_unicode", map[string]string{"TraceState": "a=one", "traceſtate": "b=two"}},
+			{"oversized_duplicate", map[string]string{"tracestate": strings.Repeat("x", 513), "TraceState": "b=two"}},
+		} {
+			t.Run(fmt.Sprintf("%s/flags_%d", test.name, flags), func(t *testing.T) {
+				headers := maps.Clone(test.state)
+				headers["traceparent"] = parent
+				before := maps.Clone(headers)
+				deadline := time.Now().Add(time.Hour)
+				receiver, cancel := context.WithDeadline(runtime.WithSource(context.Background(), runtime.SourceEvents), deadline)
+				defer cancel()
+				extracted := propagator.Extract(receiver, headers)
+				if got := trace.SpanContextFromContext(extracted); !got.Equal(identity.WithRemote(true)) {
+					t.Fatal("invalid optional state changed parent identity or flags")
+				}
+				if got, ok := extracted.Deadline(); !ok || !got.Equal(deadline) || runtime.SourceFromContext(extracted) != runtime.SourceEvents {
+					t.Fatal("extraction changed the receiver deadline or values")
+				}
+				cancel()
+				if extracted.Err() != context.Canceled {
+					t.Fatal("extraction detached receiver cancellation")
+				}
+				if !maps.Equal(headers, before) {
+					t.Fatal("extraction mutated input headers")
+				}
+				for _, invalidParent := range []map[string]string{
+					{"traceparent": parent, "TraceParent": parent},
+					{"traceparent": "invalid"},
+					{"traceparent": strings.Repeat("x", 513)},
+				} {
+					carrier := maps.Clone(test.state)
+					maps.Copy(carrier, invalidParent)
+					if got := propagator.Extract(receiver, carrier); got != receiver {
+						t.Fatal("invalid or ambiguous parent was accepted with invalid state")
+					}
+				}
+			})
 		}
 	}
 }

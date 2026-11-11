@@ -11,6 +11,7 @@ import (
 )
 
 // MessageContextPropagator carries W3C trace identity without publishing arbitrary context values or baggage.
+// Optional tracestate is discarded in full above the 512-byte transport budget while preserving valid parent identity.
 type MessageContextPropagator struct{}
 
 // Inject snapshots valid span identity, including unsampled parents, for transport metadata.
@@ -20,6 +21,10 @@ func (MessageContextPropagator) Inject(ctx context.Context) map[string]string {
 	}
 	headers := propagation.MapCarrier{}
 	propagation.TraceContext{}.Inject(ctx, headers)
+	// Omit the whole optional field to honor the 512-byte transport budget without changing parent identity.
+	if len(headers["tracestate"]) > 512 {
+		delete(headers, "tracestate")
+	}
 	return headers
 }
 
@@ -32,6 +37,7 @@ func (MessageContextPropagator) Extract(ctx context.Context, headers map[string]
 		return ctx
 	}
 	var parentKey, stateKey string
+	discardState := false
 	for key, value := range headers {
 		switch {
 		case strings.EqualFold(key, "traceparent"):
@@ -43,23 +49,20 @@ func (MessageContextPropagator) Extract(ctx context.Context, headers map[string]
 			}
 			parentKey = key
 		case strings.EqualFold(key, "tracestate"):
-			if len(value) > 512 {
-				return ctx
-			}
-			if stateKey != "" {
-				return ctx
+			if len(value) > 512 || stateKey != "" {
+				discardState = true
 			}
 			stateKey = key
 		}
 	}
-	// Native carriers already use canonical keys. Normalize only when a transport changes their case.
+	// Native carriers already use canonical keys. Normalize changed casing or discard invalid optional state.
 	carrier := propagation.MapCarrier(headers)
-	if parentKey != "" && parentKey != "traceparent" || stateKey != "" && stateKey != "tracestate" {
+	if discardState || parentKey != "" && parentKey != "traceparent" || stateKey != "" && stateKey != "tracestate" {
 		carrier = propagation.MapCarrier{}
 		if parentKey != "" {
 			carrier["traceparent"] = headers[parentKey]
 		}
-		if stateKey != "" {
+		if stateKey != "" && !discardState {
 			carrier["tracestate"] = headers[stateKey]
 		}
 	}

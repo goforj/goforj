@@ -2,10 +2,13 @@ package generate
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -127,7 +130,7 @@ func TestGeneratedRequirementsPreserveConsumerConstraints(t *testing.T) {
 			}
 			writeModuleRequirementsFixture(t, root, map[string]string{
 				"go.mod":                         "module example.com/pins\n\ngo 1.24.6\n\nrequire (\n github.com/goforj/queue " + queueVersion + "\n example.com/user v1.2.3 // indirect\n)\n\n" + replacement + "replace example.com/user => ../custom\nreplace github.com/goforj/queue/driver/natsqueue => ../natsqueue\n",
-				"internal/queues/manager_gen.go": "package queues\nimport (\n _ \"github.com/goforj/queue/queueconfig\"\n _ \"github.com/goforj/queue/driver/natsqueue\"\n)\n",
+				"internal/queues/manager_gen.go": "package queues\nimport (\n _ \"github.com/goforj/queue/queueconfig\"\n _ \"github.com/goforj/queue/driver/natsqueue\"\n _ \"github.com/goforj/queue/driver/redisqueue\"\n)\n",
 			})
 			before := readModuleRequirementsFixture(t, root)
 			if err := os.Chmod(filepath.Join(root, "go.mod"), 0o600); err != nil {
@@ -142,6 +145,9 @@ func TestGeneratedRequirementsPreserveConsumerConstraints(t *testing.T) {
 			if versions["github.com/goforj/queue"] != queueVersion || versions["example.com/user"] != "v1.2.3" || after.Go.Version != "1.24.6" {
 				t.Fatalf("consumer requirements changed: versions=%v go=%s", versions, after.Go.Version)
 			}
+			if versions["github.com/goforj/queue/driver/natsqueue"] != "" || versions["github.com/goforj/queue/driver/redisqueue"] != coredeps.MustVersionFor("github.com/goforj/queue/driver/redisqueue") {
+				t.Fatalf("replacement or catalog default changed: versions=%v", versions)
+			}
 			for index, replace := range before.Replace {
 				if replace.Old != after.Replace[index].Old || replace.New != after.Replace[index].New {
 					t.Fatal("consumer replacement changed")
@@ -153,6 +159,107 @@ func TestGeneratedRequirementsPreserveConsumerConstraints(t *testing.T) {
 			}
 			if changed, err := syncGeneratedModuleRequirements(root, GenerationSelection{Queue: true}); err != nil || changed {
 				t.Fatalf("repeat changed=%v error=%v", changed, err)
+			}
+		})
+	}
+}
+
+// TestGeneratedRequirementsPreserveMissingRequirementReplacements compares seeded resolution with Go's own replacement selection.
+func TestGeneratedRequirementsPreserveMissingRequirementReplacements(t *testing.T) {
+	const module = "github.com/goforj/events/driver/natsevents"
+	goBinary := filepath.Join(runtime.GOROOT(), "bin", "go")
+	if runtime.GOOS == "windows" {
+		goBinary += ".exe"
+	}
+	for _, scenario := range []struct {
+		name       string
+		directives string
+		version    string
+		directory  string
+		excluded   bool
+	}{
+		{name: "versioned", directives: "replace " + module + " v0.2.1 => ./low\n", version: "v0.2.1", directory: "low"},
+		{name: "highest version", directives: "replace " + module + " v0.2.2 => ./high\nreplace " + module + " v0.2.1 => ./low\n", version: "v0.2.2", directory: "high"},
+		{name: "wildcard", directives: "replace " + module + " => ./low\n", version: "v0.0.0-00010101000000-000000000000", directory: "low"},
+		{name: "versioned and wildcard", directives: "replace " + module + " => ./low\nreplace " + module + " v0.2.2 => ./high\n", version: "v0.2.2", directory: "high"},
+		{name: "excluded lower version", directives: "replace " + module + " v0.2.1 => ./low\nreplace " + module + " v0.2.2 => ./high\nexclude " + module + " v0.2.1\n", version: "v0.2.2", directory: "high"},
+		{name: "excluded highest version", directives: "replace " + module + " v0.2.1 => ./low\nreplace " + module + " v0.2.2 => ./high\nexclude " + module + " v0.2.2\n", excluded: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			var baseline struct {
+				tidyFailed bool
+				version    string
+				listFailed bool
+				listOutput string
+			}
+			for _, seeded := range []bool{false, true} {
+				root := t.TempDir()
+				root, err := filepath.EvalSymlinks(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeModuleRequirementsFixture(t, root, map[string]string{
+					"go.mod":                         "module example.com/replacements\n\ngo 1.24.6\n\n" + scenario.directives,
+					"internal/events/manager_gen.go": "package events\nimport _ \"" + module + "\"\n",
+					"low/go.mod":                     "module " + module + "\n\ngo 1.24.6\n",
+					"low/driver.go":                  "package natsevents\n",
+					"high/go.mod":                    "module " + module + "\n\ngo 1.24.6\n",
+					"high/driver.go":                 "package natsevents\n",
+				})
+				if seeded {
+					if changed, err := syncGeneratedModuleRequirements(root, GenerationSelection{Events: true}); changed || err != nil {
+						t.Fatalf("replacement should resolve through tidy: changed=%v error=%v", changed, err)
+					}
+				}
+				tidy := exec.Command(goBinary, "mod", "tidy")
+				tidy.Dir = root
+				tidy.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off", "GOWORK=off", "GOTOOLCHAIN=local")
+				tidyOutput, tidyErr := tidy.CombinedOutput()
+				if tidyErr != nil && !scenario.excluded {
+					t.Fatalf("seeded=%v tidy: %v\n%s", seeded, tidyErr, tidyOutput)
+				}
+				manifest := readModuleRequirementsFixture(t, root)
+				if got := moduleRequirementsFixtureVersions(manifest)[module]; !scenario.excluded && (got != scenario.version || manifest.Go.Version != "1.24.6") {
+					t.Fatalf("seeded=%v version=%s want=%s go=%s", seeded, got, scenario.version, manifest.Go.Version)
+				}
+				list := exec.Command(goBinary, "list", "-m", "-json", module)
+				list.Dir = root
+				list.Env = tidy.Env
+				output, err := list.CombinedOutput()
+				if scenario.excluded {
+					encodedRoot, marshalErr := json.Marshal(root)
+					if marshalErr != nil {
+						t.Fatal(marshalErr)
+					}
+					observed := baseline
+					observed.tidyFailed = tidyErr != nil
+					observed.version = moduleRequirementsFixtureVersions(manifest)[module]
+					observed.listFailed = err != nil
+					observed.listOutput = strings.NewReplacer(string(encodedRoot[1:len(encodedRoot)-1]), "<fixture>", root, "<fixture>").Replace(string(output))
+					if !seeded {
+						baseline = observed
+					} else if observed != baseline {
+						t.Fatalf("seeded replacement differs from native resolution: got=%+v baseline=%+v", observed, baseline)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatalf("seeded=%v list: %v\n%s", seeded, err, output)
+				}
+				var resolved struct {
+					Version string
+					Replace *struct{ Dir string }
+				}
+				if err := json.Unmarshal(output, &resolved); err != nil {
+					t.Fatal(err)
+				}
+				wantDir, err := filepath.EvalSymlinks(filepath.Join(root, scenario.directory))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if resolved.Version != scenario.version || resolved.Replace == nil || resolved.Replace.Dir != wantDir {
+					t.Fatalf("seeded=%v resolved=%+v replacement=%+v", seeded, resolved, resolved.Replace)
+				}
 			}
 		})
 	}

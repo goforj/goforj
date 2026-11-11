@@ -49,7 +49,8 @@ func syncGeneratedModuleRequirements(projectDir string, selection GenerationSele
 		}
 		replaced := false
 		for _, replacement := range manifest.Replace {
-			if replacement.Old.Path == module && current != "" && (replacement.Old.Version == "" || replacement.Old.Version == current) {
+			// Missing requirements let tidy select the user's replacement using Go's own version and exclusion rules.
+			if replacement.Old.Path == module && (current == "" || replacement.Old.Version == "" || replacement.Old.Version == current) {
 				replaced = true
 				break
 			}

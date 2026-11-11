@@ -685,7 +685,9 @@
     "current_template": "templates/internal/inspects/propagation_gen.go.tmpl",
     "current_template_sha256": "0b6372abf64df5c562bbe7f497bef3eac59517c422ff7eff90e22bfaa24aa661",
     "implementation_sha256": "57d071f3b2fab1b7746856f69488df9f673308639d21d9af10c770e968e8f677",
-    "interpretation": "The adapter implementation is byte-identical to the measured source after removing the generated-file header. Ordinary queue and event generation now emits it for existing apps; the renderer uses the same template. Historical measured-source hashes above remain unchanged."
+    "interpretation": "The adapter implementation is byte-identical to the measured source after removing the generated-file header. Ordinary queue and event generation now emits it for existing apps; the renderer uses the same template. Historical measured-source hashes above remain unchanged.",
+    "recorded_at_framework_commit": "41f1d2815729d70c52629255e485d5018e561725",
+    "historical_scope": "The current_* fields in this relocation record describe that commit before the subsequent tracestate budget fix. See tracestate_identity_fix for the latest measured source."
   },
   "upgrade_review_followup": {
     "queue_commit": "12e3b5710a83c309a0c77a7cafd674ad15fa933d",
@@ -722,5 +724,111 @@
     ],
     "raw_sha256": "314d2bd9def5ccb912676469a8129bf3b51e9ab9c7d76a4a782e58c16d4d7436",
     "limitations": "Generic two-field carrier and synchronous logical dispatch. Excludes framework W3C parsing, SDK span creation, and broker latency. No speedup claim follows from this smoke run."
+  },
+  "tracestate_identity_fix": {
+    "before_framework_commit": "41f1d2815729d70c52629255e485d5018e561725",
+    "after_template_sha256": "868058ad894b72cab1021f9b4c93393d4224e56fbc2a8d0fceba492348af31a4",
+    "events_driver_commit": "cf10973a9aaf179d1f2255832aebe342b5360ae2",
+    "changes": [
+      "Valid traceparent identity and sampling flags survive oversized or ambiguous tracestate within the existing carrier budget.",
+      "Outgoing tracestate above the existing 512-byte vendor-state budget is omitted as a whole so generated carriers retain trace identity and fit shared/native limits.",
+      "Pub/Sub optional attributes are checked against documented native limits and omitted atomically when invalid, preserving payload bytes.",
+      "Missing requirements with explicit replacements are left to Go module resolution rather than silently switching to catalog source."
+    ],
+    "go": "go1.26.0",
+    "gomaxprocs": 1,
+    "runs": 5,
+    "benchtime": "250ms",
+    "method": "Before and after binaries use the same benchmark fixture and module graph, run serially with alternating order. These normal-path API benchmarks exclude SDK span creation, export, and broker delivery.",
+    "summary": [
+      {
+        "benchmark": "BenchmarkReviewPropagation/extract/canonical",
+        "before": {
+          "ns/op": 270.0,
+          "B/op": 160.0,
+          "allocs/op": 3.0
+        },
+        "after": {
+          "ns/op": 272.1,
+          "B/op": 160.0,
+          "allocs/op": 3.0
+        },
+        "latency_delta_percent": 0.7777777777777883
+      },
+      {
+        "benchmark": "BenchmarkReviewPropagation/extract/mixed",
+        "before": {
+          "ns/op": 380.2,
+          "B/op": 496.0,
+          "allocs/op": 5.0
+        },
+        "after": {
+          "ns/op": 382.0,
+          "B/op": 496.0,
+          "allocs/op": 5.0
+        },
+        "latency_delta_percent": 0.4734350341925264
+      },
+      {
+        "benchmark": "BenchmarkReviewPropagation/extract/empty",
+        "before": {
+          "ns/op": 28.55,
+          "B/op": 0.0,
+          "allocs/op": 0.0
+        },
+        "after": {
+          "ns/op": 28.87,
+          "B/op": 0.0,
+          "allocs/op": 0.0
+        },
+        "latency_delta_percent": 1.1208406304728635
+      },
+      {
+        "benchmark": "BenchmarkReviewPropagation/inject/parent",
+        "before": {
+          "ns/op": 171.7,
+          "B/op": 400.0,
+          "allocs/op": 3.0
+        },
+        "after": {
+          "ns/op": 175.5,
+          "B/op": 400.0,
+          "allocs/op": 3.0
+        },
+        "latency_delta_percent": 2.213162492719878
+      },
+      {
+        "benchmark": "BenchmarkReviewPropagation/inject/state",
+        "before": {
+          "ns/op": 189.4,
+          "B/op": 416.0,
+          "allocs/op": 4.0
+        },
+        "after": {
+          "ns/op": 193.7,
+          "B/op": 416.0,
+          "allocs/op": 4.0
+        },
+        "latency_delta_percent": 2.2703273495248144
+      },
+      {
+        "benchmark": "BenchmarkReviewPropagation/inject/empty",
+        "before": {
+          "ns/op": 9.733,
+          "B/op": 0.0,
+          "allocs/op": 0.0
+        },
+        "after": {
+          "ns/op": 9.713,
+          "B/op": 0.0,
+          "allocs/op": 0.0
+        },
+        "latency_delta_percent": -0.20548648926334012
+      }
+    ],
+    "benchmark_fixture_sha256": "4eb62f5c6749f88698c110b05a3e5ce0a7d2dd8d357a3c839f24cb067d9a7c89",
+    "raw_sha256": "6b8e58e56126f9f27c93c126e35e71b72f7207919da8f7970c78ea20f9f5bf08",
+    "interpretation": "All six allocation and byte counts remain unchanged. Observed median changes are a few nanoseconds for normal valid injection/extraction; this is not an end-to-end throughput comparison.",
+    "scope_limit": "External carriers exceeding the existing generic 8-KiB budget are still ignored before extraction. Oversized SDK state is omitted on outgoing framework carriers to prevent that loss."
   }
 }
