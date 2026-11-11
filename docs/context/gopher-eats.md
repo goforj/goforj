@@ -87,9 +87,9 @@ orders.
 
 ## Inspect the same order
 
-This Tempo capture filters to spans longer than 10 ms to highlight the failed
-cooking attempt, retry, and delivery. HTTP and realtime fanout spans remain in
-the full trace.
+This Tempo capture keeps the HTTP handoff, queue producer, cooking attempts,
+ready event, and delivery consumer visible. Repeated progress branches are
+collapsed using Grafana's tree controls; no duration filter hides short spans.
 
 ![Tempo showing the failed cooking attempt, successful retry, and delivery consumer.](../screenshots/gopher-eats/grafana-retry-and-delivery.png)
 
