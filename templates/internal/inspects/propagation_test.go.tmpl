@@ -113,3 +113,15 @@ func BenchmarkMessageContextPropagationExtract(b *testing.B) {
 		})
 	}
 }
+
+// TestMessageContextPropagationPreservesFutureExtensions leaves unknown version fields opaque, matching the OpenTelemetry contract.
+func TestMessageContextPropagationPreservesFutureExtensions(t *testing.T) {
+	const parent = "01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	propagator := MessageContextPropagator{}
+	for _, suffix := range []string{"", "-extra", "-extra,opaque", "-extra,00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"} {
+		got := trace.SpanContextFromContext(propagator.Extract(context.Background(), map[string]string{"traceparent": parent + suffix}))
+		if !got.IsRemote() || !got.IsSampled() || got.TraceID().String() != "4bf92f3577b34da6a3ce929d0e0e4736" || got.SpanID().String() != "00f067aa0ba902b7" {
+			t.Fatal("unknown future-version fields changed core identity")
+		}
+	}
+}

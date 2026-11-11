@@ -611,5 +611,73 @@
       "before": "bf3f74b9750b2c1023f206d175a590bb158f5836c941ab7263dae2a0d6521433",
       "after": "0f3c3157e655a805050ebe2263a5f84177bffd5a40085de271d34d6eba1ee0c6"
     }
+  },
+  "final_review_fixes": {
+    "queue_before_commit": "d6cfd2bd69879ec6d4c5e9fae94bcfe6b9f2c397",
+    "queue_after_commit": "a3262c31758be87c056a109eee043beee27b7a2a",
+    "events_after_commit": "fe08581c7bd47f87274278ba1e08d00e0b910866",
+    "framework_before_commit": "bee586f8f74ec16258d3ceae69958cf3a05e9e42",
+    "framework_after_template_sha256": "57d071f3b2fab1b7746856f69488df9f673308639d21d9af10c770e968e8f677",
+    "fixes": [
+      "Keep preparation capability local to each worker, preventing concurrent startup races and modern/legacy worker capability contamination.",
+      "Discard invalid raw UTF-8 in Redis optional headers before JSON decoding can repair it; preserve the valid business payload."
+    ],
+    "go": "go1.27.0",
+    "runs": 5,
+    "benchtime": "250ms",
+    "gomaxprocs": 1,
+    "method": "Before and after queue binaries run serially, alternating order each repetition. Queue compares startup-fix source against its previous HEAD.",
+    "summary": [
+      {
+        "path": "queue",
+        "benchmark": "BenchmarkContextPropagationDispatch/disabled",
+        "before": {
+          "ns/op": 3095.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "after": {
+          "ns/op": 3113.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "latency_delta_percent": 0.5815831987076026
+      },
+      {
+        "path": "queue",
+        "benchmark": "BenchmarkContextPropagationDispatch/configured_empty",
+        "before": {
+          "ns/op": 3261.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "after": {
+          "ns/op": 3259.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "latency_delta_percent": -0.06133088009813159
+      },
+      {
+        "path": "queue",
+        "benchmark": "BenchmarkContextPropagationDispatch/valid_carrier",
+        "before": {
+          "ns/op": 5507.0,
+          "B/op": 4081.0,
+          "allocs/op": 41.0
+        },
+        "after": {
+          "ns/op": 5551.0,
+          "B/op": 4081.0,
+          "allocs/op": 41.0
+        },
+        "latency_delta_percent": 0.7989831124024072
+      }
+    ],
+    "raw_sha256": "9da9f6066a716574649a0551c7f71950e554ab19d92d8e86cd163b12ec7eb836",
+    "interpretation": "All queue allocation counts remain unchanged. Queue median timing changes are below 1%. These are local microbenchmarks, not broker throughput measurements.",
+    "scope_limit": "Driver-owned retry-publication diagnostics for NATS, RabbitMQ, and SQS retain worker context; receiving handlers and normal retry delivery retain propagated context.",
+    "discarded_candidate": "A blanket comma check in traceparent was withdrawn after reviewing W3C future-version rules. Unknown extensions remain opaque, matching the pinned OTel extractor. The raw capture also contains timing samples for that discarded check; they are excluded from accepted results.",
+    "specification": "https://www.w3.org/TR/trace-context/#versioning-of-traceparent"
   }
 }

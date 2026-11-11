@@ -432,9 +432,6 @@ package queues
 
 import (
 	"context"
- "go.opentelemetry.io/otel/attribute"
- "go.opentelemetry.io/otel/codes"
- "go.opentelemetry.io/otel/trace"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -448,6 +445,9 @@ import (
 	"{{ .GoModuleName }}/internal/runtime"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	{{- range .Drivers }}
 {{- if not .IsNative }}
 	"{{ .ImportPath }}"
@@ -682,15 +682,15 @@ func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
 		}
 		job = job.OnQueue(queueName)
 
-		return m.dispatchJob(m.defaultQueue,job)
+		return m.dispatchJob(m.defaultQueue, job)
 	}
 
 	for _, instance := range m.Instances() {
 		if !instance.IsDefault && strings.EqualFold(instance.Name, queueName) {
-			return m.dispatchJob(instance.Queue,job.OnQueue(instance.queueName))
+			return m.dispatchJob(instance.Queue, job.OnQueue(instance.queueName))
 		}
 	}
-	return m.dispatchJob(m.defaultQueue,job)
+	return m.dispatchJob(m.defaultQueue, job)
 }
 
 // dispatchJob scopes one resolved enqueue operation and propagates its producer identity through the queue metadata channel.
@@ -780,7 +780,7 @@ func buildQueue(name string, scope env.Scope, rootScope env.Scope, observer queu
 	}
 {{- end }}
 	options := []queue.Option{
- queue.WithContextPropagator(inspects.MessageContextPropagator{}),
+		queue.WithContextPropagator(inspects.MessageContextPropagator{}),
 		queue.WithWorkers(workerCount),
 		queue.WithHandlerContextDecorator(func(ctx context.Context) context.Context {
 			return runtime.WithSource(ctx, runtime.SourceJobs)
