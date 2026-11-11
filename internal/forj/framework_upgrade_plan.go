@@ -61,8 +61,13 @@ func frameworkSnapshotFromRenderer(ctx context.Context, config *project.Config, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	environment := map[string]string{"APP_ENV": "local"}
-	for _, key := range []string{"PATH", "HOME", "TMPDIR", "GOCACHE", "GOMODCACHE", "SYSTEMROOT", "USERPROFILE"} {
+	// A killed peer cannot run deferred cleanup, so its temporary trees belong to this workspace.
+	childTemporary := filepath.Join(staging, "renderer-tmp")
+	if err := os.Mkdir(childTemporary, 0o700); err != nil {
+		return projectupgrade.Snapshot{}, err
+	}
+	environment := map[string]string{"APP_ENV": "local", "TMPDIR": childTemporary, "TMP": childTemporary, "TEMP": childTemporary}
+	for _, key := range []string{"PATH", "HOME", "GOCACHE", "GOMODCACHE", "SYSTEMROOT", "USERPROFILE"} {
 		if value, ok := os.LookupEnv(key); ok {
 			environment[key] = value
 		}

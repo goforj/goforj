@@ -692,7 +692,8 @@ func TestRendererLifecycleStopsDescendants(t *testing.T) {
 			directory := t.TempDir()
 			ready, release, marker := filepath.Join(directory, "ready"), filepath.Join(directory, "release"), filepath.Join(directory, "survived")
 			binary := filepath.Join(directory, "renderer")
-			script := "#!/bin/sh\ntrap '' TERM\n(remaining=200; while [ ! -f " + shellSingleQuote(release) + " ] && [ \"$remaining\" -gt 0 ]; do sleep .05; remaining=$((remaining-1)); done; if [ -f " + shellSingleQuote(release) + " ]; then printf survived > " + shellSingleQuote(marker) + "; fi) >/dev/null 2>&1 &\nprintf ready > " + shellSingleQuote(ready) + "\n"
+			temporaryRecord := filepath.Join(directory, "child-temp")
+			script := "#!/bin/sh\nprintf '%s' \"$TMPDIR\" > " + shellSingleQuote(temporaryRecord) + "\ntest \"$TMPDIR\" = \"$TEMP\" && test \"$TMPDIR\" = \"$TMP\" || exit 44\nprintf scratch > \"$TMPDIR/owned\"\ntrap '' TERM\n(remaining=200; while [ ! -f " + shellSingleQuote(release) + " ] && [ \"$remaining\" -gt 0 ]; do sleep .05; remaining=$((remaining-1)); done; if [ -f " + shellSingleQuote(release) + " ]; then printf survived > " + shellSingleQuote(marker) + "; fi) >/dev/null 2>&1 &\nprintf ready > " + shellSingleQuote(ready) + "\n"
 			if successful {
 				script += "cat <<'RENDERER_SNAPSHOT'\n" + string(payload) + "\nRENDERER_SNAPSHOT\n"
 			} else {
@@ -728,6 +729,13 @@ func TestRendererLifecycleStopsDescendants(t *testing.T) {
 				}
 			case <-time.After(8 * time.Second):
 				t.Fatal("renderer lifecycle did not finish")
+			}
+			childTemporary, err := os.ReadFile(temporaryRecord)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(string(childTemporary)); !os.IsNotExist(err) {
+				t.Fatalf("child temporary workspace survived: %v", err)
 			}
 			if err := os.WriteFile(release, []byte("release"), 0o600); err != nil {
 				t.Fatal(err)

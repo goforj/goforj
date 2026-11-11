@@ -34,7 +34,9 @@ environment values, owner commands, local module replacements, or configuration
 extras. The protocol uses bounded output, a timeout, direct executable invocation,
 and actual binary version/commit/dirty metadata. Comparison commands use the
 existing native process supervisor so managed descendants are stopped on
-cancellation and after a renderer leader exits. Global CLI installations and
+cancellation and after a renderer leader exits. Child temporary directories stay
+inside the comparison workspace so forced termination does not leave nested
+snapshot workspaces behind. Global CLI installations and
 authentication configuration remain unchanged.
 
 Older released binaries do not implement this protocol. Downloading versions,
