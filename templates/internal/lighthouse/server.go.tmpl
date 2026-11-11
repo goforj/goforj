@@ -50,7 +50,7 @@ func MaintenanceRouteAllowed(method, path string) bool {
 	relative := strings.TrimPrefix(path, base)
 	if method == http.MethodGet {
 		switch relative {
-		case "", "/", "/login", "/routes", "/schedules", "/queues", "/cache", "/storage", "/benchmarks", "/devwatch", "/config", "/commands", "/env", "/inspect/requests", "/inspect/commands", "/inspect/jobs", "/inspect/schedule", "/logs", "/components", "/api/agents", "/api/local", "/api/storage/download", "/api/env", "/api/goforj", "/api/about", "/api/inspect", "/ws/agent", "/ws/console", "/ws/devwatch":
+		case "", "/", "/login", "/routes", "/schedules", "/queues", "/cache", "/storage", "/benchmarks", "/devwatch", "/config", "/commands", "/env", "/inspect/requests", "/inspect/commands", "/inspect/jobs", "/inspect/schedule", "/inspect/events", "/logs", "/components", "/api/agents", "/api/local", "/api/storage/download", "/api/env", "/api/goforj", "/api/about", "/api/inspect", "/ws/agent", "/ws/console", "/ws/devwatch":
 			return true
 		}
 		return strings.HasPrefix(relative, "/assets/") || strings.HasPrefix(relative, "/auth/dev/") || strings.HasPrefix(relative, "/api/inspect/")

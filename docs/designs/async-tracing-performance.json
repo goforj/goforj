@@ -1,0 +1,357 @@
+{
+  "purpose": "Review evidence for GoForj PR 267. Comparisons measure the selected generated compositions on one host, not a universal throughput guarantee.",
+  "baseline_framework_commit": "772ffef87ab3b2d5cc2d653ceb75e8cb1fc27bb9",
+  "candidate_dependency_commits": {
+    "queue": "04747fc2edc7eae6d1b0d0ef436d8b9aee5d8aa3",
+    "redisqueue": "7751d3a26fd28eb07bda95b130e06288c08fbff0",
+    "events": "517d720cdbb8dd6f321dcd74f92e2faf21b69899"
+  },
+  "go": "go version go1.27.0 darwin/arm64",
+  "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "gomaxprocs": 1,
+  "http": {
+    "runs": 7,
+    "benchtime": "500ms",
+    "fixture_sha256": "d6c104e2e2dd13f242e7f005fce67f5d4e96d4f3ebc45fbfe75e2c3daedddcc0",
+    "summary": [
+      {
+        "mode": "gated",
+        "workload": "live_plain_text",
+        "base": {
+          "ns/op": 24495.0,
+          "B/op": 4906.0,
+          "allocs/op": 60.0,
+          "requests/s": 40825.0
+        },
+        "candidate": {
+          "ns/op": 24544.0,
+          "B/op": 4906.0,
+          "allocs/op": 60.0,
+          "requests/s": 40743.0
+        },
+        "throughput_delta_percent": -0.20085731781995797
+      },
+      {
+        "mode": "gated",
+        "workload": "middleware_chain",
+        "base": {
+          "ns/op": 409.6,
+          "B/op": 48.0,
+          "allocs/op": 3.0,
+          "requests/s": 2441413.0
+        },
+        "candidate": {
+          "ns/op": 410.5,
+          "B/op": 48.0,
+          "allocs/op": 3.0,
+          "requests/s": 2436018.0
+        },
+        "throughput_delta_percent": -0.22097858903840084
+      },
+      {
+        "mode": "gated",
+        "workload": "path_param_json",
+        "base": {
+          "ns/op": 408.0,
+          "B/op": 48.0,
+          "allocs/op": 3.0,
+          "requests/s": 2450861.0
+        },
+        "candidate": {
+          "ns/op": 403.2,
+          "B/op": 48.0,
+          "allocs/op": 3.0,
+          "requests/s": 2479905.0
+        },
+        "throughput_delta_percent": 1.1850529262981357
+      },
+      {
+        "mode": "gated",
+        "workload": "static_text",
+        "base": {
+          "ns/op": 286.0,
+          "B/op": 16.0,
+          "allocs/op": 1.0,
+          "requests/s": 3496791.0
+        },
+        "candidate": {
+          "ns/op": 286.4,
+          "B/op": 16.0,
+          "allocs/op": 1.0,
+          "requests/s": 3491024.0
+        },
+        "throughput_delta_percent": -0.16492263907107452
+      },
+      {
+        "mode": "lighthouse",
+        "workload": "live_plain_text",
+        "base": {
+          "ns/op": 29868.0,
+          "B/op": 6793.0,
+          "allocs/op": 75.0,
+          "requests/s": 33481.0
+        },
+        "candidate": {
+          "ns/op": 29087.0,
+          "B/op": 6793.0,
+          "allocs/op": 75.0,
+          "requests/s": 34380.0
+        },
+        "throughput_delta_percent": 2.6851049849168085
+      },
+      {
+        "mode": "lighthouse",
+        "workload": "middleware_chain",
+        "base": {
+          "ns/op": 2505.0,
+          "B/op": 1936.0,
+          "allocs/op": 18.0,
+          "requests/s": 399198.0
+        },
+        "candidate": {
+          "ns/op": 2476.0,
+          "B/op": 1936.0,
+          "allocs/op": 18.0,
+          "requests/s": 403800.0
+        },
+        "throughput_delta_percent": 1.1528113868305878
+      },
+      {
+        "mode": "lighthouse",
+        "workload": "path_param_json",
+        "base": {
+          "ns/op": 2520.0,
+          "B/op": 1928.0,
+          "allocs/op": 18.0,
+          "requests/s": 396774.0
+        },
+        "candidate": {
+          "ns/op": 2538.0,
+          "B/op": 1928.0,
+          "allocs/op": 18.0,
+          "requests/s": 393942.0
+        },
+        "throughput_delta_percent": -0.7137564457348478
+      },
+      {
+        "mode": "lighthouse",
+        "workload": "static_text",
+        "base": {
+          "ns/op": 2268.0,
+          "B/op": 1904.0,
+          "allocs/op": 16.0,
+          "requests/s": 440897.0
+        },
+        "candidate": {
+          "ns/op": 2251.0,
+          "B/op": 1904.0,
+          "allocs/op": 16.0,
+          "requests/s": 444262.0
+        },
+        "throughput_delta_percent": 0.7632168057392086
+      },
+      {
+        "mode": "off",
+        "workload": "live_plain_text",
+        "base": {
+          "ns/op": 24044.0,
+          "B/op": 4954.0,
+          "allocs/op": 61.0,
+          "requests/s": 41591.0
+        },
+        "candidate": {
+          "ns/op": 24655.0,
+          "B/op": 4954.0,
+          "allocs/op": 61.0,
+          "requests/s": 40559.0
+        },
+        "throughput_delta_percent": -2.4813060517900554
+      },
+      {
+        "mode": "off",
+        "workload": "middleware_chain",
+        "base": {
+          "ns/op": 390.5,
+          "B/op": 96.0,
+          "allocs/op": 4.0,
+          "requests/s": 2560757.0
+        },
+        "candidate": {
+          "ns/op": 397.9,
+          "B/op": 96.0,
+          "allocs/op": 4.0,
+          "requests/s": 2513365.0
+        },
+        "throughput_delta_percent": -1.8507027414159216
+      },
+      {
+        "mode": "off",
+        "workload": "path_param_json",
+        "base": {
+          "ns/op": 408.9,
+          "B/op": 96.0,
+          "allocs/op": 4.0,
+          "requests/s": 2445840.0
+        },
+        "candidate": {
+          "ns/op": 403.0,
+          "B/op": 96.0,
+          "allocs/op": 4.0,
+          "requests/s": 2481240.0
+        },
+        "throughput_delta_percent": 1.447355509763515
+      },
+      {
+        "mode": "off",
+        "workload": "static_text",
+        "base": {
+          "ns/op": 293.2,
+          "B/op": 64.0,
+          "allocs/op": 2.0,
+          "requests/s": 3411204.0
+        },
+        "candidate": {
+          "ns/op": 293.8,
+          "B/op": 64.0,
+          "allocs/op": 2.0,
+          "requests/s": 3403781.0
+        },
+        "throughput_delta_percent": -0.21760645215003205
+      },
+      {
+        "mode": "otlp",
+        "workload": "live_plain_text",
+        "base": {
+          "ns/op": 28828.0,
+          "B/op": 8632.0,
+          "allocs/op": 94.0,
+          "requests/s": 34688.0,
+          "exported_pct": 100.0
+        },
+        "candidate": {
+          "ns/op": 28775.0,
+          "B/op": 8649.0,
+          "allocs/op": 94.0,
+          "requests/s": 34753.0,
+          "exported_pct": 100.0
+        },
+        "throughput_delta_percent": 0.18738468634686978
+      },
+      {
+        "mode": "otlp",
+        "workload": "middleware_chain",
+        "base": {
+          "ns/op": 1919.0,
+          "B/op": 2042.0,
+          "allocs/op": 19.0,
+          "requests/s": 521037.0,
+          "exported_pct": 2.281
+        },
+        "candidate": {
+          "ns/op": 1886.0,
+          "B/op": 2043.0,
+          "allocs/op": 19.0,
+          "requests/s": 530184.0,
+          "exported_pct": 2.39
+        },
+        "throughput_delta_percent": 1.7555375146102836
+      },
+      {
+        "mode": "otlp",
+        "workload": "path_param_json",
+        "base": {
+          "ns/op": 1960.0,
+          "B/op": 2037.0,
+          "allocs/op": 19.0,
+          "requests/s": 510126.0,
+          "exported_pct": 2.3
+        },
+        "candidate": {
+          "ns/op": 1924.0,
+          "B/op": 2039.0,
+          "allocs/op": 19.0,
+          "requests/s": 519833.0,
+          "exported_pct": 2.406
+        },
+        "throughput_delta_percent": 1.90286321418629
+      },
+      {
+        "mode": "otlp",
+        "workload": "static_text",
+        "base": {
+          "ns/op": 1796.0,
+          "B/op": 2003.0,
+          "allocs/op": 17.0,
+          "requests/s": 556796.0,
+          "exported_pct": 2.133
+        },
+        "candidate": {
+          "ns/op": 1764.0,
+          "B/op": 2005.0,
+          "allocs/op": 17.0,
+          "requests/s": 566759.0,
+          "exported_pct": 2.222
+        },
+        "throughput_delta_percent": 1.7893447510398675
+      }
+    ],
+    "raw_samples_sha256": "4f9b52cff65cfea56ef8d23e073c5fb48020137ff47e56e7d1ca729feab4b254",
+    "sample_count": 224
+  },
+  "queue_decode_optimization": {
+    "runs": 3,
+    "benchtime": "250ms",
+    "before_commit": "7751d3a26fd2",
+    "after_commit": "04747fc2edc7",
+    "summary": [
+      {
+        "mode": "disabled",
+        "before_7751": {
+          "ns/op": 2968.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "prepared_04747fc": {
+          "ns/op": 2962.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "latency_delta_percent": -0.20215633423180668
+      },
+      {
+        "mode": "configured_empty",
+        "before_7751": {
+          "ns/op": 3141.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "prepared_04747fc": {
+          "ns/op": 3127.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "latency_delta_percent": -0.44571792422795076
+      },
+      {
+        "mode": "valid_carrier",
+        "before_7751": {
+          "ns/op": 5735.0,
+          "B/op": 4457.0,
+          "allocs/op": 46.0
+        },
+        "prepared_04747fc": {
+          "ns/op": 5379.0,
+          "B/op": 4081.0,
+          "allocs/op": 41.0
+        },
+        "latency_delta_percent": -6.207497820401042
+      }
+    ]
+  },
+  "limitations": [
+    "All 16 HTTP allocation counts match. Observed median throughput changes range from -2.48% to +2.69%; exploratory paired intervals include zero. Positive medians are not a demonstrated speedup.",
+    "Fast in-process OTLP cases saturate the default exporter queue and export about 2% of spans in both revisions. Their measurements do not establish lossless export performance. Live HTTP OTLP cases export 100%.",
+    "The candidate uses the actual new published dependency graph, including some newer cloud and gRPC transitive dependencies. Differences cannot be attributed solely to framework code.",
+    "Queue comparisons use an opaque two-field carrier and synchronous logical dispatch. They exclude framework W3C formatting/parsing, tracing span creation, and broker latency."
+  ]
+}

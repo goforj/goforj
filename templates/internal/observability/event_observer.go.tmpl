@@ -147,10 +147,13 @@ func (o eventObserver) OnEventDeliveryFinish(ctx context.Context, event events.E
 
 // BeginEvent scopes producer and consumer tracing without coupling the event bus to a tracing SDK.
 func (o eventObserver) BeginEvent(ctx context.Context, operation string, event events.EventDeliveryEvent) (context.Context, func(error)) {
+	if operation != "send" {
+		ctx = runtime.WithSource(ctx, runtime.SourceEvents)
+	}
 	if !o.inspects.TracingEnabled() {
 		return ctx, nil
 	}
-	attributes := []attribute.KeyValue{attribute.String("messaging.system", string(event.Driver)), attribute.String("messaging.destination.name", event.Topic), attribute.String("messaging.operation.name", operation)}
+	attributes := []attribute.KeyValue{attribute.String("messaging.system", string(event.Driver)), attribute.String("messaging.destination.name", event.Topic), attribute.String("messaging.operation.name", operation), attribute.String("messaging.operation.type", operation)}
 	if operation == "send" {
 		ctx, span := o.inspects.TracerProvider().Tracer("goforj/events").Start(ctx, "send "+event.Topic, trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attributes...))
 		return ctx, func(err error) {
@@ -160,7 +163,6 @@ func (o eventObserver) BeginEvent(ctx context.Context, operation string, event e
 			span.End()
 		}
 	}
-	ctx = runtime.WithSource(ctx, runtime.SourceEvents)
 	ctx = o.inspects.Begin(ctx, runtime.SourceEvents, "process "+event.Topic, map[string]string{"bus": event.Bus, "topic": event.Topic, "handler": event.Handler})
 	trace.SpanFromContext(ctx).SetAttributes(attributes...)
 	return ctx, func(err error) {

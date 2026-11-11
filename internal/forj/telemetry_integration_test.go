@@ -32,7 +32,7 @@ func TestRenderedTelemetryContract(t *testing.T) {
 					t.Fatal(err)
 				}
 				apps["admin"] = project.AppConfig{Components: components}
-				packages = append(packages, "./app/admin/wire", "./internal/queues", "./internal/events", "./internal/observability", "./internal/metrics")
+				packages = append(packages, "./app/admin/wire", "./internal/queues", "./internal/events", "./internal/observability", "./internal/metrics", "./internal/lighthouse")
 			}
 			testkit.RenderProjectWithForj(t, root, testkit.RenderProjectRequest{Config: project.Config{
 				ProjectName: "Telemetry Test", GoModuleName: "example.com/telemetrytest", Render: project.RenderConfig{Components: components}, Apps: apps,

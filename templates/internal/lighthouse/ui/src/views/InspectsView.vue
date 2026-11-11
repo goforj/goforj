@@ -231,7 +231,7 @@
             </div>
           </template>
           <template #description>
-            <CardDescription v-if="!selectedInspectRecord">Select an inspect to view its event timeline.</CardDescription>
+            <CardDescription v-if="!selectedInspectRecord">{{ inspectUnavailable ? "This inspect is unavailable or is no longer retained." : "Select an inspect to view its event timeline." }}</CardDescription>
           </template>
         </CardHeader>
         <CardContent class="min-h-0 flex-1 overflow-hidden">
@@ -985,7 +985,7 @@
             </div>
           </div>
           <div v-else class="rounded-2xl border border-dashed border-border/60 px-4 py-12 text-sm text-muted">
-            {{ loadingSelectedInspect ? "Loading inspect detail..." : "Select an inspect from the list to view its event timeline." }}
+            {{ loadingSelectedInspect ? "Loading inspect detail..." : inspectUnavailable ? "This inspect is unavailable or is no longer retained." : "Select an inspect from the list to view its event timeline." }}
           </div>
         </CardContent>
       </Card>
@@ -995,8 +995,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Binary, Bot, ChevronDown, ChevronUp, ClipboardList, Copy, Database, HardDrive, Link2, Package, Route, ScrollText, Search, Tag, Terminal, TriangleAlert, Workflow } from "lucide-vue-next";
+import { Binary, Bot, ChevronDown, ChevronUp, ClipboardList, Copy, Database, HardDrive, Link2, Package, Radio, Route, ScrollText, Search, Tag, Terminal, TriangleAlert, Workflow } from "lucide-vue-next";
 import { useRoute, useRouter } from "vue-router";
+import { selectInspectID } from "../lib/inspect-links";
 import { toast } from "vue-sonner";
 import { lighthousePath } from "../lib/base-path";
 import { formatJSONDisplay, maybePrettyJSON, renderBodyHTML } from "../lib/json-preview";
@@ -1102,6 +1103,7 @@ const inspectListFetchLimit = 1000;
 const focusRefreshCooldownMs = 2_000;
 const refreshing = ref(false);
 const loadingSelectedInspect = ref(false);
+const inspectUnavailable = ref(false);
 const inspects = ref<InspectSummary[]>([]);
 const selectedInspectId = ref("");
 const selectedInspectRecord = ref<InspectRecord | null>(null);
@@ -1270,6 +1272,8 @@ const searchPlaceholder = computed(() => {
       return "Command name or id";
     case "jobs":
       return "Job name or id";
+    case "events":
+      return "Event topic or id";
     case "scheduler":
       return "Schedule name or id";
     default:
@@ -1284,6 +1288,8 @@ const inspectRecordLabel = computed(() => {
       return "command";
     case "jobs":
       return "job";
+    case "events":
+      return "event";
     case "scheduler":
       return "schedule";
     default:
@@ -1301,6 +1307,8 @@ const inspectListLeadHeader = computed(() => {
       return "Type";
     case "jobs":
       return "Kind";
+    case "events":
+      return "Kind";
     case "scheduler":
       return "Kind";
     default:
@@ -1316,6 +1324,8 @@ const inspectListPrimaryHeader = computed(() => {
       return "Command";
     case "jobs":
       return "Job";
+    case "events":
+      return "Topic";
     case "scheduler":
       return "Schedule";
     default:
@@ -1327,6 +1337,7 @@ const inspectListGridColumnsClass = computed(() => {
   switch (activeInspectListSource.value) {
     case "cli":
     case "jobs":
+    case "events":
     case "scheduler":
       return "grid-cols-[5.4rem_minmax(0,1fr)_3.25rem_3.25rem_2.15rem]";
     case "http":
@@ -1339,6 +1350,7 @@ const inspectListLeadPillSizeClass = computed(() => {
   switch (activeInspectListSource.value) {
     case "cli":
     case "jobs":
+    case "events":
     case "scheduler":
       return "min-w-[4.75rem]";
     case "http":
@@ -1932,16 +1944,12 @@ const refresh = async () => {
     const nextInspects = (payload.inspects || []).map(enrichInspectSummary);
     reconcileNewInspectHighlights(nextInspects);
     inspects.value = nextInspects;
-    const routeSelected = readRouteInspectID();
-    const routeSelectedVisible = filteredInspects.value.some((inspect) => inspect.trace_id === routeSelected) ? routeSelected : "";
-    const defaultSelected = routeSelectedVisible || filteredInspects.value[0]?.trace_id || inspects.value[0]?.trace_id || "";
-    if (!selectedInspectId.value) {
-      selectedInspectId.value = defaultSelected;
-    }
-    const stillSelected = filteredInspects.value.some((inspect) => inspect.trace_id === selectedInspectId.value);
-    if (!stillSelected) {
-      selectedInspectId.value = defaultSelected;
-    }
+    selectedInspectId.value = selectInspectID(
+      readRouteInspectID(),
+      selectedInspectId.value,
+      filteredInspects.value.map((inspect) => inspect.trace_id),
+      inspects.value.map((inspect) => inspect.trace_id),
+    );
     await loadSelectedInspect();
     lastRefreshAt.value = Date.now();
   } finally {
@@ -1973,6 +1981,8 @@ const handleWindowResize = () => {
 };
 
 const loadSelectedInspect = async () => {
+  const loadToken = ++selectedInspectLoadToken;
+  inspectUnavailable.value = false;
   if (!selectedInspectId.value) {
     selectedInspectRecord.value = null;
     loadingSelectedInspect.value = false;
@@ -1987,14 +1997,13 @@ const loadSelectedInspect = async () => {
     applyDesiredInspectTab();
     return;
   }
-  const loadToken = ++selectedInspectLoadToken;
   loadingSelectedInspect.value = true;
   const res = await fetch(lighthousePath(`/api/inspect/${encodeURIComponent(requestedInspectID)}`));
   if (loadToken !== selectedInspectLoadToken) return;
   if (!res.ok) {
     inspectDetailCache.delete(requestedInspectID);
     inspects.value = inspects.value.filter((inspect) => inspect.trace_id !== requestedInspectID);
-    const nextInspectID = filteredInspects.value[0]?.trace_id || "";
+    const nextInspectID = selectInspectID(readRouteInspectID(), "", filteredInspects.value.map((inspect) => inspect.trace_id));
     if (nextInspectID && nextInspectID !== requestedInspectID) {
       selectedInspectId.value = nextInspectID;
       syncInspectToRoute(nextInspectID);
@@ -2002,6 +2011,7 @@ const loadSelectedInspect = async () => {
       return;
     }
     selectedInspectRecord.value = null;
+    inspectUnavailable.value = true;
     loadingSelectedInspect.value = false;
     activeInspectTab.value = "timeline";
     return;
@@ -2180,6 +2190,11 @@ const inspectSearchFields = (inspect: InspectSummary) => {
     case "scheduler":
       add(inspect.labels?.job_name);
       break;
+    case "events":
+      add(inspect.labels?.topic);
+      add(inspect.labels?.bus);
+      add(inspect.labels?.handler);
+      break;
     case "cli":
       add(inspect.labels?.command);
       add(inspect.labels?.command_name);
@@ -2225,6 +2240,8 @@ const inspectListLeadValue = (inspect: InspectSummary) => {
       return "CLI";
     case "jobs":
       return String(inspect.labels?.kind || "job").trim().toUpperCase();
+    case "events":
+      return "EVENT";
     case "scheduler":
       return String(inspect.labels?.target_kind || "schedule").trim().toUpperCase();
     default:
@@ -2241,6 +2258,8 @@ const inspectListPrimaryValue = (inspect: InspectSummary) => {
       return String(inspect.labels?.command_name || inspect.labels?.command || inspect.name || inspect.trace_id).trim();
     case "jobs":
       return String(inspect.labels?.job_name || inspect.name || inspect.trace_id).trim();
+    case "events":
+      return String(inspect.labels?.topic || inspect.name || inspect.trace_id).trim();
     case "scheduler":
       return String(inspect.labels?.job_name || inspect.name || inspect.trace_id).trim();
     default:
@@ -2285,6 +2304,8 @@ const inspectSourceIcon = (source?: string) => {
       return Terminal;
     case "jobs":
       return Bot;
+    case "events":
+      return Radio;
     case "scheduler":
       return ClipboardList;
     case "startup":
@@ -2443,6 +2464,8 @@ const listLeadPillClass = (inspect: InspectSummary) => {
       return "border-violet-500/35 bg-violet-500/8 text-violet-700 dark:text-violet-100";
     case "jobs":
       return "border-amber-500/35 bg-amber-500/8 text-amber-700 dark:text-amber-100";
+    case "events":
+      return "border-teal-500/35 bg-teal-500/8 text-teal-700 dark:text-teal-100";
     case "scheduler":
       return "border-cyan-500/35 bg-cyan-500/8 text-cyan-700 dark:text-cyan-100";
     default:
@@ -3109,11 +3132,10 @@ watch(liveRefreshEnabled, () => {
 });
 
 watch([query, statusFilter, timeWindow], async () => {
-  const stillSelected = filteredInspects.value.some((inspect) => inspect.trace_id === selectedInspectId.value);
-  if (stillSelected) {
-    return;
-  }
-  const nextInspectID = filteredInspects.value[0]?.trace_id || "";
+  const nextInspectID = selectInspectID(
+    readRouteInspectID(), selectedInspectId.value, filteredInspects.value.map((inspect) => inspect.trace_id),
+  );
+  if (nextInspectID === selectedInspectId.value) return;
   selectedInspectId.value = nextInspectID;
   syncInspectToRoute(nextInspectID);
   await loadSelectedInspect();

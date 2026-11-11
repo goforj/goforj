@@ -654,11 +654,18 @@ func (m *Manager) instrumentJobHandler(jobType string, fn func(context.Context, 
 			})
 			recordJobPayload(ctx, msg)
 			defer func() {
+				value := recover()
+				if value != nil {
+					handlerErr = fmt.Errorf("job handler panicked")
+				}
 				status := ""
 				if handlerErr != nil {
 					status = "error"
 				}
 				m.inspects.Finish(ctx, status, handlerErr)
+				if value != nil {
+					panic(value)
+				}
 			}()
 		}
 		return fn(ctx, msg)
@@ -700,13 +707,18 @@ func (m *Manager) dispatchJob(instance *queue.Queue, job queue.Job) (result queu
 		attribute.String("messaging.system", string(instance.Driver())),
 		attribute.String("messaging.destination.name", queue.DriverOptions(job).QueueName),
 		attribute.String("messaging.operation.name", "send"),
+		attribute.String("messaging.operation.type", "send"),
 		attribute.String("goforj.job.type", job.Type),
 	))
 	defer func() {
-		if err != nil {
+		value := recover()
+		if err != nil || value != nil {
 			span.SetStatus(codes.Error, "job dispatch failed")
 		}
 		span.End()
+		if value != nil {
+			panic(value)
+		}
 	}()
 	recordQueuedJobPayload(ctx, job)
 	return instance.WithContext(ctx).Dispatch(job)

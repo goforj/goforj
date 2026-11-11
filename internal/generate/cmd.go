@@ -124,6 +124,9 @@ func (c *Cmd) run(tidy moduleTidyRunner) error {
 		return err
 	}
 	if run.dependencyTaskRan {
+		if _, err := syncGeneratedModuleRequirements(".", selection); err != nil {
+			return err
+		}
 		if err := tidy("."); err != nil {
 			return err
 		}
@@ -148,6 +151,9 @@ func generateProjectFiles(projectDir string, selection GenerationSelection, tidy
 		return result, err
 	}
 	if run.dependencyFilesChanged {
+		if _, err := syncGeneratedModuleRequirements(projectDir, selection); err != nil {
+			return result, err
+		}
 		if err := tidy(projectDir); err != nil {
 			return result, err
 		}

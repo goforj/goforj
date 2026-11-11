@@ -80,13 +80,13 @@ func TestHubResolvesConcreteReplicaKey(t *testing.T) {
 
 	hub.RegisterAgent(&wsConn{conn: conn}, AgentInfo{Source: "jobs", App: "billing", Host: "worker-01"})
 	hub.RegisterAgent(nil, AgentInfo{Source: "jobs", App: "billing", Host: "worker-02"})
-	conn.writes = nil
+	conn.resetWrites()
 
 	if err := hub.RouteCommand(nil, Message{ID: "cmd-1", Destination: "billing/jobs/worker-01"}); err != nil {
 		t.Fatalf("route concrete command destination: %v", err)
 	}
-	if len(conn.writes) != 1 {
-		t.Fatalf("expected command to route to worker-01 once, got %d writes", len(conn.writes))
+	if len(conn.capturedWrites()) != 1 {
+		t.Fatalf("expected command to route to worker-01 once, got %d writes", len(conn.capturedWrites()))
 	}
 }
 

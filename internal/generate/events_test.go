@@ -44,7 +44,7 @@ func TestGenerateEventFilesUsesSelectedDriverImports(t *testing.T) {
 	if !strings.Contains(source, `"github.com/redis/go-redis/v9"`) {
 		t.Fatal("expected generated events manager to construct an authenticated Redis client")
 	}
-	if !strings.Contains(source, `Client: eventsRedisClient(scope)`) {
+	if !strings.Contains(strings.Join(strings.Fields(source), " "), `Client: eventsRedisClient(scope)`) {
 		t.Fatal("expected Redis events to use the shared Redis client contract")
 	}
 	if !strings.Contains(source, `Password: env.Get("REDIS_PASSWORD", "")`) {
@@ -58,6 +58,27 @@ func TestGenerateEventFilesUsesSelectedDriverImports(t *testing.T) {
 	}
 	if !strings.Contains(source, `func NewManager() (*Manager, error)`) {
 		t.Fatal("expected generated events manager constructor")
+	}
+}
+
+// TestGenerateEventFilesRedisAlwaysEnablesHeaderDecoding supports upgraded consumers while publisher propagation remains disabled.
+func TestGenerateEventFilesRedisAlwaysEnablesHeaderDecoding(t *testing.T) {
+	t.Setenv("EVENTS_DRIVER", "redis")
+	for _, enabled := range []string{"true", "false"} {
+		t.Run(enabled, func(t *testing.T) {
+			t.Setenv("EVENTS_CONTEXT_PROPAGATION_ENABLED", enabled)
+			root := t.TempDir()
+			if _, err := GenerateEventFiles(root); err != nil {
+				t.Fatal(err)
+			}
+			source, err := os.ReadFile(filepath.Join(root, "internal", "events", "manager_gen.go"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(strings.Join(strings.Fields(string(source)), " "), "EnableHeaders: true") {
+				t.Fatalf("Redis header decoding disabled with propagation=%s", enabled)
+			}
+		})
 	}
 }
 
@@ -702,6 +723,101 @@ func TestGeneratedObserverTracingHandlers(t *testing.T) {
   func(){defer func(){value:=recover();if panicHandler && value!="original panic" {t.Errorf("panic=%v",value)};if !panicHandler && value!=nil {t.Errorf("unexpected panic=%v",value)}}();reflect.ValueOf(wrapped).Call([]reflect.Value{reflect.ValueOf(context.WithValue(context.Background(),observerKey("parent"),"incoming")),reflect.ValueOf(userCreated{})})}()
   if !finished || len(ended)!=1 || ended[0]==nil {t.Fatalf("finished=%v endings=%v",finished,ended)}
  }
+}
+
+// concreteObserverContext exercises handler signatures that cannot accept an arbitrary context.Context.
+type concreteObserverContext struct{ context.Context }
+
+// extendedObserverContext exercises interfaces with requirements beyond context.Context.
+type extendedObserverContext interface {
+	context.Context
+	ObserverScope() string
+}
+
+// TestGeneratedObserverRejectsInvalidContextHandlers keeps invalid handlers out of bus state before delivery.
+func TestGeneratedObserverRejectsInvalidContextHandlers(t *testing.T) {
+	var nilHandler func(context.Context, userCreated)
+	for name, handler := range map[string]any{
+		"concrete context": func(*concreteObserverContext, userCreated) {},
+		"extended context": func(extendedObserverContext, userCreated) {},
+		"nil function": nilHandler,
+	} {
+		t.Run(name, func(t *testing.T) {
+			manager, err := NewManager()
+			if err != nil {
+				t.Fatal(err)
+			}
+			manager.WithObserver(observerRecorder{})
+			if subscription, err := manager.Default().Subscribe(handler); err == nil || subscription != nil {
+				t.Fatalf("invalid handler registered: subscription=%v error=%v", subscription, err)
+			}
+			if err := manager.Default().Publish(userCreated{}); err != nil {
+				t.Fatalf("invalid registration changed delivery: %v", err)
+			}
+		})
+	}
+}
+
+// scopedObserver checks observer context composition and lifecycle nesting through a managed bus.
+type scopedObserver struct {
+	observerRecorder
+	name string
+	sequence *[]string
+}
+
+// BeginEvent binds each observer's scope and records its finish order.
+func (o scopedObserver) BeginEvent(ctx context.Context, operation string, _ EventDeliveryEvent) (context.Context, func(error)) {
+	*o.sequence = append(*o.sequence, "begin "+o.name+" "+operation)
+	return context.WithValue(ctx, observerKey(o.name), true), func(error) {
+		*o.sequence = append(*o.sequence, "end "+o.name+" "+operation)
+	}
+}
+
+// TestGeneratedObserverComposesTracingScopes preserves each derived context and closes scopes in reverse order.
+func TestGeneratedObserverComposesTracingScopes(t *testing.T) {
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sequence []string
+	manager.WithObserver(scopedObserver{name: "first", sequence: &sequence})
+	manager.WithObserver(scopedObserver{name: "second", sequence: &sequence})
+	subscription, err := manager.Default().Subscribe(func(ctx context.Context, _ userCreated) {
+		if ctx.Value(observerKey("first")) != true || ctx.Value(observerKey("second")) != true {
+			t.Fatal("composed observer context lost")
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	if err := manager.Default().Publish(userCreated{}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"begin first send", "begin second send", "begin first process", "begin second process", "end second process", "end first process", "end second send", "end first send"}
+	if !reflect.DeepEqual(sequence, want) {
+		t.Fatalf("observer lifecycle=%v want=%v", sequence, want)
+	}
+}
+
+// TestGeneratedObserverFinishesFailedPublication reports transport failures to both observers and scope cleanup.
+func TestGeneratedObserverFinishesFailedPublication(t *testing.T) {
+	want := concreteHandlerError{}
+	var ended []error
+	published := false
+	observer := tracingObserver{observerRecorder: observerRecorder{onPublish: func(_ context.Context, event EventPublishEvent) {
+		published = true
+		if event.Err != want {
+			t.Fatalf("publication error=%v want=%v", event.Err, want)
+		}
+	}}, ended: &ended}
+	bus := wrapObservedBus("default", newErrorBus(DriverInproc, want), observer)
+	if err := bus.Publish(userCreated{}); err != want {
+		t.Fatalf("publish error=%v want=%v", err, want)
+	}
+	if !published || len(ended) != 1 || ended[0] != want {
+		t.Fatalf("published=%v scope errors=%v", published, ended)
+	}
 }
 
 // TestGeneratedObserverContextConfiguration supports staged root and named-bus rollouts and rejects invalid configuration.

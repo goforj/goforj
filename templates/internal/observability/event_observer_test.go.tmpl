@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+{{- if .ProjectComponents.Jobs }}
+	"github.com/goforj/queue"
+	"{{.GoModuleName}}/internal/queues"
+{{- end }}
 
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/trace"
@@ -33,6 +37,7 @@ func TestEventObserverContinuesTransportedTrace(t *testing.T) {
 	if runtime.SourceFromContext(consumerCtx) != runtime.SourceEvents {
 		t.Fatal("consumer source lost")
 	}
+	consumerID := inspects.InspectIDFromContext(consumerCtx)
 	finishConsumer(errors.New("handler failed"))
 	parent.End()
 	spans := exporter.GetSpans()
@@ -40,6 +45,13 @@ func TestEventObserverContinuesTransportedTrace(t *testing.T) {
 		t.Fatalf("spans=%d", len(spans))
 	}
 	producer, consumer := spans[0], spans[1]
+	for _, span := range []tracetest.SpanStub{producer, consumer} {
+   expected := "send"
+   if span.Name == "process orders.finished" { expected = "process" }
+   found := false
+   for _, field := range span.Attributes { if field.Key == "messaging.operation.type" && field.Value.AsString() == expected { found = true } }
+   if !found { t.Fatalf("messaging operation type missing on %s", span.Name) }
+  }
 	if producer.SpanKind.String() != "producer" || consumer.SpanKind.String() != "consumer" {
 		t.Fatalf("kinds=%v %v", producer.SpanKind, consumer.SpanKind)
 	}
@@ -49,6 +61,9 @@ func TestEventObserverContinuesTransportedTrace(t *testing.T) {
 	if consumer.Status.Code != codes.Error {
 		t.Fatalf("status=%v", consumer.Status)
 	}
+	record,found,err:=manager.ByID(context.Background(),consumerID)
+ if err!=nil || !found {t.Fatalf("event capture missing: %v",err)}
+ if record.Summary.Source!="events" || record.Summary.OTelTraceID!=consumer.SpanContext.TraceID().String() || record.Summary.SpanID!=consumer.SpanContext.SpanID().String() || record.Summary.ParentSpanID!=producer.SpanContext.SpanID().String() || record.Summary.Labels["topic"]!="orders.finished" {t.Fatalf("Lighthouse event capture differs from exported span: %+v",record.Summary)}
 }
 
 // TestEventObserverDisabledDoesNotCreateCarrier keeps uninstrumented publications on the legacy payload path.
@@ -64,3 +79,109 @@ func TestEventObserverDisabledDoesNotCreateCarrier(t *testing.T) {
 		t.Fatal("disabled tracing created metadata")
 	}
 }
+
+// TestEventObserverDisabledPreservesExecutionSource keeps source attribution independent from tracing configuration.
+func TestEventObserverDisabledPreservesExecutionSource(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "false")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "false")
+	t.Setenv("OTEL_TRACES_EXPORTER", "none")
+	manager := inspects.NewManager()
+	defer manager.TracerProvider().Shutdown(context.Background())
+	observer := eventObserver{inspects: manager}
+	for _, operation := range []string{"send", "process"} {
+		ctx := runtime.WithSource(context.Background(), runtime.SourceJobs)
+		ctx, finish := observer.BeginEvent(ctx, operation, events.EventDeliveryEvent{Topic: "orders.finished"})
+		want := runtime.SourceJobs
+		if operation == "process" {
+			want = runtime.SourceEvents
+		}
+		if got := runtime.SourceFromContext(ctx); got != want {
+			t.Fatalf("operation=%s source=%s want=%s", operation, got, want)
+		}
+		if finish != nil || len((inspects.MessageContextPropagator{}).Inject(ctx)) != 0 {
+			t.Fatal("disabled tracing created metadata")
+		}
+	}
+}
+
+// TestEventObserverFailedPublicationMarksProducerError records failed sends without requiring a transport.
+func TestEventObserverFailedPublicationMarksProducerError(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	manager := inspects.NewManager()
+	defer manager.TracerProvider().Shutdown(context.Background())
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(trace.NewSimpleSpanProcessor(exporter))
+	_, finish := (eventObserver{inspects: manager}).BeginEvent(context.Background(), "send", events.EventDeliveryEvent{Topic: "orders.finished"})
+	finish(errors.New("transport failed"))
+	spans := exporter.GetSpans()
+	if len(spans) != 1 || spans[0].Name != "send orders.finished" || spans[0].Status.Code != codes.Error {
+		t.Fatalf("failed producer spans=%v", spans)
+	}
+}
+
+{{- if .ProjectComponents.Jobs }}
+// TestQueueObserverJobPanicMarksExecutionError preserves the panic while closing consumer and producer scopes as failures.
+func TestQueueObserverJobPanicMarksExecutionError(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	t.Setenv("QUEUE_DRIVER", "sync")
+	manager := inspects.NewManager()
+	defer manager.TracerProvider().Shutdown(context.Background())
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(trace.NewSimpleSpanProcessor(exporter))
+	jobs, err := queues.NewManagerWithObserver(nil, nil, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, instance := range jobs.Instances() {
+		if err := instance.Queue.StartWorkers(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		defer instance.Queue.Shutdown(context.Background())
+	}
+	jobs.Register("orders.panic", func(context.Context, queue.Message) error { panic("original job panic") })
+	func() {
+		defer func() {
+			if value := recover(); value != "original job panic" {
+				t.Errorf("panic=%v want original job panic", value)
+			}
+		}()
+		_, _ = jobs.Dispatch(queue.NewJob("orders.panic"))
+	}()
+	spans := exporter.GetSpans()
+	if len(spans) != 2 {
+		t.Fatalf("spans=%v want producer and consumer", spans)
+	}
+	for _, span := range spans {
+		if span.Status.Code != codes.Error {
+			t.Errorf("span %s status=%v want error", span.Name, span.Status)
+		}
+	}
+}
+
+// TestQueueObserverFailedDispatchMarksProducerError covers enqueue failure before any consumer execution starts.
+func TestQueueObserverFailedDispatchMarksProducerError(t *testing.T) {
+	t.Setenv("LIGHTHOUSE_ENABLED", "true")
+	t.Setenv("LIGHTHOUSE_INSPECT_ENABLED", "true")
+	t.Setenv("QUEUE_DRIVER", "sync")
+	manager := inspects.NewManager()
+	defer manager.TracerProvider().Shutdown(context.Background())
+	exporter := tracetest.NewInMemoryExporter()
+	manager.TracerProvider().RegisterSpanProcessor(trace.NewSimpleSpanProcessor(exporter))
+	jobs, err := queues.NewManagerWithObserver(nil, nil, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, instance := range jobs.Instances() {
+		defer instance.Queue.Shutdown(context.Background())
+	}
+	if _, err := jobs.Dispatch(queue.NewJob("")); err == nil {
+		t.Fatal("invalid job dispatched")
+	}
+	spans := exporter.GetSpans()
+	if len(spans) != 1 || spans[0].Name != "send default" || spans[0].Status.Code != codes.Error {
+		t.Fatalf("failed producer spans=%v", spans)
+	}
+}
+{{- end }}

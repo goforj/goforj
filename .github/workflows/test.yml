@@ -44,6 +44,31 @@ jobs:
       - name: test Vue starter build graph
         run: node --test internal/forj/frontendtest/vue_starter_build.test.mjs
 
+  lighthouse-ui:
+    name: lighthouse UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: set up node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: templates/internal/lighthouse/ui/package-lock.json
+      - name: install Lighthouse dependencies
+        working-directory: templates/internal/lighthouse/ui
+        run: npm ci --prefer-offline --no-audit
+      - name: test Lighthouse navigation and capture links
+        working-directory: templates/internal/lighthouse/ui
+        run: npm test
+      - name: verify generated Lighthouse assets
+        working-directory: templates/internal/lighthouse/ui
+        run: npm run build
+      - name: check asset parity
+        run: git diff --exit-code -- templates/internal/lighthouse/ui/dist
+
   test:
     runs-on: ubuntu-latest
 

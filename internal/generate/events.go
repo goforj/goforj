@@ -60,6 +60,7 @@ var eventDriverSpecs = map[string]eventDriverSpec{
 		Constructor: "redisevents.New",
 		Fields: []eventConfigField{
 			{Name: "Client", Value: `eventsRedisClient(scope)`},
+			{Name: "EnableHeaders", Value: `true`},
 		},
 	},
 	"nats": {
@@ -847,16 +848,19 @@ func (b *observedBus) WithContext(ctx context.Context) API {
 // Publish reports the delegated publish outcome and duration to the configured observer.
 func (b *observedBus) Publish(event any) error {
 	startedAt := time.Now()
-	ctx,finish:=beginObservedEvent(b.context(),b.observer,"send",EventDeliveryEvent{Bus:eventBusLabel(b.name),Topic:eventTopicLabel(event),Driver:b.inner.Driver()})
- var err error
- defer finishObservedEvent(finish,&err)
- err = b.inner.WithContext(ctx).Publish(event)
+	topic := eventTopicLabel(event)
+	bus := eventBusLabel(b.name)
+	driver := b.inner.Driver()
+	ctx, finish := beginObservedEvent(b.context(), b.observer, "send", EventDeliveryEvent{Bus: bus, Topic: topic, Driver: driver})
+	var err error
+	defer finishObservedEvent(finish, &err)
+	err = b.inner.WithContext(ctx).Publish(event)
 	b.observer.OnEventPublish(ctx, EventPublishEvent{
-		Bus:      eventBusLabel(b.name),
-		Topic:    eventTopicLabel(event),
+		Bus:      bus,
+		Topic:    topic,
 		Err:      err,
 		Duration: time.Since(startedAt),
-		Driver:   b.inner.Driver(),
+		Driver:   driver,
 	})
 	return err
 }
@@ -974,6 +978,9 @@ func wrapObservedHandler(handler any, observer Observer, busName string, driver 
 	if fn.Kind() != reflect.Func {
 		return nil, "unknown", eventHandlerLabel(fn), fmt.Errorf("%w: handler must be a function", goforjevents.ErrInvalidHandler)
 	}
+	if fn.IsNil() {
+		return nil, "unknown", eventHandlerLabel(fn), fmt.Errorf("%w: handler function must not be nil", goforjevents.ErrInvalidHandler)
+	}
 	typ := fn.Type()
 	if typ.NumIn() < 1 || typ.NumIn() > 2 {
 		return nil, "unknown", eventHandlerLabel(fn), fmt.Errorf("%w: handler must accept 1 or 2 arguments", goforjevents.ErrInvalidHandler)
@@ -983,8 +990,8 @@ func wrapObservedHandler(handler any, observer Observer, busName string, driver 
 	}
 	eventIndex := 0
 	if typ.NumIn() == 2 {
-		if !typ.In(0).Implements(reflect.TypeOf((*context.Context)(nil)).Elem()) {
-			return nil, "unknown", eventHandlerLabel(fn), fmt.Errorf("%w: first argument must implement context.Context", goforjevents.ErrInvalidHandler)
+		if typ.In(0) != reflect.TypeOf((*context.Context)(nil)).Elem() {
+			return nil, "unknown", eventHandlerLabel(fn), fmt.Errorf("%w: first argument must be context.Context", goforjevents.ErrInvalidHandler)
 		}
 		eventIndex = 1
 	}

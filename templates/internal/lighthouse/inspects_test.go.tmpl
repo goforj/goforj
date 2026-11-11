@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,21 +16,42 @@ import (
 	"github.com/goforj/web/adapter/echoweb"
 )
 
+// captureWSConnection synchronizes test observations with background inspect publishers.
 type captureWSConnection struct {
-	writes []any
+ mu sync.Mutex
+ writes []any
 }
 
+// ReadJSON completes the test connection without reading from a network.
 func (c *captureWSConnection) ReadJSON(target any) error {
 	return io.EOF
 }
 
+// WriteJSON records one complete publication before readers can observe it.
 func (c *captureWSConnection) WriteJSON(payload any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.writes = append(c.writes, payload)
 	return nil
 }
 
+// Close satisfies the test transport without owning a socket.
 func (c *captureWSConnection) Close() error {
 	return nil
+}
+
+// capturedWrites returns a stable snapshot while the publisher continues in the background.
+func (c *captureWSConnection) capturedWrites() []any {
+ c.mu.Lock()
+ defer c.mu.Unlock()
+ return append([]any(nil),c.writes...)
+}
+
+// resetWrites isolates the next test operation from initial connection-control messages.
+func (c *captureWSConnection) resetWrites() {
+ c.mu.Lock()
+ defer c.mu.Unlock()
+ c.writes=nil
 }
 
 func TestInspectPublisherFlushesBatch(t *testing.T) {
@@ -57,12 +80,12 @@ func TestInspectPublisherFlushesBatch(t *testing.T) {
 		t.Fatal("expected flush to succeed")
 	}
 
-	if len(conn.writes) != 1 {
-		t.Fatalf("expected 1 websocket write, got %d", len(conn.writes))
+	if len(conn.capturedWrites()) != 1 {
+		t.Fatalf("expected 1 websocket write, got %d", len(conn.capturedWrites()))
 	}
-	wire, ok := conn.writes[0].(EncryptedMessage)
+	wire, ok := conn.capturedWrites()[0].(EncryptedMessage)
 	if !ok {
-		t.Fatalf("expected EncryptedMessage payload, got %T", conn.writes[0])
+		t.Fatalf("expected EncryptedMessage payload, got %T", conn.capturedWrites()[0])
 	}
 	decrypted, err := decryptWithSecret(agent.config.Secret, wire.Nonce, wire.Data)
 	if err != nil {
@@ -223,12 +246,12 @@ func TestInspectShipIngestAndAPIFlow(t *testing.T) {
 	if ok := publisher.flush([]*inspects.Record{&record}); !ok {
 		t.Fatal("expected flush to succeed")
 	}
-	if len(conn.writes) != 1 {
-		t.Fatalf("expected 1 websocket write, got %d", len(conn.writes))
+	if len(conn.capturedWrites()) != 1 {
+		t.Fatalf("expected 1 websocket write, got %d", len(conn.capturedWrites()))
 	}
-	wire, ok := conn.writes[0].(EncryptedMessage)
+	wire, ok := conn.capturedWrites()[0].(EncryptedMessage)
 	if !ok {
-		t.Fatalf("expected EncryptedMessage payload, got %T", conn.writes[0])
+		t.Fatalf("expected EncryptedMessage payload, got %T", conn.capturedWrites()[0])
 	}
 	decrypted, err := decryptWithSecret(agent.config.Secret, wire.Nonce, wire.Data)
 	if err != nil {
@@ -344,11 +367,11 @@ func TestInspectPublisherRetriesBufferedBatchAfterConnect(t *testing.T) {
 	agent.setConn(&wsConn{conn: conn, secret: agent.config.Secret})
 
 	deadline := time.Now().Add(250 * time.Millisecond)
-	for len(conn.writes) == 0 && time.Now().Before(deadline) {
+	for len(conn.capturedWrites()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if len(conn.writes) != 1 {
-		t.Fatalf("expected buffered inspect to flush after connect, got %d writes", len(conn.writes))
+	if len(conn.capturedWrites()) != 1 {
+		t.Fatalf("expected buffered inspect to flush after connect, got %d writes", len(conn.capturedWrites()))
 	}
 }
 
@@ -421,8 +444,8 @@ func TestInspectPublisherSkipsWhenInactive(t *testing.T) {
 	if ok := publisher.flush([]*inspects.Record{&record}); !ok {
 		t.Fatal("expected inactive flush to short-circuit successfully")
 	}
-	if len(conn.writes) != 0 {
-		t.Fatalf("expected no websocket writes while inactive, got %d", len(conn.writes))
+	if len(conn.capturedWrites()) != 0 {
+		t.Fatalf("expected no websocket writes while inactive, got %d", len(conn.capturedWrites()))
 	}
 }
 
@@ -433,24 +456,24 @@ func TestHubBroadcastsInspectControl(t *testing.T) {
 	ws := &wsConn{conn: agentConn, secret: secret}
 
 	hub.RegisterAgent(ws, AgentInfo{Source: "http"})
-	if len(agentConn.writes) != 1 {
-		t.Fatalf("expected initial inspect-control write, got %d", len(agentConn.writes))
+	if len(agentConn.capturedWrites()) != 1 {
+		t.Fatalf("expected initial inspect-control write, got %d", len(agentConn.capturedWrites()))
 	}
-	assertInspectControlMessage(t, secret, agentConn.writes[0], false)
+	assertInspectControlMessage(t, secret, agentConn.capturedWrites()[0], false)
 
 	consoleConn := &captureWSConnection{}
 	consoleWS := &wsConn{conn: consoleConn}
 	hub.RegisterConsole(consoleWS)
-	if len(agentConn.writes) != 2 {
-		t.Fatalf("expected active inspect-control write after console register, got %d", len(agentConn.writes))
+	if len(agentConn.capturedWrites()) != 2 {
+		t.Fatalf("expected active inspect-control write after console register, got %d", len(agentConn.capturedWrites()))
 	}
-	assertInspectControlMessage(t, secret, agentConn.writes[1], true)
+	assertInspectControlMessage(t, secret, agentConn.capturedWrites()[1], true)
 
 	hub.UnregisterConsole(consoleWS)
-	if len(agentConn.writes) != 3 {
-		t.Fatalf("expected inactive inspect-control write after console unregister, got %d", len(agentConn.writes))
+	if len(agentConn.capturedWrites()) != 3 {
+		t.Fatalf("expected inactive inspect-control write after console unregister, got %d", len(agentConn.capturedWrites()))
 	}
-	assertInspectControlMessage(t, secret, agentConn.writes[2], false)
+	assertInspectControlMessage(t, secret, agentConn.capturedWrites()[2], false)
 }
 
 func mustJSON(t *testing.T, value any) []byte {
@@ -486,4 +509,11 @@ func assertInspectControlMessage(t *testing.T, secret string, payload any, wantA
 	if control.Active != wantActive {
 		t.Fatalf("inspect active = %v, want %v", control.Active, wantActive)
 	}
+}
+
+// TestEventInspectMaintenanceRoute keeps the event capture view available alongside other framework diagnostics.
+func TestEventInspectMaintenanceRoute(t *testing.T) {
+ path:=strings.TrimRight(RouteBase(),"/")+"/inspect/events"
+ if !MaintenanceRouteAllowed(http.MethodGet,path) {t.Fatal("event inspect route unavailable during maintenance")}
+ if MaintenanceRouteAllowed(http.MethodPost,path) {t.Fatal("event inspect route unexpectedly accepts writes")}
 }
