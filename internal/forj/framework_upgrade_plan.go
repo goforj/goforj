@@ -223,6 +223,11 @@ func (c *RenderCmd) runFrameworkUpgradeInspection(output io.Writer) error {
 	if c.JSON {
 		return encoder.Encode(plan)
 	}
+	return writeFrameworkUpgradePlan(output, plan)
+}
+
+// writeFrameworkUpgradePlan exposes material syntax and mode diagnostics alongside review actions for human readers.
+func writeFrameworkUpgradePlan(output io.Writer, plan projectupgrade.Plan) error {
 	if _, err := fmt.Fprintln(output, "Experimental framework upgrade inspection (no changes applied)"); err != nil {
 		return err
 	}
@@ -234,6 +239,16 @@ func (c *RenderCmd) runFrameworkUpgradeInspection(output io.Writer) error {
 	for _, file := range plan.Files {
 		if _, err := fmt.Fprintf(output, "%s\t%s\t%s\n", file.Path, file.Ownership, file.Action); err != nil {
 			return err
+		}
+		if file.InvalidGo {
+			if _, err := fmt.Fprintln(output, "  Go declaration hints unavailable: invalid Go syntax in a comparison input"); err != nil {
+				return err
+			}
+		}
+		if file.ModeChanged {
+			if _, err := fmt.Fprintln(output, "  executable bits differ from target"); err != nil {
+				return err
+			}
 		}
 		if len(file.Overlaps) > 0 {
 			if _, err := fmt.Fprintf(output, "  overlapping declarations: %s\n", strings.Join(file.Overlaps, ", ")); err != nil {

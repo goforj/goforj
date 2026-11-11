@@ -203,6 +203,28 @@ class AgentTrialTests(unittest.TestCase):
                 with self.subTest(declaration=declaration), self.assertRaises(RuntimeError):
                     self.trial["holdout_overlay"](root, root, "invalid-module")
 
+    def test_build_gate_requires_a_main_package(self):
+        """A successful Go archive build must not count as a runnable application."""
+        if shutil.which("go") is None:
+            self.skipTest("Go toolchain unavailable")
+        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+            root = Path(directory)
+            command = root / "cmd/app"
+            command.mkdir(parents=True)
+            (root / "go.mod").write_text("module example.com/buildproof\n\ngo 1.25.0\n")
+            source, output = command / "main.go", root / "application"
+            source.write_text("package main\nfunc main(){}\n")
+            result = self.trial["run_go"](root, root, "executable", self.trial["app_build_arguments"](output))
+            self.assertEqual(result["exit_code"], 0)
+            executable = output.read_bytes()
+            self.assertNotEqual(executable[:7], b"!<arch>")
+            if os.name != "nt":
+                self.assertTrue(output.stat().st_mode & 0o111)
+            source.write_text("package app\nfunc main(){}\n")
+            result = self.trial["run_go"](root, root, "archive", self.trial["app_build_arguments"](output))
+            self.assertNotEqual(result["exit_code"], 0)
+            self.assertEqual(output.read_bytes(), executable, "failed build replaced the prior executable with an archive")
+
     def test_timeout_stops_descendant_processes(self):
         """A timed-out compiler cannot leave a child that writes into a later validation phase."""
         if not hasattr(os, "killpg"):

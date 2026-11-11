@@ -196,6 +196,11 @@ def residual_artifacts(snapshot, files):
     return {key: sorted(value) for key, value in result.items()}
 
 
+def app_build_arguments(output):
+    """Require an executable main package instead of accepting a successful library-archive build."""
+    return ["build", "-buildmode=exe", "-mod=readonly", "-o", str(output), "./cmd/app"]
+
+
 def evaluate(root):
     """Run after the actor stops, preserving baseline failures and refusing to equate passing gates with complete coverage."""
     metadata = json.loads((root / "trial.json").read_text())
@@ -218,7 +223,7 @@ def evaluate(root):
             "unit": run_go(app, evaluation, name + "-unit", ["test", "-p", "1", "-mod=readonly", "-json", "./...", "-count=1"]),
             "auth": run_go(app, evaluation, name + "-auth", ["test", "-mod=readonly", "-json", "-tags=integration", "./internal/auth", "-count=1"]),
             "holdout": run_go(app, evaluation, name + "-holdout", ["test", "-mod=readonly", "-json", "-overlay", str(overlay), "./internal/logger", "-run", "^" + HOLDOUT + "$", "-count=1"]),
-            "build": run_go(app, evaluation, name + "-build", ["build", "-mod=readonly", "-o", str(evaluation / (name + "-binary")), "./cmd/app"]),
+            "build": run_go(app, evaluation, name + "-build", app_build_arguments(evaluation / (name + "-binary"))),
         }
     if inventory(root / "baseline") != before:
         raise RuntimeError("baseline validation changed source; the trial requires investigation")

@@ -159,9 +159,10 @@ python3 scripts/spike-agent-upgrade.py evaluate /tmp/goforj-agent-upgrade-CASE
 Preparation freezes a private executable copy for the trial. Evaluation verifies
 that executable and the input packet before running tests. It rejects explicit
 failed-test or package-failure events even if a test process incorrectly exits
-zero, and terminates validation process groups on timeout. A real child-process
-regression test checks that a timed-out descendant cannot write into a later
-phase. These local controls are not an executable sandbox.
+zero, requires executable build mode so a non-main Go archive cannot satisfy the
+application-build check, and terminates validation process groups on timeout. A real
+child-process regression test checks that a timed-out descendant cannot write into
+a later phase. These local controls are not an executable sandbox.
 
 The driver retains source/mode fingerprints, target-packet hashes, complete Go
 logs, test identities, protected-file changes, residual artifacts, and a summary

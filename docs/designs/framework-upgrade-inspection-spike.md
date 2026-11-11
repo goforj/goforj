@@ -88,9 +88,12 @@ Framework-owned differences produce actions such as `review-unversioned`,
 baseline classifications explicitly say `relative-to-baseline`. No action grants
 permission to overwrite or delete application files.
 
-Executable-bit differences are reported on platforms that support them. Group
-read/write permissions are not framework drift; Git archives and local umasks can
-vary them without changing tracked source semantics.
+Executable-bit differences and unavailable Go syntax hints are visible in both
+text and JSON plans. Empty Go source remains a comparison input and is diagnosed
+rather than mistaken for an omitted payload. Executable-bit differences are
+reported on platforms that support them. Group read/write permissions are not
+framework drift; Git archives and local umasks can vary them without changing
+tracked source semantics.
 
 ## Inputs and limits
 
@@ -130,9 +133,11 @@ rooted filesystem. Discovery-root or marker symlinks cannot select Apps outside
 the inspected project; ordinary discovery retains its existing behavior.
 
 Peer responses require strict, bounded JSON: canonical field names, no duplicate
-keys, valid UTF-8, limited nesting, and exactly one document. Artifacts require
-explicit ownership, portable paths without case collisions or file/directory
-overlap, and matching source digests. Ambiguous or incompatible peers fail closed.
+keys, valid UTF-8, limited nesting, and exactly one document. Accepted source strings
+and engine metadata must survive JSON serialization without losing bytes; malformed
+UTF-8 is rejected before acceptance. Artifacts require explicit ownership, portable
+paths without case collisions or file/directory overlap, and matching source digests.
+Ambiguous or incompatible peers fail closed.
 
 ## Reproducible reference inspection
 

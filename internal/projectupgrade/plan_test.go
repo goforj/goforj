@@ -184,6 +184,12 @@ func TestValidateSnapshotRejectsUnsafeContracts(t *testing.T) {
 		{"digest length", func(s *Snapshot) { s.InputsDigest = "short" }},
 		{"digest encoding", func(s *Snapshot) { s.InputsDigest = strings.Repeat("x", 64) }},
 		{"engine", func(s *Snapshot) { s.Engine.Version = "" }},
+		{"invalid version UTF8", func(s *Snapshot) { s.Engine.Version = string([]byte{0xff}) }},
+		{"invalid commit UTF8", func(s *Snapshot) { s.Engine.Commit = string([]byte{0xff}) }},
+		{"invalid source UTF8", func(s *Snapshot) {
+			s.Artifacts[0].Source = string([]byte{0xff})
+			s.Artifacts[0].Digest = Digest([]byte{0xff})
+		}},
 		{"empty artifacts", func(s *Snapshot) { s.Artifacts = nil }},
 		{"too many artifacts", func(s *Snapshot) { s.Artifacts = make([]Artifact, 16385) }},
 		{"traversal", func(s *Snapshot) { s.Artifacts[0].Path = "internal/auth/../../.env" }},
@@ -622,5 +628,58 @@ func TestBuildCombinesContentAndModeChanges(t *testing.T) {
 				t.Fatalf("action=%s, want %s", plan.Files[0].Action, test.action)
 			}
 		})
+	}
+}
+
+// TestEmptyGoInputsRemainDiagnosed treats empty source as actual comparison data rather than an absent payload.
+func TestEmptyGoInputsRemainDiagnosed(t *testing.T) {
+	for _, kind := range []string{"target", "baseline", "current"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			baseline, target := testSnapshot("package auth\n"), testSnapshot("package auth\n")
+			current := "package auth\n"
+			switch kind {
+			case "target":
+				target.Artifacts[0].Source = ""
+				current = ""
+			case "baseline":
+				baseline.Artifacts[0].Source = ""
+			case "current":
+				current = ""
+			}
+			writeFixture(t, root, target.Artifacts[0].Path, current)
+			plan, err := Build(root, target, &baseline)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !plan.Files[0].InvalidGo {
+				t.Fatalf("empty %s Go source was not diagnosed", kind)
+			}
+		})
+	}
+}
+
+// TestSnapshotUnicodeRoundTrip preserves valid non-ASCII source and diagnostic metadata byte-for-byte.
+func TestSnapshotUnicodeRoundTrip(t *testing.T) {
+	snapshot := testSnapshot("package auth\n// Привет, 世界.\n")
+	snapshot.Engine.Version = "dev-試験"
+	snapshot.Engine.Commit = "référence"
+	snapshot.Artifacts[0].Digest = Digest([]byte(snapshot.Artifacts[0].Source))
+	if err := ValidateSnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Snapshot
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSnapshot(decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(snapshot, decoded) {
+		t.Fatal("protocol changed valid Unicode source or metadata")
 	}
 }

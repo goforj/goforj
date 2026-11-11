@@ -59,3 +59,35 @@ func FuzzDeclarationHints(f *testing.F) {
 		}
 	})
 }
+
+// FuzzSnapshotTextRoundTrip starts from raw Go strings so malformed UTF-8 cannot hide behind JSON decoding's replacements.
+func FuzzSnapshotTextRoundTrip(f *testing.F) {
+	f.Add([]byte("package auth\n// 世界\n"), "dev-試験")
+	f.Add([]byte{0xff}, "dev")
+	f.Add([]byte("package auth\n"), string([]byte{0xff}))
+	f.Fuzz(func(t *testing.T, source []byte, version string) {
+		if len(source)+len(version) > 64<<10 {
+			t.Skip()
+		}
+		snapshot := testSnapshot(string(source))
+		snapshot.Engine.Version = version
+		snapshot.Artifacts[0].Digest = Digest(source)
+		if ValidateSnapshot(snapshot) != nil {
+			return
+		}
+		encoded, err := json.Marshal(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded Snapshot
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidateSnapshot(decoded); err != nil {
+			t.Fatal("accepted source did not survive JSON", err)
+		}
+		if !reflect.DeepEqual(snapshot, decoded) {
+			t.Fatal("accepted snapshot changed during JSON serialization")
+		}
+	})
+}

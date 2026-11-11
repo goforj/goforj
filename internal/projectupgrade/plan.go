@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // ProtocolVersion identifies the experimental renderer snapshot contract.
@@ -122,15 +123,15 @@ func ValidateSnapshot(snapshot Snapshot) error {
 	if _, err := hex.DecodeString(snapshot.InputsDigest); err != nil {
 		return fmt.Errorf("renderer snapshot input digest is invalid")
 	}
-	if snapshot.Engine.Version == "" || len(snapshot.Artifacts) == 0 || len(snapshot.Artifacts) > 16384 {
-		return fmt.Errorf("renderer snapshot requires provenance and 1 to 16384 artifacts")
+	if snapshot.Engine.Version == "" || !utf8.ValidString(snapshot.Engine.Version) || !utf8.ValidString(snapshot.Engine.Commit) || len(snapshot.Artifacts) == 0 || len(snapshot.Artifacts) > 16384 {
+		return fmt.Errorf("renderer snapshot requires valid UTF-8 provenance and 1 to 16384 artifacts")
 	}
 	seen := map[string]bool{}
 	portableNames := map[string]bool{}
 	for _, artifact := range snapshot.Artifacts {
 		name := artifact.Path
-		if !validArtifactPath(name) || seen[name] || portableNames[strings.ToLower(name)] || len(artifact.Source) > 4<<20 || artifact.Mode > 0o777 {
-			return fmt.Errorf("invalid or duplicate framework artifact path, size, or mode: %q", name)
+		if !validArtifactPath(name) || seen[name] || portableNames[strings.ToLower(name)] || len(artifact.Source) > 4<<20 || !utf8.ValidString(artifact.Source) || artifact.Mode > 0o777 {
+			return fmt.Errorf("invalid or duplicate framework artifact path, size, encoding, or mode: %q", name)
 		}
 		if artifact.Template != "" && !validArtifactPath(artifact.Template) {
 			return fmt.Errorf("invalid source template path")
@@ -327,9 +328,9 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 			default:
 				file.Action = "reconcile"
 			}
-			if exists && hasNext && next.Source != "" && strings.HasSuffix(name, ".go") {
+			if exists && hasNext && ownership == "framework-template" && strings.HasSuffix(name, ".go") {
 				file.TargetDifferences, file.InvalidGo = changedDeclarations(string(current), next.Source)
-				if hasOld && old.Source != "" {
+				if hasOld {
 					var invalid bool
 					file.LocalDifferences, invalid = changedDeclarations(old.Source, string(current))
 					file.InvalidGo = file.InvalidGo || invalid

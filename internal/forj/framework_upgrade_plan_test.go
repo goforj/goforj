@@ -747,3 +747,38 @@ func TestRendererLifecycleStopsDescendants(t *testing.T) {
 		})
 	}
 }
+
+// frameworkDiagnosticFailWriter makes each new text diagnostic's error path observable without rendering another project.
+type frameworkDiagnosticFailWriter struct {
+	remaining int
+	failure   error
+}
+
+// Write rejects the configured write so inspection cannot silently drop diagnostic output.
+func (writer *frameworkDiagnosticFailWriter) Write(source []byte) (int, error) {
+	if writer.remaining == 0 {
+		return 0, writer.failure
+	}
+	writer.remaining--
+	return len(source), nil
+}
+
+// TestFrameworkTextPlanIncludesDiagnostics keeps human output as honest about comparison limits as the JSON fields.
+func TestFrameworkTextPlanIncludesDiagnostics(t *testing.T) {
+	plan := projectupgrade.Plan{Files: []projectupgrade.File{{Path: "empty.go", Ownership: "framework-template", Action: "matches-target", InvalidGo: true, ModeChanged: true}}}
+	var output bytes.Buffer
+	if err := writeFrameworkUpgradePlan(&output, plan); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"empty.go", "matches-target", "invalid Go syntax in a comparison input", "executable bits differ from target"} {
+		if !strings.Contains(output.String(), required) {
+			t.Fatalf("text plan omitted %q", required)
+		}
+	}
+	failure := errors.New("diagnostic output failed")
+	for _, remaining := range []int{2, 3} {
+		if err := writeFrameworkUpgradePlan(&frameworkDiagnosticFailWriter{remaining: remaining, failure: failure}, plan); !errors.Is(err, failure) {
+			t.Fatalf("diagnostic writer error=%v", err)
+		}
+	}
+}
