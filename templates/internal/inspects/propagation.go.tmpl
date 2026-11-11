@@ -29,25 +29,36 @@ func (MessageContextPropagator) Extract(ctx context.Context, headers map[string]
 	if len(headers) > 32 {
 		return ctx
 	}
-	carrier := propagation.MapCarrier{}
+	var parentKey, stateKey string
 	for key, value := range headers {
 		switch {
 		case strings.EqualFold(key, "traceparent"):
 			if len(value) > 512 {
 				return ctx
 			}
-			if _, exists := carrier["traceparent"]; exists {
+			if parentKey != "" {
 				return ctx
 			}
-			carrier["traceparent"] = value
+			parentKey = key
 		case strings.EqualFold(key, "tracestate"):
 			if len(value) > 512 {
 				return ctx
 			}
-			if _, exists := carrier["tracestate"]; exists {
+			if stateKey != "" {
 				return ctx
 			}
-			carrier["tracestate"] = value
+			stateKey = key
+		}
+	}
+	// Native carriers already use canonical keys. Normalize only when a transport changes their case.
+	carrier := propagation.MapCarrier(headers)
+	if parentKey != "" && parentKey != "traceparent" || stateKey != "" && stateKey != "tracestate" {
+		carrier = propagation.MapCarrier{}
+		if parentKey != "" {
+			carrier["traceparent"] = headers[parentKey]
+		}
+		if stateKey != "" {
+			carrier["tracestate"] = headers[stateKey]
 		}
 	}
 	extracted := propagation.TraceContext{}.Extract(ctx, carrier)

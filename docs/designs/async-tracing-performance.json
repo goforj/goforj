@@ -353,5 +353,263 @@
     "Fast in-process OTLP cases saturate the default exporter queue and export about 2% of spans in both revisions. Their measurements do not establish lossless export performance. Live HTTP OTLP cases export 100%.",
     "The candidate uses the actual new published dependency graph, including some newer cloud and gRPC transitive dependencies. Differences cannot be attributed solely to framework code.",
     "Queue comparisons use an opaque two-field carrier and synchronous logical dispatch. They exclude framework W3C formatting/parsing, tracing span creation, and broker latency."
-  ]
+  ],
+  "event_header_size_optimization": {
+    "before_events_commit": "9920c884599e29e508b3ac38a3b606734e441f06",
+    "after_events_commit": "f1cd6413af093f51ac7fb646a0ef401451ee7b18",
+    "runs": 5,
+    "benchtime": "250ms",
+    "gomaxprocs": 1,
+    "method": "Run before and after binaries serially, alternating order each repetition. Compare populated carriers against the same populated-carrier workload before optimization, with disabled and empty controls.",
+    "change": "Prove small carriers fit the JSON byte budget using a conservative six-byte expansion bound. Retain exact JSON measurement for larger carriers, UTF-8 checks, and mutation-isolating snapshots.",
+    "go1.26.0": [
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/disabled/subscribers_1",
+        "before": {
+          "ns/op": 975.8,
+          "B/op": 448.0,
+          "allocs/op": 10.0
+        },
+        "after": {
+          "ns/op": 984.0,
+          "B/op": 448.0,
+          "allocs/op": 10.0
+        },
+        "latency_delta_percent": 0.8403361344537785
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/disabled/subscribers_4",
+        "before": {
+          "ns/op": 3652.0,
+          "B/op": 1600.0,
+          "allocs/op": 34.0
+        },
+        "after": {
+          "ns/op": 3610.0,
+          "B/op": 1600.0,
+          "allocs/op": 34.0
+        },
+        "latency_delta_percent": -1.150054764512598
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/configured_empty/subscribers_1",
+        "before": {
+          "ns/op": 992.5,
+          "B/op": 448.0,
+          "allocs/op": 10.0
+        },
+        "after": {
+          "ns/op": 1034.0,
+          "B/op": 448.0,
+          "allocs/op": 10.0
+        },
+        "latency_delta_percent": 4.181360201511342
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/configured_empty/subscribers_4",
+        "before": {
+          "ns/op": 3651.0,
+          "B/op": 1600.0,
+          "allocs/op": 34.0
+        },
+        "after": {
+          "ns/op": 3757.0,
+          "B/op": 1600.0,
+          "allocs/op": 34.0
+        },
+        "latency_delta_percent": 2.903314160503978
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/valid_carrier/subscribers_1",
+        "before": {
+          "ns/op": 2128.0,
+          "B/op": 2032.0,
+          "allocs/op": 30.0
+        },
+        "after": {
+          "ns/op": 1481.0,
+          "B/op": 1520.0,
+          "allocs/op": 18.0
+        },
+        "latency_delta_percent": -30.40413533834586
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/valid_carrier/subscribers_4",
+        "before": {
+          "ns/op": 5117.0,
+          "B/op": 4384.0,
+          "allocs/op": 66.0
+        },
+        "after": {
+          "ns/op": 4549.0,
+          "B/op": 3872.0,
+          "allocs/op": 54.0
+        },
+        "latency_delta_percent": -11.100254055110415
+      }
+    ],
+    "go1.27.0": [
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/disabled/subscribers_1",
+        "before": {
+          "ns/op": 783.7,
+          "B/op": 256.0,
+          "allocs/op": 5.0
+        },
+        "after": {
+          "ns/op": 795.8,
+          "B/op": 256.0,
+          "allocs/op": 5.0
+        },
+        "latency_delta_percent": 1.5439581472502129
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/disabled/subscribers_4",
+        "before": {
+          "ns/op": 2450.0,
+          "B/op": 688.0,
+          "allocs/op": 11.0
+        },
+        "after": {
+          "ns/op": 2486.0,
+          "B/op": 688.0,
+          "allocs/op": 11.0
+        },
+        "latency_delta_percent": 1.4693877551020362
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/configured_empty/subscribers_1",
+        "before": {
+          "ns/op": 808.9,
+          "B/op": 256.0,
+          "allocs/op": 5.0
+        },
+        "after": {
+          "ns/op": 821.3,
+          "B/op": 256.0,
+          "allocs/op": 5.0
+        },
+        "latency_delta_percent": 1.5329459760168085
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/configured_empty/subscribers_4",
+        "before": {
+          "ns/op": 2482.0,
+          "B/op": 688.0,
+          "allocs/op": 11.0
+        },
+        "after": {
+          "ns/op": 2468.0,
+          "B/op": 688.0,
+          "allocs/op": 11.0
+        },
+        "latency_delta_percent": -0.5640612409347323
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/valid_carrier/subscribers_1",
+        "before": {
+          "ns/op": 2070.0,
+          "B/op": 1696.0,
+          "allocs/op": 25.0
+        },
+        "after": {
+          "ns/op": 1224.0,
+          "B/op": 1328.0,
+          "allocs/op": 13.0
+        },
+        "latency_delta_percent": -40.869565217391305
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/valid_carrier/subscribers_4",
+        "before": {
+          "ns/op": 4139.0,
+          "B/op": 3328.0,
+          "allocs/op": 43.0
+        },
+        "after": {
+          "ns/op": 3265.0,
+          "B/op": 2960.0,
+          "allocs/op": 31.0
+        },
+        "latency_delta_percent": -21.116211645324956
+      }
+    ],
+    "raw_sha256": {
+      "go1.26.0": "f9857f79b5a82f5d30309ac767532aea66455f32be76d95dd706d41e48c52b55",
+      "go1.27.0": "6498caacf04fb65314a806a5c096d597f8dd4f7258afbd3472f2209a6c8ef25c"
+    },
+    "limitations": [
+      "Synchronous local delivery with an opaque two-field carrier, not real-broker throughput or full OpenTelemetry tracing.",
+      "Small timing differences in disabled and empty controls are not evidence of improvements. Allocation counts in both controls are unchanged.",
+      "The earlier HTTP comparison predates this optimization; its selected events commit remains 517d720cdbb8. The optimization does not execute on the HTTP request benchmark paths."
+    ]
+  },
+  "queue_experiment_not_kept": {
+    "change": "Decode bounded headers through a private JSON unmarshaler to avoid retaining the raw metadata copy.",
+    "result": "Saved one allocation and 128 bytes per populated dispatch but did not improve latency in five alternating runs (5524 ns before, 5637 ns after). Reverted; not part of the PR.",
+    "reason": "Avoid extra decoding machinery without a measured latency benefit."
+  },
+  "framework_header_extraction_optimization": {
+    "before_framework_commit": "93502751de5ba67c51d6de83639eaf77913ae0bf",
+    "after_template_sha256": "57d071f3b2fab1b7746856f69488df9f673308639d21d9af10c770e968e8f677",
+    "go": "go1.27.0",
+    "runs": 5,
+    "benchtime": "250ms",
+    "gomaxprocs": 1,
+    "change": "Validate canonical carrier keys and let the pinned read-only TraceContext extractor read their existing map. Normalize only mixed-case keys; retain duplicate detection, value limits, and shared-library snapshots.",
+    "method": "Serial before/after binaries, alternating order per repetition. The candidate overlays the authoritative template onto the same generated app and module graph. Verify different binary hashes before timing.",
+    "summary": [
+      {
+        "benchmark": "BenchmarkMessageContextPropagationExtract/canonical",
+        "before": {
+          "ns/op": 378.4,
+          "B/op": 496.0,
+          "allocs/op": 5.0
+        },
+        "after": {
+          "ns/op": 269.4,
+          "B/op": 160.0,
+          "allocs/op": 3.0
+        },
+        "latency_delta_percent": -28.80549682875264
+      },
+      {
+        "benchmark": "BenchmarkMessageContextPropagationExtract/mixed_case",
+        "before": {
+          "ns/op": 384.4,
+          "B/op": 496.0,
+          "allocs/op": 5.0
+        },
+        "after": {
+          "ns/op": 373.9,
+          "B/op": 496.0,
+          "allocs/op": 5.0
+        },
+        "latency_delta_percent": -2.7315296566077008
+      },
+      {
+        "benchmark": "BenchmarkMessageContextPropagationExtract/empty",
+        "before": {
+          "ns/op": 44.85,
+          "B/op": 48.0,
+          "allocs/op": 1.0
+        },
+        "after": {
+          "ns/op": 28.52,
+          "B/op": 0.0,
+          "allocs/op": 0.0
+        },
+        "latency_delta_percent": -36.410256410256416
+      }
+    ],
+    "raw_sha256": "7495428ffbdbe6703d430b3542468c4c3871ca3d173029ecd5b78aa9d02b1dc4",
+    "limitations": [
+      "Measures actual W3C header parsing and receiver-context creation, not complete job/event delivery, span creation, export, or broker latency.",
+      "Do not add these isolated benchmark percentages to the library propagation percentages."
+    ],
+    "binary_sha256": {
+      "before": "bf3f74b9750b2c1023f206d175a590bb158f5836c941ab7263dae2a0d6521433",
+      "after": "0f3c3157e655a805050ebe2263a5f84177bffd5a40085de271d34d6eba1ee0c6"
+    }
+  }
 }

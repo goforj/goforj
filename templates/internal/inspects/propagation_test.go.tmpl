@@ -2,6 +2,7 @@ package inspects
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -65,5 +66,50 @@ func TestMessageContextPropagationRejectsMalformedMetadata(t *testing.T) {
 	}
 	if headers := propagator.Inject(context.Background()); len(headers) != 0 {
 		t.Fatal("untraced publication acquired headers")
+	}
+}
+
+// TestMessageContextPropagationHeaderCases preserves input ownership and identity with canonical and normalized keys.
+func TestMessageContextPropagationHeaderCases(t *testing.T) {
+	propagator := MessageContextPropagator{}
+	identity := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}, TraceFlags: trace.FlagsSampled})
+	canonical := propagator.Inject(trace.ContextWithSpanContext(context.Background(), identity))
+	for _, parentKey := range []string{"traceparent", "TraceParent"} {
+		for _, stateKey := range []string{"tracestate", "TraceState", "traceſtate"} {
+			headers := map[string]string{parentKey: canonical["traceparent"], stateKey: "vendor=value", "baggage": "private=value"}
+			before := maps.Clone(headers)
+			got := trace.SpanContextFromContext(propagator.Extract(context.Background(), headers))
+			if !got.IsRemote() || got.TraceID() != identity.TraceID() || got.SpanID() != identity.SpanID() || got.TraceState().String() != "vendor=value" {
+				t.Fatalf("keys=%s/%s: identity or trace state changed", parentKey, stateKey)
+			}
+			if !maps.Equal(headers, before) {
+				t.Fatal("extraction mutated its input headers")
+			}
+		}
+	}
+}
+
+// BenchmarkMessageContextPropagationExtract measures real W3C parsing separately from broker and span creation costs.
+func BenchmarkMessageContextPropagationExtract(b *testing.B) {
+	const parent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	for _, name := range []string{"canonical", "mixed_case", "empty"} {
+		b.Run(name, func(b *testing.B) {
+			headers := map[string]string{"traceparent": parent, "tracestate": "vendor=benchmark"}
+			if name == "mixed_case" {
+				headers = map[string]string{"TraceParent": parent, "TraceState": "vendor=benchmark"}
+			} else if name == "empty" {
+				headers = nil
+			}
+			propagator := MessageContextPropagator{}
+			ctx := context.Background()
+			if got := trace.SpanContextFromContext(propagator.Extract(ctx, headers)); got.IsValid() != (name != "empty") {
+				b.Fatal("unexpected extracted identity")
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				propagator.Extract(ctx, headers)
+			}
+		})
 	}
 }
