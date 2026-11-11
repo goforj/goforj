@@ -143,6 +143,8 @@ func AppPackageName(name string) string {
 
 // RenderConfig represents render-time defaults and selections.
 type RenderConfig struct {
+	// Example selects an optional runnable reference application independently from frontend starter kits.
+	Example              string             `yaml:"example,omitempty" json:"example,omitempty"`
 	Components           Components         `yaml:"components" json:"components"`
 	StarterKit           StarterKit         `yaml:"starter_kit" json:"starter_kit"`
 	StarterKitOptions    *StarterKitOptions `yaml:"starter_kit_options,omitempty" json:"starter_kit_options,omitempty"`

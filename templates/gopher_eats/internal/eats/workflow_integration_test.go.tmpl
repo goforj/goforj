@@ -1,0 +1,387 @@
+//go:build integration_eats
+
+package eats
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	logcollector "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	tracecollector "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/protobuf/proto"
+)
+
+// collectedSpan preserves the resource's service identity alongside the actual SDK span.
+type collectedSpan struct {
+	service string
+	span    *tracepb.Span
+}
+
+// TestEatsWorkflow verifies actual app binaries, HTTP propagation, queued retries, delivery events, SSE, and correlated logs.
+func TestEatsWorkflow(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := os.Getenv("EATS_TEST_BROKER_URL")
+	if broker == "" {
+		t.Fatal("EATS_TEST_BROKER_URL must point to a running NATS broker")
+	}
+	var mu sync.Mutex
+	var spans []collectedSpan
+	logs := make(map[string]bool)
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "body", 400)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/v1/traces":
+			var request tracecollector.ExportTraceServiceRequest
+			if err := proto.Unmarshal(body, &request); err != nil {
+				http.Error(w, "trace protobuf", 400)
+				return
+			}
+			for _, resource := range request.ResourceSpans {
+				service := ""
+				for _, attr := range resource.Resource.Attributes {
+					if attr.Key == "service.name" {
+						service = attr.Value.GetStringValue()
+					}
+				}
+				for _, scope := range resource.ScopeSpans {
+					for _, span := range scope.Spans {
+						spans = append(spans, collectedSpan{service: service, span: span})
+					}
+				}
+			}
+		case "/v1/logs":
+			var request logcollector.ExportLogsServiceRequest
+			if err := proto.Unmarshal(body, &request); err != nil {
+				http.Error(w, "log protobuf", 400)
+				return
+			}
+			for _, resource := range request.ResourceLogs {
+				for _, scope := range resource.ScopeLogs {
+					for _, entry := range scope.LogRecords {
+						if len(entry.TraceId) == 16 && len(entry.SpanId) == 8 {
+							logs[hex.EncodeToString(entry.TraceId)+":"+hex.EncodeToString(entry.SpanId)] = true
+						}
+					}
+				}
+			}
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+	}))
+	t.Cleanup(receiver.Close)
+	ports := map[string]string{}
+	for _, name := range []string{"app", "kitchen", "delivery"} {
+		ports[name] = eatsFreePort(t)
+	}
+	for _, name := range []string{"delivery", "kitchen", "app"} {
+		output, err := os.CreateTemp(t.TempDir(), name+"-*.log")
+		if err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command(filepath.Join(root, "bin", name))
+		command.Dir = root
+		overrides := map[string]string{
+			"API_HTTP_HOST": "127.0.0.1", "API_HTTP_PORT": ports[name], "KITCHEN_API_HTTP_PORT": ports["kitchen"], "DELIVERY_API_HTTP_PORT": ports["delivery"],
+			"METRICS_HTTP_ENABLED": "false", "METRICS_QUEUE_ENABLED": "false", "LIGHTHOUSE_ENABLED": "false", "LIGHTHOUSE_INSPECT_ENABLED": "false",
+			"QUEUE_DRIVER": "nats", "KITCHEN_QUEUE_DRIVER": "nats", "QUEUE_URL": broker, "QUEUE_WORKERS": "1", "EVENTS_DRIVER": "nats", "EVENTS_URL": broker,
+			"EVENTS_CONTEXT_PROPAGATION_ENABLED": "true", "EATS_STEP_DURATION": "40ms", "EATS_KITCHEN_URL": "http://127.0.0.1:" + ports["kitchen"],
+			"OTEL_SERVICE_NAME": "eats-" + name, "OTEL_TRACES_EXPORTER": "otlp", "OTEL_LOGS_EXPORTER": "otlp", "OTEL_TRACES_SAMPLER": "always_on",
+			"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf", "OTEL_EXPORTER_OTLP_ENDPOINT": receiver.URL, "OTEL_BSP_SCHEDULE_DELAY": "100",
+			"APP_LOG_FORMAT": "json",
+		}
+		command.Env = eatsProcessEnv(overrides)
+		command.Stdout = output
+		command.Stderr = output
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- command.Wait() }()
+		t.Cleanup(func() {
+			_ = command.Process.Signal(syscall.SIGTERM)
+			select {
+			case <-done:
+			case <-time.After(12 * time.Second):
+				_ = command.Process.Kill()
+				<-done
+			}
+			_ = output.Close()
+			if t.Failed() {
+				body, _ := os.ReadFile(output.Name())
+				t.Logf("%s: %s", name, body)
+			}
+		})
+		eatsEventually(t, "readiness "+name, func() bool {
+			response, err := http.Get("http://127.0.0.1:" + ports[name] + "/eats/health")
+			if err != nil {
+				return false
+			}
+			defer response.Body.Close()
+			return response.StatusCode == 200
+		})
+		if name == "kitchen" {
+			eatsEventually(t, "kitchen worker subscription", func() bool {
+				body, _ := os.ReadFile(output.Name())
+				return bytes.Contains(body, []byte("Queue worker started"))
+			})
+		}
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	base := "http://127.0.0.1:" + ports["app"]
+	for _, scenario := range []struct {
+		name       string
+		burn, slow bool
+	}{
+		{name: "normal"}, {name: "retry", burn: true}, {name: "scenic", slow: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			burn := scenario.burn
+			requestBody := fmt.Sprintf(`{"pizza":"margherita","burn":%t,"slow":%t}`, burn, scenario.slow)
+			response, err := client.Post(base+"/api/orders", "application/json", strings.NewReader(requestBody))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var order Order
+			if response.StatusCode != 202 {
+				body, _ := io.ReadAll(response.Body)
+				response.Body.Close()
+				t.Fatalf("order: %d %s", response.StatusCode, body)
+			}
+			err = json.NewDecoder(response.Body).Decode(&order)
+			response.Body.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(order.TraceID) != 32 || order.TraceID == strings.Repeat("0", 32) {
+				t.Fatalf("invalid SDK trace: %+v", order)
+			}
+			stream, err := client.Get(base + "/api/orders/" + order.ID + "/events")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stream.Header.Get("Content-Type") != "text/event-stream" {
+				t.Fatal("missing SSE response")
+			}
+			scanner := bufio.NewScanner(stream.Body)
+			var history []Progress
+			delivered := false
+			for scanner.Scan() {
+				if strings.HasPrefix(scanner.Text(), "data: ") {
+					if err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data: ")), &history); err != nil {
+						t.Fatal(err)
+					}
+					for _, update := range history {
+						if update.Stage == "delivered" {
+							delivered = true
+						}
+					}
+					if delivered {
+						break
+					}
+				}
+			}
+			stream.Body.Close()
+			if !delivered {
+				t.Fatalf("SSE delivery missing: %+v, error=%v", history, scanner.Err())
+			}
+			stages := map[string]bool{}
+			positions := map[int]bool{}
+			for _, update := range history {
+				stages[update.Stage] = true
+				if update.Stage == "delivering" || update.Stage == "delivered" {
+					positions[update.Position] = true
+					expected := 16
+					if scenario.slow {
+						expected *= 3
+					}
+					if update.TransitionMS != expected {
+						t.Fatalf("animation interval=%d, want %d", update.TransitionMS, expected)
+					}
+				}
+				if update.Order.ID != order.ID {
+					t.Fatal("another order leaked into stream")
+				}
+			}
+			for position := 0; position <= 100; position += 5 {
+				if !positions[position] {
+					t.Fatalf("missing courier position %d", position)
+				}
+			}
+			for _, stage := range []string{"received", "preparing", "baking", "ready", "delivering", "delivered"} {
+				if !stages[stage] {
+					t.Fatalf("missing stage %s: %+v", stage, history)
+				}
+			}
+			if stages["retrying"] != burn {
+				t.Fatalf("retry history: %+v", history)
+			}
+			replay, err := client.Get(base + "/api/orders/" + order.ID + "/events")
+			if err != nil {
+				t.Fatal(err)
+			}
+			replayScanner := bufio.NewScanner(replay.Body)
+			replayDelivered := false
+			for replayScanner.Scan() {
+				if strings.HasPrefix(replayScanner.Text(), "data: ") {
+					replayDelivered = strings.Contains(replayScanner.Text(), `"delivered"`)
+					break
+				}
+			}
+			replay.Body.Close()
+			if !replayDelivered {
+				t.Fatal("SSE reconnect lost delivered milestone")
+			}
+			eatsEventually(t, "trace parentage and correlated log export", func() bool {
+				mu.Lock()
+				defer mu.Unlock()
+				return eatsTraceMatches(spans, logs, order.TraceID, burn)
+			})
+		})
+	}
+	for _, test := range []struct {
+		path, body string
+		status     int
+	}{
+		{path: "/api/orders", body: `{"pizza":"not-on-menu"}`, status: 400},
+		{path: "/api/orders", body: `{`, status: 400},
+	} {
+		response, err := client.Post(base+test.path, "application/json", strings.NewReader(test.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != test.status {
+			t.Fatalf("invalid order: %d", response.StatusCode)
+		}
+	}
+	for _, suffix := range []string{"", "/events"} {
+		response, err := client.Get(base + "/api/orders/missing" + suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != 404 {
+			t.Fatalf("unknown order%s: %d", suffix, response.StatusCode)
+		}
+	}
+}
+
+// eatsTraceMatches requires the actual HTTP, queue, retry, and event edges across independent services.
+func eatsTraceMatches(all []collectedSpan, logs map[string]bool, id string, burn bool) bool {
+	byName := map[string][]collectedSpan{}
+	for _, exported := range all {
+		if hex.EncodeToString(exported.span.TraceId) == id {
+			byName[exported.span.Name] = append(byName[exported.span.Name], exported)
+		}
+	}
+	root := byName["POST /api/orders"]
+	kitchen := byName["POST /internal/orders"]
+	producer := byName["send kitchen_default"]
+	attempts := byName["eats.cook"]
+	ready := byName["send eats.order.ready"]
+	consumer := byName["process eats.order.ready"]
+	expected := 1
+	if burn {
+		expected = 2
+	}
+	if len(root) != 1 || len(kitchen) != 1 || len(producer) != 1 || len(attempts) != expected || len(ready) != 1 || len(consumer) != 1 {
+		return false
+	}
+	if root[0].service != "eats-app" || kitchen[0].service != "eats-kitchen" || consumer[0].service != "eats-delivery" {
+		return false
+	}
+	clientParent := false
+	for _, group := range byName {
+		for _, span := range group {
+			if span.service == "eats-app" && bytes.Equal(span.span.ParentSpanId, root[0].span.SpanId) && bytes.Equal(kitchen[0].span.ParentSpanId, span.span.SpanId) {
+				clientParent = true
+			}
+		}
+	}
+	if !clientParent || !bytes.Equal(producer[0].span.ParentSpanId, kitchen[0].span.SpanId) {
+		return false
+	}
+	failed := 0
+	successfulParent := false
+	for _, attempt := range attempts {
+		if !bytes.Equal(attempt.span.ParentSpanId, producer[0].span.SpanId) {
+			return false
+		}
+		if attempt.span.GetStatus().GetCode() == tracepb.Status_STATUS_CODE_ERROR {
+			failed++
+		} else if bytes.Equal(ready[0].span.ParentSpanId, attempt.span.SpanId) {
+			successfulParent = true
+		}
+	}
+	expectedFailures := 0
+	if burn {
+		expectedFailures = 1
+	}
+	return successfulParent && failed == expectedFailures && bytes.Equal(consumer[0].span.ParentSpanId, ready[0].span.SpanId) && logs[id+":"+hex.EncodeToString(consumer[0].span.SpanId)]
+}
+
+// eatsProcessEnv overrides only this test's subprocess environment, including inherited OTLP options.
+func eatsProcessEnv(overrides map[string]string) []string {
+	result := []string{}
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, changed := overrides[key]; !changed && !strings.HasPrefix(key, "OTEL_") {
+			result = append(result, entry)
+		}
+	}
+	for key, value := range overrides {
+		result = append(result, key+"="+value)
+	}
+	return result
+}
+
+// eatsFreePort allocates loopback addresses without relying on a shared fixed-port test environment.
+func eatsFreePort(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	return fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)
+}
+
+// eatsEventually waits for observed app and SDK delivery state with a bounded deadline.
+func eatsEventually(t *testing.T, label string, ready func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if ready() {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", label)
+}

@@ -2,6 +2,7 @@ package {{.AppPackageName}}
 
 import (
 	"context"
+	{{if eq .Render.Example "gopher_eats"}}"{{.GoModuleName}}/internal/eats"{{end}}
 
 	"{{.GoModuleName}}/internal/runtime"
 )
@@ -9,11 +10,11 @@ import (
 // LifecycleRegistry registers lifecycle hooks for this app.
 //
 // This file is render-once and intended for app customization.
-type LifecycleRegistry struct{}
+type LifecycleRegistry struct{ {{if eq .Render.Example "gopher_eats"}}eats *eats.Service{{end}} }
 
 // NewLifecycleRegistry constructs a lifecycle registry and can accept injected deps.
-func NewLifecycleRegistry() *LifecycleRegistry {
-	return &LifecycleRegistry{}
+func NewLifecycleRegistry({{if eq .Render.Example "gopher_eats"}}service *eats.Service{{end}}) *LifecycleRegistry {
+	return &LifecycleRegistry{ {{if eq .Render.Example "gopher_eats"}}eats: service,{{end}} }
 }
 
 // Register attaches custom hooks to the app lifecycle.
@@ -37,7 +38,9 @@ func (r *LifecycleRegistry) BeforeStartup(ctx context.Context) error {
 // Use this for app-owned resources that should live for the process lifetime,
 // such as event subscriptions, background watchers, or custom clients.
 func (r *LifecycleRegistry) Startup(ctx context.Context) error {
+	{{if eq .Render.Example "gopher_eats"}}return r.eats.Start(ctx){{else}}
 	return nil
+	{{end}}
 }
 
 // AfterStartup runs after startup hooks have completed successfully.
@@ -58,7 +61,9 @@ func (r *LifecycleRegistry) BeforeShutdown(ctx context.Context) error {
 // Use this to close app-owned subscriptions, flush buffers, release locks, or
 // stop custom workers that were started in Startup.
 func (r *LifecycleRegistry) Shutdown(ctx context.Context) error {
+	{{if eq .Render.Example "gopher_eats"}}return r.eats.Stop(ctx){{else}}
 	return nil
+	{{end}}
 }
 
 // AfterShutdown runs after shutdown hooks have completed.

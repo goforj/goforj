@@ -26,7 +26,7 @@ type frameworkRenderInventory struct {
 // record preserves template provenance while classifying initial frontend sources as app-owned seeds.
 func (inventory *frameworkRenderInventory) record(destination, template string, ownership string, mode fs.FileMode) {
 	destination = filepath.ToSlash(destination)
-	if strings.HasPrefix(template, "starter-kits/") || strings.HasPrefix(template, "demo/frontend/") {
+	if strings.HasPrefix(template, "starter-kits/") || strings.HasPrefix(template, "demo/frontend/") || strings.HasPrefix(template, "gopher_eats/") {
 		ownership = "seed"
 	}
 	if strings.HasPrefix(destination, "migrations/") && isMigrationSQLFile(destination) {

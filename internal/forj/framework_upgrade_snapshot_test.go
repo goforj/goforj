@@ -199,3 +199,14 @@ func TestFrameworkSnapshotMessagePropagationOwnership(t *testing.T) {
 		}
 	}
 }
+
+// TestGopherEatsArtifactsAreApplicationSeeds prevents framework upgrades from claiming editable demo files.
+func TestGopherEatsArtifactsAreApplicationSeeds(t *testing.T) {
+	inventory := &frameworkRenderInventory{artifacts: map[string]projectupgrade.Artifact{}}
+	for _, path := range []string{"frontend/src/App.vue", "frontend/src/eats/KitchenScene.vue", "internal/eats/service.go.tmpl"} {
+		inventory.record(path, "gopher_eats/"+path, "framework-asset", 0644)
+		if got := inventory.artifacts[path].Ownership; got != "seed" {
+			t.Fatalf("%s ownership=%s", path, got)
+		}
+	}
+}

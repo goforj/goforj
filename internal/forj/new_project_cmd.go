@@ -578,6 +578,16 @@ func (m *model) applyStarterKitSelection() {
 // applyExtrasSelection applies Demo's temporary constraints without erasing the unlocked component choices.
 func (m *model) applyExtrasSelection() {
 	m.demoAppEnabled = m.extrasIndex == 1
+	if m.config.Render.Example == "gopher_eats" && m.extrasIndex != 2 {
+		delete(m.config.Apps, "kitchen")
+		delete(m.config.Apps, "delivery")
+	}
+	m.config.Render.Example = ""
+	if m.extrasIndex == 2 {
+		configureGopherEats(&m.config)
+		m.resetResourcePreview()
+		return
+	}
 	selected := m.selectedComponentConfig()
 	if !m.demoAppEnabled {
 		selected.DemoApp = false
@@ -614,11 +624,20 @@ func (m model) selectedResourcePreparation() (newProjectResourcePreparation, err
 	if m.resourcePreparation != nil {
 		return cloneNewProjectResourcePreparation(*m.resourcePreparation), nil
 	}
-	plan, err := project.DefaultResourcePlan(m.config.Render.Components)
+	components := m.config.Render.Components
+	if m.config.Render.Example == "gopher_eats" {
+		components = project.ProjectComponents(&m.config)
+	}
+	plan, err := project.DefaultResourcePlan(components)
 	if err != nil {
 		return newProjectResourcePreparation{}, err
 	}
-	return resolveNewProjectResourcePreparation(plan, m.config.Render.Components, project.LocalServiceIntent{}, nil)
+	if m.config.Render.Example == "gopher_eats" {
+		for _, key := range []project.ResourceKey{project.ResourceQueue, project.ResourceEvents} {
+			plan = plan.WithSelection(key, project.DriverSelection{Active: "nats", Supported: []string{"nats"}})
+		}
+	}
+	return resolveNewProjectResourcePreparation(plan, components, project.LocalServiceIntent{}, nil)
 }
 
 // applyAtlasModeSelection centralizes apply atlas mode selection behavior so callers follow the same contract.
@@ -921,17 +940,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			switch msg.String() {
 			case "up", "k":
-				m.extrasIndex = 0
+				m.extrasIndex = max(0, m.extrasIndex-1)
 				return m, nil
 			case "down", "j":
-				m.extrasIndex = 1
+				m.extrasIndex = min(2, m.extrasIndex+1)
 				return m, nil
 			case "space":
-				if m.extrasIndex == 1 {
-					m.extrasIndex = 0
-				} else {
-					m.extrasIndex = 1
-				}
+				m.extrasIndex = (m.extrasIndex + 1) % 3
 				return m, nil
 			case "enter":
 				m.applyExtrasSelection()
@@ -1173,15 +1188,15 @@ func (m model) View() tea.View {
 
 	// Extras panel.
 	if m.stage >= StageExtras {
-		extrasSummary := "Off"
-		if m.config.Render.Components.DemoApp {
-			extrasSummary = "On (Generate monitoring reference app)"
-		}
+		extrasSummary := m.selectedDemoSummary()
 		if m.stage == StageExtras {
 			onSelected := m.extrasIndex == 1
-			offSelected := !onSelected
-			offMarker := normalStyle.Render("●")
+			offSelected := m.extrasIndex == 0
+			offMarker := normalStyle.Render("○")
 			onMarker := normalStyle.Render("○")
+			if offSelected {
+				offMarker = normalStyle.Render("●")
+			}
 			if onSelected {
 				offMarker = normalStyle.Render("○")
 				onMarker = normalStyle.Render("●")
@@ -1196,13 +1211,18 @@ func (m model) View() tea.View {
 					return offMarker + " " + label
 				}(),
 				func() string {
-					label := listNameStyle.Render("On (Generate monitoring reference app)")
+					label := listNameStyle.Render("Uptime Gopher (monitoring)")
 					if onSelected {
-						label = listFocusedNameStyle.Render("On (Generate monitoring reference app)")
+						label = listFocusedNameStyle.Render("Uptime Gopher (monitoring)")
 					}
 					return onMarker + " " + label
 				}(),
 			)
+			marker := normalStyle.Render("○")
+			if m.extrasIndex == 2 {
+				marker = normalStyle.Render("●")
+			}
+			extrasBody = lipgloss.JoinVertical(lipgloss.Left, extrasBody, marker+" "+listNameStyle.Render("Gopher Eats (multi-app pizza delivery)"))
 			if onSelected {
 				extrasBody = lipgloss.JoinVertical(
 					lipgloss.Left,
@@ -1288,7 +1308,7 @@ func (m model) View() tea.View {
 			{"Directory", filepath.Base(m.projectPath())},
 			{"Go module", m.modulePreview()},
 			{"Path", m.projectPath()},
-			{"Demo App", map[bool]string{true: "On", false: "Off"}[m.config.Render.Components.DemoApp]},
+			{"Demo App", m.selectedDemoSummary()},
 			{"Starter kit", m.selectedStarterKitSummary()},
 			{"Component library", m.selectedComponentLibrarySummary()},
 			{"Agent support", m.atlasSummary()},
@@ -2480,6 +2500,8 @@ type NewProjectCmd struct {
 	AtlasSurfaces string `name:"atlas-surfaces" default:"@default" help:"Comma-separated integration keys for custom Atlas support"`
 	// Demo adds the framework demo profile.
 	Demo bool `name:"demo" help:"Include the framework demo application"`
+	// Example selects an additional runnable reference app while preserving the legacy demo flag.
+	Example string `name:"example" help:"Reference app: gopher_eats"`
 
 	// AllowNonEmpty lets advanced users intentionally initialize inside a directory that already has files.
 	AllowNonEmpty bool `name:"allow-non-empty" help:"Allow creating a project in a non-empty directory"`
