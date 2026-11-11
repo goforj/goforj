@@ -18,5 +18,5 @@ func generateMessageContextPropagator(projectDir string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("format message context propagator: %w", err)
 	}
-	return writeGeneratedSource(filepath.Join(projectDir, "internal", "inspects", "propagation_gen.go"), formatted)
+	return writeGeneratedSource(filepath.Join(projectDir, MessageContextPropagatorPath), formatted)
 }

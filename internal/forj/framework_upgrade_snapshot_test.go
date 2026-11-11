@@ -131,7 +131,14 @@ func TestFrameworkSnapshotDiscoveredDemoApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	compared := 0
+	derived := map[string]bool{}
+	for _, name := range frameworkDerivedPaths(projection) {
+		derived[name] = true
+	}
 	for name, ordinary := range renderer.inspection.artifacts {
+		if derived[name] {
+			continue
+		}
 		if ordinary.Ownership != "framework-template" && ordinary.Ownership != "framework-asset" {
 			continue
 		}
@@ -157,6 +164,38 @@ func TestFrameworkSnapshotDiscoveredDemoApp(t *testing.T) {
 	for _, name := range append(apiindex.OutputPaths(project.AppForName("worker")), generate.MailManagerPath, generate.MailAccessorsPath) {
 		if artifacts[name].Ownership != "app-derived" {
 			t.Errorf("discovered output %s ownership = %q, want app-derived", name, artifacts[name].Ownership)
+		}
+	}
+}
+
+// TestFrameworkSnapshotMessagePropagationOwnership keeps shared generated tracing code out of template merge proposals.
+func TestFrameworkSnapshotMessagePropagationOwnership(t *testing.T) {
+	t.Setenv("TMPDIR", "/tmp")
+	t.Setenv("QUEUE_DRIVER", "workerpool")
+	t.Setenv("EVENTS_DRIVER", "inproc")
+	for _, components := range []project.Components{
+		{CLI: true}, {CLI: true, Jobs: true}, {CLI: true, Events: true}, {CLI: true, Jobs: true, Events: true},
+	} {
+		snapshot, err := frameworkSnapshotForConfig(&frameworkRenderIntent{Config: &project.Config{ProjectName: "Message ownership", GoModuleName: "example.com/ownership", Render: project.RenderConfig{Components: components}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, artifact := range snapshot.Artifacts {
+			if artifact.Path != generate.MessageContextPropagatorPath {
+				continue
+			}
+			count++
+			wantOwnership := "framework-template"
+			if components.Jobs || components.Events {
+				wantOwnership = "app-derived"
+			}
+			if artifact.Ownership != wantOwnership {
+				t.Errorf("jobs=%v events=%v ownership=%q", components.Jobs, components.Events, artifact.Ownership)
+			}
+		}
+		if count != 1 {
+			t.Errorf("jobs=%v events=%v artifact count=%d want=1", components.Jobs, components.Events, count)
 		}
 	}
 }
