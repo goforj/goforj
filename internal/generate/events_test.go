@@ -7,10 +7,37 @@ import (
 	"testing"
 )
 
+// eventGenerationRoot supplies the module path used by the generated shared adapter import.
+func eventGenerationRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/eventfixture\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// TestGenerateEventFilesAcceptsNamedPropagationForEveryDriver keeps propagation available independently of transport selection.
+func TestGenerateEventFilesAcceptsNamedPropagationForEveryDriver(t *testing.T) {
+	for driver := range eventDriverKeys {
+		t.Run(driver, func(t *testing.T) {
+			for _, enabled := range []string{"true", "false"} {
+				input := fixtureGenerationInput(eventGenerationRoot(t), map[string]string{
+					"EVENTS_DRIVER": "inproc", "EVENTS_AUDIT_DRIVER": driver,
+					"EVENTS_AUDIT_CONTEXT_PROPAGATION_ENABLED": enabled,
+				})
+				if _, err := generateEventFiles(input); err != nil {
+					t.Fatalf("named %s propagation=%s: %v", driver, enabled, err)
+				}
+			}
+		})
+	}
+}
+
 func TestGenerateEventFilesUsesSelectedDriverImports(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "redis")
 
-	root := t.TempDir()
+	root := eventGenerationRoot(t)
 	if err := os.MkdirAll(filepath.Join(root, "internal", "events"), 0o755); err != nil {
 		t.Fatalf("mkdir events package: %v", err)
 	}
@@ -44,7 +71,7 @@ func TestGenerateEventFilesUsesSelectedDriverImports(t *testing.T) {
 	if !strings.Contains(source, `"github.com/redis/go-redis/v9"`) {
 		t.Fatal("expected generated events manager to construct an authenticated Redis client")
 	}
-	if !strings.Contains(source, `Client: eventsRedisClient(scope)`) {
+	if !strings.Contains(strings.Join(strings.Fields(source), " "), `Client: eventsRedisClient(scope)`) {
 		t.Fatal("expected Redis events to use the shared Redis client contract")
 	}
 	if !strings.Contains(source, `Password: env.Get("REDIS_PASSWORD", "")`) {
@@ -61,11 +88,32 @@ func TestGenerateEventFilesUsesSelectedDriverImports(t *testing.T) {
 	}
 }
 
+// TestGenerateEventFilesRedisAlwaysEnablesHeaderDecoding supports upgraded consumers while publisher propagation remains disabled.
+func TestGenerateEventFilesRedisAlwaysEnablesHeaderDecoding(t *testing.T) {
+	t.Setenv("EVENTS_DRIVER", "redis")
+	for _, enabled := range []string{"true", "false"} {
+		t.Run(enabled, func(t *testing.T) {
+			t.Setenv("EVENTS_CONTEXT_PROPAGATION_ENABLED", enabled)
+			root := eventGenerationRoot(t)
+			if _, err := GenerateEventFiles(root); err != nil {
+				t.Fatal(err)
+			}
+			source, err := os.ReadFile(filepath.Join(root, "internal", "events", "manager_gen.go"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(strings.Join(strings.Fields(string(source)), " "), "EnableHeaders: true") {
+				t.Fatalf("Redis header decoding disabled with propagation=%s", enabled)
+			}
+		})
+	}
+}
+
 func TestGenerateEventFilesUsesSupportedDriverImports(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "inproc")
 	t.Setenv("EVENTS_SUPPORTED_DRIVERS", "inproc,redis")
 
-	root := t.TempDir()
+	root := eventGenerationRoot(t)
 	if err := os.MkdirAll(filepath.Join(root, "internal", "events"), 0o755); err != nil {
 		t.Fatalf("mkdir events package: %v", err)
 	}
@@ -88,7 +136,7 @@ func TestGenerateEventFilesBuildsNamedAccessors(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "inproc")
 	t.Setenv("EVENTS_AUDIT_DRIVER", "null")
 
-	root := t.TempDir()
+	root := eventGenerationRoot(t)
 	if err := os.MkdirAll(filepath.Join(root, "internal", "events"), 0o755); err != nil {
 		t.Fatalf("mkdir events package: %v", err)
 	}
@@ -126,7 +174,7 @@ func TestGenerateEventFilesChainsMultipleObservers(t *testing.T) {
 			"github.com/goforj/events/eventscore",
 			"github.com/goforj/str/v2",
 		},
-		nil,
+		[]string{"go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace"},
 		eventsLocalReplaces(t),
 	))
 
@@ -145,6 +193,7 @@ import (
 )
 
 type API = goforjevents.API
+
 type Driver = eventscore.Driver
 type Subscription = goforjevents.Subscription
 
@@ -384,7 +433,7 @@ func TestGenerateEventFilesSupportsObserverWrapping(t *testing.T) {
 			"github.com/goforj/events/eventscore",
 			"github.com/goforj/str/v2",
 		},
-		nil,
+		[]string{"go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace"},
 		eventsLocalReplaces(t),
 	))
 
@@ -403,6 +452,7 @@ import (
 )
 
 type API = goforjevents.API
+
 type Driver = eventscore.Driver
 type Subscription = goforjevents.Subscription
 
@@ -548,6 +598,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+ "reflect"
+ "github.com/goforj/env/v2"
 )
 
 type userCreated struct {
@@ -656,6 +708,146 @@ func TestGeneratedObserver(t *testing.T) {
 	}
 }
 `
+
+	testSource += `
+// tracingObserver verifies operation contexts reach handlers and close after both errors and panics.
+type tracingObserver struct { observerRecorder; ended *[]error }
+// BeginEvent preserves incoming correlation and supplies a derived instrumentation context.
+func(o tracingObserver)BeginEvent(ctx context.Context,_ string,_ EventDeliveryEvent)(context.Context,func(error)) {
+ return context.WithValue(ctx,observerKey("scope"),"present"),func(err error){*o.ended=append(*o.ended,err)}
+}
+// observerKey avoids collisions with application context keys.
+type observerKey string
+// concreteHandlerError exercises error results that cannot be compared to nil by reflection.
+type concreteHandlerError struct{}
+// Error identifies the expected handler failure.
+func(concreteHandlerError)Error()string{return "handler failed"}
+
+// TestGeneratedObserverTracingHandlers preserves incoming context for every supported handler shape.
+func TestGeneratedObserverTracingHandlers(t *testing.T) {
+ for _,panicHandler:=range []bool{false,true} {
+  var ended []error
+  finished:=false
+  observer:=tracingObserver{observerRecorder:observerRecorder{onDeliveryFinish:func(ctx context.Context,event EventDeliveryEvent){finished=true;if ctx.Value(observerKey("parent"))!="incoming" || event.Err==nil {t.Error("finish lost context or failure")}}},ended:&ended}
+  var handler any=func(ctx context.Context,_ userCreated)concreteHandlerError{if ctx.Value(observerKey("parent"))!="incoming" || ctx.Value(observerKey("scope"))!="present" {t.Error("handler lost derived context")};return concreteHandlerError{}}
+  if panicHandler {handler=func(userCreated){panic("original panic")}}
+  wrapped,_,_,err:=wrapObservedHandler(handler,observer,"default",DriverInproc)
+  if err!=nil {t.Fatal(err)}
+  func(){defer func(){value:=recover();if panicHandler && value!="original panic" {t.Errorf("panic=%v",value)};if !panicHandler && value!=nil {t.Errorf("unexpected panic=%v",value)}}();reflect.ValueOf(wrapped).Call([]reflect.Value{reflect.ValueOf(context.WithValue(context.Background(),observerKey("parent"),"incoming")),reflect.ValueOf(userCreated{})})}()
+  if !finished || len(ended)!=1 || ended[0]==nil {t.Fatalf("finished=%v endings=%v",finished,ended)}
+ }
+}
+
+// concreteObserverContext exercises handler signatures that cannot accept an arbitrary context.Context.
+type concreteObserverContext struct{ context.Context }
+
+// extendedObserverContext exercises interfaces with requirements beyond context.Context.
+type extendedObserverContext interface {
+	context.Context
+	ObserverScope() string
+}
+
+// TestGeneratedObserverRejectsInvalidContextHandlers keeps invalid handlers out of bus state before delivery.
+func TestGeneratedObserverRejectsInvalidContextHandlers(t *testing.T) {
+	var nilHandler func(context.Context, userCreated)
+	for name, handler := range map[string]any{
+		"concrete context": func(*concreteObserverContext, userCreated) {},
+		"extended context": func(extendedObserverContext, userCreated) {},
+		"nil function": nilHandler,
+	} {
+		t.Run(name, func(t *testing.T) {
+			manager, err := NewManager()
+			if err != nil {
+				t.Fatal(err)
+			}
+			manager.WithObserver(observerRecorder{})
+			if subscription, err := manager.Default().Subscribe(handler); err == nil || subscription != nil {
+				t.Fatalf("invalid handler registered: subscription=%v error=%v", subscription, err)
+			}
+			if err := manager.Default().Publish(userCreated{}); err != nil {
+				t.Fatalf("invalid registration changed delivery: %v", err)
+			}
+		})
+	}
+}
+
+// scopedObserver checks observer context composition and lifecycle nesting through a managed bus.
+type scopedObserver struct {
+	observerRecorder
+	name string
+	sequence *[]string
+}
+
+// BeginEvent binds each observer's scope and records its finish order.
+func (o scopedObserver) BeginEvent(ctx context.Context, operation string, _ EventDeliveryEvent) (context.Context, func(error)) {
+	*o.sequence = append(*o.sequence, "begin "+o.name+" "+operation)
+	return context.WithValue(ctx, observerKey(o.name), true), func(error) {
+		*o.sequence = append(*o.sequence, "end "+o.name+" "+operation)
+	}
+}
+
+// TestGeneratedObserverComposesTracingScopes preserves each derived context and closes scopes in reverse order.
+func TestGeneratedObserverComposesTracingScopes(t *testing.T) {
+	manager, err := NewManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sequence []string
+	manager.WithObserver(scopedObserver{name: "first", sequence: &sequence})
+	manager.WithObserver(scopedObserver{name: "second", sequence: &sequence})
+	subscription, err := manager.Default().Subscribe(func(ctx context.Context, _ userCreated) {
+		if ctx.Value(observerKey("first")) != true || ctx.Value(observerKey("second")) != true {
+			t.Fatal("composed observer context lost")
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	if err := manager.Default().Publish(userCreated{}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"begin first send", "begin second send", "begin first process", "begin second process", "end second process", "end first process", "end second send", "end first send"}
+	if !reflect.DeepEqual(sequence, want) {
+		t.Fatalf("observer lifecycle=%v want=%v", sequence, want)
+	}
+}
+
+// TestGeneratedObserverFinishesFailedPublication reports transport failures to both observers and scope cleanup.
+func TestGeneratedObserverFinishesFailedPublication(t *testing.T) {
+	want := concreteHandlerError{}
+	var ended []error
+	published := false
+	observer := tracingObserver{observerRecorder: observerRecorder{onPublish: func(_ context.Context, event EventPublishEvent) {
+		published = true
+		if event.Err != want {
+			t.Fatalf("publication error=%v want=%v", event.Err, want)
+		}
+	}}, ended: &ended}
+	bus := wrapObservedBus("default", newErrorBus(DriverInproc, want), observer)
+	if err := bus.Publish(userCreated{}); err != want {
+		t.Fatalf("publish error=%v want=%v", err, want)
+	}
+	if !published || len(ended) != 1 || ended[0] != want {
+		t.Fatalf("published=%v scope errors=%v", published, ended)
+	}
+}
+
+// TestGeneratedObserverContextConfiguration supports staged root and named-bus rollouts and rejects invalid configuration.
+func TestGeneratedObserverContextConfiguration(t *testing.T) {
+ for _,value:=range []string{"true","false","invalid"} {
+  t.Setenv("EVENTS_CONTEXT_PROPAGATION_ENABLED",value)
+  options,err:=eventContextOptions(env.WithPrefix("EVENTS").Child("AUDIT"))
+  if value=="invalid" {if err==nil {t.Fatal("invalid boolean accepted")};continue}
+  if err!=nil {t.Fatal(err)}
+  if (len(options)==1)!=(value=="true") {t.Fatalf("value=%s options=%d",value,len(options))}
+ }
+ t.Setenv("EVENTS_CONTEXT_PROPAGATION_ENABLED","false")
+ t.Setenv("EVENTS_AUDIT_CONTEXT_PROPAGATION_ENABLED","true")
+ options,err:=eventContextOptions(env.WithPrefix("EVENTS").Child("AUDIT"))
+ if err!=nil || len(options)!=1 {t.Fatalf("named override options=%d err=%v",len(options),err)}
+}
+`
 	if err := os.WriteFile(filepath.Join(root, "internal", "events", "generated_observer_test.go"), []byte(testSource), 0o644); err != nil {
 		t.Fatalf("write generated test: %v", err)
 	}
@@ -669,7 +861,7 @@ func TestGenerateEventFilesIgnoresUnknownPrefixedEnvVars(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "redis")
 	t.Setenv("EVENTS_UNKNOWN_VALUE", "1")
 
-	if _, err := GenerateEventFiles(t.TempDir()); err != nil {
+	if _, err := GenerateEventFiles(eventGenerationRoot(t)); err != nil {
 		t.Fatalf("GenerateEventFiles() rejected an unrecognized application env var: %v", err)
 	}
 }
@@ -679,7 +871,7 @@ func TestGenerateEventFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
 	t.Setenv("EVENTS_ADDR", "127.0.0.1:6379")
 	t.Setenv("EVENTS_REDIS_CHANNEL_PREFIX", "events")
 
-	if _, err := GenerateEventFiles(t.TempDir()); err != nil {
+	if _, err := GenerateEventFiles(eventGenerationRoot(t)); err != nil {
 		t.Fatalf("expected GenerateEventFiles to allow documented inactive root events env vars, got %v", err)
 	}
 }

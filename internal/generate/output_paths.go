@@ -9,6 +9,8 @@ const (
 	QueueManagerPath = "internal/queues/manager_gen.go"
 	// QueueAccessorsPath identifies accessors derived from application queue declarations.
 	QueueAccessorsPath = "internal/queues/accessors_gen.go"
+	// MessageContextPropagatorPath identifies the adapter shared by queue and event generation.
+	MessageContextPropagatorPath = "internal/inspects/propagation_gen.go"
 	// StorageManagerPath identifies the manager source owned by storage generation.
 	StorageManagerPath = "internal/storages/manager_gen.go"
 	// StorageAccessorsPath identifies accessors derived from application storage declarations.
@@ -38,6 +40,7 @@ func OutputPaths(selection GenerationSelection) []string {
 		{selection.Queue, []string{QueueManagerPath, QueueAccessorsPath}},
 		{selection.Storage, []string{StorageManagerPath, StorageAccessorsPath}},
 		{selection.Events, []string{EventsManagerPath, EventsAccessorsPath}},
+		{selection.Queue || selection.Events, []string{MessageContextPropagatorPath}},
 		{selection.Mail, []string{MailManagerPath, MailAccessorsPath}},
 		{selection.Database, []string{DatabaseConnectionsPath}},
 		{selection.Observability, []string{ObservabilityTargetsPath}},

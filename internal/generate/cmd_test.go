@@ -118,8 +118,8 @@ func TestGenerateProjectFilesUsesPluralServicePackageDirs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateProjectFiles returned error: %v", err)
 	}
-	if result.TotalFiles != 8 {
-		t.Fatalf("total files = %d, want %d", result.TotalFiles, 8)
+	if result.TotalFiles != 9 {
+		t.Fatalf("total files = %d, want %d", result.TotalFiles, 9)
 	}
 	if result.ChangedFiles == 0 {
 		t.Fatal("expected generated files to be written")
@@ -486,5 +486,35 @@ func TestGenerateProjectFilesSkipsGoModTidyForObservabilityOnlyChanges(t *testin
 	}
 	if called != 0 {
 		t.Fatalf("tidy calls = %d, want 0", called)
+	}
+}
+
+// TestGenerateProjectFilesCountsSharedAdapterOnce keeps reported artifacts consistent across async selections and stable regeneration.
+func TestGenerateProjectFilesCountsSharedAdapterOnce(t *testing.T) {
+	t.Setenv("QUEUE_DRIVER", "null")
+	t.Setenv("QUEUE_SUPPORTED_DRIVERS", "null")
+	t.Setenv("EVENTS_DRIVER", "inproc")
+	t.Setenv("EVENTS_SUPPORTED_DRIVERS", "inproc")
+	for _, test := range []struct {
+		selection GenerationSelection
+		want      int
+	}{{GenerationSelection{Queue: true}, 3}, {GenerationSelection{Events: true}, 3}, {GenerationSelection{Queue: true, Events: true}, 5}} {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/filecounts\n\ngo 1.26.0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for run := range 2 {
+			result, err := generateProjectFiles(root, test.selection, skipModuleTidy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantChanged := test.want
+			if run == 1 {
+				wantChanged = 0
+			}
+			if result.TotalFiles != test.want || result.ChangedFiles != wantChanged {
+				t.Fatalf("selection=%+v run=%d result=%+v want total=%d changed=%d", test.selection, run, result, test.want, wantChanged)
+			}
+		}
 	}
 }

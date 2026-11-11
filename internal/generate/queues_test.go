@@ -55,9 +55,13 @@ func WithSource(ctx context.Context, source string) context.Context {
 	}
 	const inspectsSource = `package inspects
 
-import "context"
+import ("context";"go.opentelemetry.io/otel/trace";"go.opentelemetry.io/otel/trace/noop")
 
 type Manager struct{}
+// TracingEnabled keeps these generator-only fixtures outside the tracing SDK.
+func (*Manager) TracingEnabled()bool {return false}
+// TracerProvider satisfies the generated producer instrumentation.
+func (*Manager) TracerProvider()trace.TracerProvider {return noop.NewTracerProvider()}
 
 type InspectEvent struct {
 	Kind       string
@@ -89,7 +93,7 @@ func writeQueueFixtureModule(t *testing.T, root, moduleName string, requires []s
 	if err := os.MkdirAll(filepath.Join(root, "internal", "queues"), 0o755); err != nil {
 		t.Fatalf("mkdir queue package: %v", err)
 	}
-	writeFixtureGoMod(t, root, fixtureModuleSpec(moduleName, requires, nil, replaces))
+	writeFixtureGoMod(t, root, fixtureModuleSpec(moduleName, requires, []string{"go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace"}, replaces))
 	writeQueueRuntimeFixture(t, root)
 }
 

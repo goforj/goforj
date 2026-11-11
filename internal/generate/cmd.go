@@ -124,6 +124,9 @@ func (c *Cmd) run(tidy moduleTidyRunner) error {
 		return err
 	}
 	if run.dependencyTaskRan {
+		if _, err := syncGeneratedModuleRequirements(".", selection); err != nil {
+			return err
+		}
 		if err := tidy("."); err != nil {
 			return err
 		}
@@ -148,6 +151,9 @@ func generateProjectFiles(projectDir string, selection GenerationSelection, tidy
 		return result, err
 	}
 	if run.dependencyFilesChanged {
+		if _, err := syncGeneratedModuleRequirements(projectDir, selection); err != nil {
+			return result, err
+		}
 		if err := tidy(projectDir); err != nil {
 			return result, err
 		}
@@ -277,12 +283,19 @@ func validateRequestedGenerationSelection(requested, available GenerationSelecti
 
 // generationTasksFor preserves the stable generation order and keeps per-resource behavior out of orchestration code.
 func generationTasksFor(selection GenerationSelection) []generationTask {
+	queueFiles, eventFiles := 2, 2
+	// The first selected async generator owns the shared adapter in file totals.
+	if selection.Queue {
+		queueFiles++
+	} else if selection.Events {
+		eventFiles++
+	}
 	return []generationTask{
 		{selected: selection.Storage, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Storage: the Storage component is disabled in .goforj.yml", generate: generateStorageFiles},
 		{selected: selection.Cache, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Cache: the Cache component is disabled in .goforj.yml", generate: generateCacheFiles},
 		{selected: selection.Mail, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Mail: the Mail component is disabled in .goforj.yml", generate: generateMailFiles},
-		{selected: selection.Queue, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Queue: the Background Jobs component is disabled; enable it in .goforj.yml", generate: generateQueueFiles},
-		{selected: selection.Events, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Events: the Events component is disabled in .goforj.yml", generate: generateEventFiles},
+		{selected: selection.Queue, generatedFiles: queueFiles, updatesDependencies: true, disabledRequestError: "cannot generate Queue: the Background Jobs component is disabled; enable it in .goforj.yml", generate: generateQueueFiles},
+		{selected: selection.Events, generatedFiles: eventFiles, updatesDependencies: true, disabledRequestError: "cannot generate Events: the Events component is disabled in .goforj.yml", generate: generateEventFiles},
 		{selected: selection.Database, generatedFiles: 1, updatesDependencies: true, disabledRequestError: "cannot generate DB: no Database component is enabled in .goforj.yml", generate: generateDBFiles},
 		{selected: selection.Observability, generatedFiles: 1, disabledRequestError: "cannot generate Observability: the Observability component is disabled in .goforj.yml", generate: generateObservabilityFiles},
 	}

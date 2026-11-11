@@ -1,0 +1,972 @@
+{
+  "purpose": "Review evidence for GoForj PR 267. Comparisons measure the selected generated compositions on one host, not a universal throughput guarantee.",
+  "baseline_framework_commit": "772ffef87ab3b2d5cc2d653ceb75e8cb1fc27bb9",
+  "candidate_dependency_commits": {
+    "queue": "04747fc2edc7eae6d1b0d0ef436d8b9aee5d8aa3",
+    "redisqueue": "7751d3a26fd28eb07bda95b130e06288c08fbff0",
+    "events": "517d720cdbb8dd6f321dcd74f92e2faf21b69899"
+  },
+  "go": "go version go1.27.0 darwin/arm64",
+  "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "gomaxprocs": 1,
+  "http": {
+    "runs": 7,
+    "benchtime": "500ms",
+    "fixture_sha256": "d6c104e2e2dd13f242e7f005fce67f5d4e96d4f3ebc45fbfe75e2c3daedddcc0",
+    "summary": [
+      {
+        "mode": "gated",
+        "workload": "live_plain_text",
+        "base": {
+          "ns/op": 24495.0,
+          "B/op": 4906.0,
+          "allocs/op": 60.0,
+          "requests/s": 40825.0
+        },
+        "candidate": {
+          "ns/op": 24544.0,
+          "B/op": 4906.0,
+          "allocs/op": 60.0,
+          "requests/s": 40743.0
+        },
+        "throughput_delta_percent": -0.20085731781995797
+      },
+      {
+        "mode": "gated",
+        "workload": "middleware_chain",
+        "base": {
+          "ns/op": 409.6,
+          "B/op": 48.0,
+          "allocs/op": 3.0,
+          "requests/s": 2441413.0
+        },
+        "candidate": {
+          "ns/op": 410.5,
+          "B/op": 48.0,
+          "allocs/op": 3.0,
+          "requests/s": 2436018.0
+        },
+        "throughput_delta_percent": -0.22097858903840084
+      },
+      {
+        "mode": "gated",
+        "workload": "path_param_json",
+        "base": {
+          "ns/op": 408.0,
+          "B/op": 48.0,
+          "allocs/op": 3.0,
+          "requests/s": 2450861.0
+        },
+        "candidate": {
+          "ns/op": 403.2,
+          "B/op": 48.0,
+          "allocs/op": 3.0,
+          "requests/s": 2479905.0
+        },
+        "throughput_delta_percent": 1.1850529262981357
+      },
+      {
+        "mode": "gated",
+        "workload": "static_text",
+        "base": {
+          "ns/op": 286.0,
+          "B/op": 16.0,
+          "allocs/op": 1.0,
+          "requests/s": 3496791.0
+        },
+        "candidate": {
+          "ns/op": 286.4,
+          "B/op": 16.0,
+          "allocs/op": 1.0,
+          "requests/s": 3491024.0
+        },
+        "throughput_delta_percent": -0.16492263907107452
+      },
+      {
+        "mode": "lighthouse",
+        "workload": "live_plain_text",
+        "base": {
+          "ns/op": 29868.0,
+          "B/op": 6793.0,
+          "allocs/op": 75.0,
+          "requests/s": 33481.0
+        },
+        "candidate": {
+          "ns/op": 29087.0,
+          "B/op": 6793.0,
+          "allocs/op": 75.0,
+          "requests/s": 34380.0
+        },
+        "throughput_delta_percent": 2.6851049849168085
+      },
+      {
+        "mode": "lighthouse",
+        "workload": "middleware_chain",
+        "base": {
+          "ns/op": 2505.0,
+          "B/op": 1936.0,
+          "allocs/op": 18.0,
+          "requests/s": 399198.0
+        },
+        "candidate": {
+          "ns/op": 2476.0,
+          "B/op": 1936.0,
+          "allocs/op": 18.0,
+          "requests/s": 403800.0
+        },
+        "throughput_delta_percent": 1.1528113868305878
+      },
+      {
+        "mode": "lighthouse",
+        "workload": "path_param_json",
+        "base": {
+          "ns/op": 2520.0,
+          "B/op": 1928.0,
+          "allocs/op": 18.0,
+          "requests/s": 396774.0
+        },
+        "candidate": {
+          "ns/op": 2538.0,
+          "B/op": 1928.0,
+          "allocs/op": 18.0,
+          "requests/s": 393942.0
+        },
+        "throughput_delta_percent": -0.7137564457348478
+      },
+      {
+        "mode": "lighthouse",
+        "workload": "static_text",
+        "base": {
+          "ns/op": 2268.0,
+          "B/op": 1904.0,
+          "allocs/op": 16.0,
+          "requests/s": 440897.0
+        },
+        "candidate": {
+          "ns/op": 2251.0,
+          "B/op": 1904.0,
+          "allocs/op": 16.0,
+          "requests/s": 444262.0
+        },
+        "throughput_delta_percent": 0.7632168057392086
+      },
+      {
+        "mode": "off",
+        "workload": "live_plain_text",
+        "base": {
+          "ns/op": 24044.0,
+          "B/op": 4954.0,
+          "allocs/op": 61.0,
+          "requests/s": 41591.0
+        },
+        "candidate": {
+          "ns/op": 24655.0,
+          "B/op": 4954.0,
+          "allocs/op": 61.0,
+          "requests/s": 40559.0
+        },
+        "throughput_delta_percent": -2.4813060517900554
+      },
+      {
+        "mode": "off",
+        "workload": "middleware_chain",
+        "base": {
+          "ns/op": 390.5,
+          "B/op": 96.0,
+          "allocs/op": 4.0,
+          "requests/s": 2560757.0
+        },
+        "candidate": {
+          "ns/op": 397.9,
+          "B/op": 96.0,
+          "allocs/op": 4.0,
+          "requests/s": 2513365.0
+        },
+        "throughput_delta_percent": -1.8507027414159216
+      },
+      {
+        "mode": "off",
+        "workload": "path_param_json",
+        "base": {
+          "ns/op": 408.9,
+          "B/op": 96.0,
+          "allocs/op": 4.0,
+          "requests/s": 2445840.0
+        },
+        "candidate": {
+          "ns/op": 403.0,
+          "B/op": 96.0,
+          "allocs/op": 4.0,
+          "requests/s": 2481240.0
+        },
+        "throughput_delta_percent": 1.447355509763515
+      },
+      {
+        "mode": "off",
+        "workload": "static_text",
+        "base": {
+          "ns/op": 293.2,
+          "B/op": 64.0,
+          "allocs/op": 2.0,
+          "requests/s": 3411204.0
+        },
+        "candidate": {
+          "ns/op": 293.8,
+          "B/op": 64.0,
+          "allocs/op": 2.0,
+          "requests/s": 3403781.0
+        },
+        "throughput_delta_percent": -0.21760645215003205
+      },
+      {
+        "mode": "otlp",
+        "workload": "live_plain_text",
+        "base": {
+          "ns/op": 28828.0,
+          "B/op": 8632.0,
+          "allocs/op": 94.0,
+          "requests/s": 34688.0,
+          "exported_pct": 100.0
+        },
+        "candidate": {
+          "ns/op": 28775.0,
+          "B/op": 8649.0,
+          "allocs/op": 94.0,
+          "requests/s": 34753.0,
+          "exported_pct": 100.0
+        },
+        "throughput_delta_percent": 0.18738468634686978
+      },
+      {
+        "mode": "otlp",
+        "workload": "middleware_chain",
+        "base": {
+          "ns/op": 1919.0,
+          "B/op": 2042.0,
+          "allocs/op": 19.0,
+          "requests/s": 521037.0,
+          "exported_pct": 2.281
+        },
+        "candidate": {
+          "ns/op": 1886.0,
+          "B/op": 2043.0,
+          "allocs/op": 19.0,
+          "requests/s": 530184.0,
+          "exported_pct": 2.39
+        },
+        "throughput_delta_percent": 1.7555375146102836
+      },
+      {
+        "mode": "otlp",
+        "workload": "path_param_json",
+        "base": {
+          "ns/op": 1960.0,
+          "B/op": 2037.0,
+          "allocs/op": 19.0,
+          "requests/s": 510126.0,
+          "exported_pct": 2.3
+        },
+        "candidate": {
+          "ns/op": 1924.0,
+          "B/op": 2039.0,
+          "allocs/op": 19.0,
+          "requests/s": 519833.0,
+          "exported_pct": 2.406
+        },
+        "throughput_delta_percent": 1.90286321418629
+      },
+      {
+        "mode": "otlp",
+        "workload": "static_text",
+        "base": {
+          "ns/op": 1796.0,
+          "B/op": 2003.0,
+          "allocs/op": 17.0,
+          "requests/s": 556796.0,
+          "exported_pct": 2.133
+        },
+        "candidate": {
+          "ns/op": 1764.0,
+          "B/op": 2005.0,
+          "allocs/op": 17.0,
+          "requests/s": 566759.0,
+          "exported_pct": 2.222
+        },
+        "throughput_delta_percent": 1.7893447510398675
+      }
+    ],
+    "raw_samples_sha256": "4f9b52cff65cfea56ef8d23e073c5fb48020137ff47e56e7d1ca729feab4b254",
+    "sample_count": 224
+  },
+  "queue_decode_optimization": {
+    "runs": 3,
+    "benchtime": "250ms",
+    "before_commit": "7751d3a26fd2",
+    "after_commit": "04747fc2edc7",
+    "summary": [
+      {
+        "mode": "disabled",
+        "before_7751": {
+          "ns/op": 2968.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "prepared_04747fc": {
+          "ns/op": 2962.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "latency_delta_percent": -0.20215633423180668
+      },
+      {
+        "mode": "configured_empty",
+        "before_7751": {
+          "ns/op": 3141.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "prepared_04747fc": {
+          "ns/op": 3127.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "latency_delta_percent": -0.44571792422795076
+      },
+      {
+        "mode": "valid_carrier",
+        "before_7751": {
+          "ns/op": 5735.0,
+          "B/op": 4457.0,
+          "allocs/op": 46.0
+        },
+        "prepared_04747fc": {
+          "ns/op": 5379.0,
+          "B/op": 4081.0,
+          "allocs/op": 41.0
+        },
+        "latency_delta_percent": -6.207497820401042
+      }
+    ]
+  },
+  "limitations": [
+    "All 16 HTTP allocation counts match. Observed median throughput changes range from -2.48% to +2.69%; exploratory paired intervals include zero. Positive medians are not a demonstrated speedup.",
+    "Fast in-process OTLP cases saturate the default exporter queue and export about 2% of spans in both revisions. Their measurements do not establish lossless export performance. Live HTTP OTLP cases export 100%.",
+    "The candidate uses the actual new published dependency graph, including some newer cloud and gRPC transitive dependencies. Differences cannot be attributed solely to framework code.",
+    "Queue comparisons use an opaque two-field carrier and synchronous logical dispatch. They exclude framework W3C formatting/parsing, tracing span creation, and broker latency."
+  ],
+  "event_header_size_optimization": {
+    "before_events_commit": "9920c884599e29e508b3ac38a3b606734e441f06",
+    "after_events_commit": "f1cd6413af093f51ac7fb646a0ef401451ee7b18",
+    "runs": 5,
+    "benchtime": "250ms",
+    "gomaxprocs": 1,
+    "method": "Run before and after binaries serially, alternating order each repetition. Compare populated carriers against the same populated-carrier workload before optimization, with disabled and empty controls.",
+    "change": "Prove small carriers fit the JSON byte budget using a conservative six-byte expansion bound. Retain exact JSON measurement for larger carriers, UTF-8 checks, and mutation-isolating snapshots.",
+    "go1.26.0": [
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/disabled/subscribers_1",
+        "before": {
+          "ns/op": 975.8,
+          "B/op": 448.0,
+          "allocs/op": 10.0
+        },
+        "after": {
+          "ns/op": 984.0,
+          "B/op": 448.0,
+          "allocs/op": 10.0
+        },
+        "latency_delta_percent": 0.8403361344537785
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/disabled/subscribers_4",
+        "before": {
+          "ns/op": 3652.0,
+          "B/op": 1600.0,
+          "allocs/op": 34.0
+        },
+        "after": {
+          "ns/op": 3610.0,
+          "B/op": 1600.0,
+          "allocs/op": 34.0
+        },
+        "latency_delta_percent": -1.150054764512598
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/configured_empty/subscribers_1",
+        "before": {
+          "ns/op": 992.5,
+          "B/op": 448.0,
+          "allocs/op": 10.0
+        },
+        "after": {
+          "ns/op": 1034.0,
+          "B/op": 448.0,
+          "allocs/op": 10.0
+        },
+        "latency_delta_percent": 4.181360201511342
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/configured_empty/subscribers_4",
+        "before": {
+          "ns/op": 3651.0,
+          "B/op": 1600.0,
+          "allocs/op": 34.0
+        },
+        "after": {
+          "ns/op": 3757.0,
+          "B/op": 1600.0,
+          "allocs/op": 34.0
+        },
+        "latency_delta_percent": 2.903314160503978
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/valid_carrier/subscribers_1",
+        "before": {
+          "ns/op": 2128.0,
+          "B/op": 2032.0,
+          "allocs/op": 30.0
+        },
+        "after": {
+          "ns/op": 1481.0,
+          "B/op": 1520.0,
+          "allocs/op": 18.0
+        },
+        "latency_delta_percent": -30.40413533834586
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/valid_carrier/subscribers_4",
+        "before": {
+          "ns/op": 5117.0,
+          "B/op": 4384.0,
+          "allocs/op": 66.0
+        },
+        "after": {
+          "ns/op": 4549.0,
+          "B/op": 3872.0,
+          "allocs/op": 54.0
+        },
+        "latency_delta_percent": -11.100254055110415
+      }
+    ],
+    "go1.27.0": [
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/disabled/subscribers_1",
+        "before": {
+          "ns/op": 783.7,
+          "B/op": 256.0,
+          "allocs/op": 5.0
+        },
+        "after": {
+          "ns/op": 795.8,
+          "B/op": 256.0,
+          "allocs/op": 5.0
+        },
+        "latency_delta_percent": 1.5439581472502129
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/disabled/subscribers_4",
+        "before": {
+          "ns/op": 2450.0,
+          "B/op": 688.0,
+          "allocs/op": 11.0
+        },
+        "after": {
+          "ns/op": 2486.0,
+          "B/op": 688.0,
+          "allocs/op": 11.0
+        },
+        "latency_delta_percent": 1.4693877551020362
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/configured_empty/subscribers_1",
+        "before": {
+          "ns/op": 808.9,
+          "B/op": 256.0,
+          "allocs/op": 5.0
+        },
+        "after": {
+          "ns/op": 821.3,
+          "B/op": 256.0,
+          "allocs/op": 5.0
+        },
+        "latency_delta_percent": 1.5329459760168085
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/configured_empty/subscribers_4",
+        "before": {
+          "ns/op": 2482.0,
+          "B/op": 688.0,
+          "allocs/op": 11.0
+        },
+        "after": {
+          "ns/op": 2468.0,
+          "B/op": 688.0,
+          "allocs/op": 11.0
+        },
+        "latency_delta_percent": -0.5640612409347323
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/valid_carrier/subscribers_1",
+        "before": {
+          "ns/op": 2070.0,
+          "B/op": 1696.0,
+          "allocs/op": 25.0
+        },
+        "after": {
+          "ns/op": 1224.0,
+          "B/op": 1328.0,
+          "allocs/op": 13.0
+        },
+        "latency_delta_percent": -40.869565217391305
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationPublish/valid_carrier/subscribers_4",
+        "before": {
+          "ns/op": 4139.0,
+          "B/op": 3328.0,
+          "allocs/op": 43.0
+        },
+        "after": {
+          "ns/op": 3265.0,
+          "B/op": 2960.0,
+          "allocs/op": 31.0
+        },
+        "latency_delta_percent": -21.116211645324956
+      }
+    ],
+    "raw_sha256": {
+      "go1.26.0": "f9857f79b5a82f5d30309ac767532aea66455f32be76d95dd706d41e48c52b55",
+      "go1.27.0": "6498caacf04fb65314a806a5c096d597f8dd4f7258afbd3472f2209a6c8ef25c"
+    },
+    "limitations": [
+      "Synchronous local delivery with an opaque two-field carrier, not real-broker throughput or full OpenTelemetry tracing.",
+      "Small timing differences in disabled and empty controls are not evidence of improvements. Allocation counts in both controls are unchanged.",
+      "The earlier HTTP comparison predates this optimization; its selected events commit remains 517d720cdbb8. The optimization does not execute on the HTTP request benchmark paths."
+    ]
+  },
+  "queue_experiment_not_kept": {
+    "change": "Decode bounded headers through a private JSON unmarshaler to avoid retaining the raw metadata copy.",
+    "result": "Saved one allocation and 128 bytes per populated dispatch but did not improve latency in five alternating runs (5524 ns before, 5637 ns after). Reverted; not part of the PR.",
+    "reason": "Avoid extra decoding machinery without a measured latency benefit."
+  },
+  "framework_header_extraction_optimization": {
+    "before_framework_commit": "93502751de5ba67c51d6de83639eaf77913ae0bf",
+    "after_template_sha256": "57d071f3b2fab1b7746856f69488df9f673308639d21d9af10c770e968e8f677",
+    "go": "go1.27.0",
+    "runs": 5,
+    "benchtime": "250ms",
+    "gomaxprocs": 1,
+    "change": "Validate canonical carrier keys and let the pinned read-only TraceContext extractor read their existing map. Normalize only mixed-case keys; retain duplicate detection, value limits, and shared-library snapshots.",
+    "method": "Serial before/after binaries, alternating order per repetition. The candidate overlays the authoritative template onto the same generated app and module graph. Verify different binary hashes before timing.",
+    "summary": [
+      {
+        "benchmark": "BenchmarkMessageContextPropagationExtract/canonical",
+        "before": {
+          "ns/op": 378.4,
+          "B/op": 496.0,
+          "allocs/op": 5.0
+        },
+        "after": {
+          "ns/op": 269.4,
+          "B/op": 160.0,
+          "allocs/op": 3.0
+        },
+        "latency_delta_percent": -28.80549682875264
+      },
+      {
+        "benchmark": "BenchmarkMessageContextPropagationExtract/mixed_case",
+        "before": {
+          "ns/op": 384.4,
+          "B/op": 496.0,
+          "allocs/op": 5.0
+        },
+        "after": {
+          "ns/op": 373.9,
+          "B/op": 496.0,
+          "allocs/op": 5.0
+        },
+        "latency_delta_percent": -2.7315296566077008
+      },
+      {
+        "benchmark": "BenchmarkMessageContextPropagationExtract/empty",
+        "before": {
+          "ns/op": 44.85,
+          "B/op": 48.0,
+          "allocs/op": 1.0
+        },
+        "after": {
+          "ns/op": 28.52,
+          "B/op": 0.0,
+          "allocs/op": 0.0
+        },
+        "latency_delta_percent": -36.410256410256416
+      }
+    ],
+    "raw_sha256": "7495428ffbdbe6703d430b3542468c4c3871ca3d173029ecd5b78aa9d02b1dc4",
+    "limitations": [
+      "Measures actual W3C header parsing and receiver-context creation, not complete job/event delivery, span creation, export, or broker latency.",
+      "Do not add these isolated benchmark percentages to the library propagation percentages."
+    ],
+    "binary_sha256": {
+      "before": "bf3f74b9750b2c1023f206d175a590bb158f5836c941ab7263dae2a0d6521433",
+      "after": "0f3c3157e655a805050ebe2263a5f84177bffd5a40085de271d34d6eba1ee0c6"
+    }
+  },
+  "final_review_fixes": {
+    "queue_before_commit": "d6cfd2bd69879ec6d4c5e9fae94bcfe6b9f2c397",
+    "queue_after_commit": "a3262c31758be87c056a109eee043beee27b7a2a",
+    "events_after_commit": "fe08581c7bd47f87274278ba1e08d00e0b910866",
+    "framework_before_commit": "bee586f8f74ec16258d3ceae69958cf3a05e9e42",
+    "framework_after_template_sha256": "57d071f3b2fab1b7746856f69488df9f673308639d21d9af10c770e968e8f677",
+    "fixes": [
+      "Keep preparation capability local to each worker, preventing concurrent startup races and modern/legacy worker capability contamination.",
+      "Discard invalid raw UTF-8 in Redis optional headers before JSON decoding can repair it; preserve the valid business payload."
+    ],
+    "go": "go1.27.0",
+    "runs": 5,
+    "benchtime": "250ms",
+    "gomaxprocs": 1,
+    "method": "Before and after queue binaries run serially, alternating order each repetition. Queue compares startup-fix source against its previous HEAD.",
+    "summary": [
+      {
+        "path": "queue",
+        "benchmark": "BenchmarkContextPropagationDispatch/disabled",
+        "before": {
+          "ns/op": 3095.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "after": {
+          "ns/op": 3113.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "latency_delta_percent": 0.5815831987076026
+      },
+      {
+        "path": "queue",
+        "benchmark": "BenchmarkContextPropagationDispatch/configured_empty",
+        "before": {
+          "ns/op": 3261.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "after": {
+          "ns/op": 3259.0,
+          "B/op": 2584.0,
+          "allocs/op": 23.0
+        },
+        "latency_delta_percent": -0.06133088009813159
+      },
+      {
+        "path": "queue",
+        "benchmark": "BenchmarkContextPropagationDispatch/valid_carrier",
+        "before": {
+          "ns/op": 5507.0,
+          "B/op": 4081.0,
+          "allocs/op": 41.0
+        },
+        "after": {
+          "ns/op": 5551.0,
+          "B/op": 4081.0,
+          "allocs/op": 41.0
+        },
+        "latency_delta_percent": 0.7989831124024072
+      }
+    ],
+    "raw_sha256": "9da9f6066a716574649a0551c7f71950e554ab19d92d8e86cd163b12ec7eb836",
+    "interpretation": "All queue allocation counts remain unchanged. Queue median timing changes are below 1%. These are local microbenchmarks, not broker throughput measurements.",
+    "scope_limit": "Driver-owned retry-publication diagnostics for NATS, RabbitMQ, and SQS retain worker context; receiving handlers and normal retry delivery retain propagated context.",
+    "discarded_candidate": "A blanket comma check in traceparent was withdrawn after reviewing W3C future-version rules. Unknown extensions remain opaque, matching the pinned OTel extractor. The raw capture also contains timing samples for that discarded check; they are excluded from accepted results.",
+    "specification": "https://www.w3.org/TR/trace-context/#versioning-of-traceparent"
+  },
+  "generated_adapter_relocation": {
+    "previous_template": "templates/internal/inspects/propagation.go.tmpl",
+    "current_template": "templates/internal/inspects/propagation_gen.go.tmpl",
+    "current_template_sha256": "0b6372abf64df5c562bbe7f497bef3eac59517c422ff7eff90e22bfaa24aa661",
+    "implementation_sha256": "57d071f3b2fab1b7746856f69488df9f673308639d21d9af10c770e968e8f677",
+    "interpretation": "The adapter implementation is byte-identical to the measured source after removing the generated-file header. Ordinary queue and event generation now emits it for existing apps; the renderer uses the same template. Historical measured-source hashes above remain unchanged.",
+    "recorded_at_framework_commit": "41f1d2815729d70c52629255e485d5018e561725",
+    "historical_scope": "The current_* fields in this relocation record describe that commit before the subsequent tracestate budget fix. See tracestate_identity_fix for the latest measured source."
+  },
+  "upgrade_review_followup": {
+    "queue_commit": "12e3b5710a83c309a0c77a7cafd674ad15fa933d",
+    "changes": [
+      "Redis propagated worker startup requires early-preparation capability and cleans up an unsupported candidate without changing shared worker state. Legacy queues without a propagator remain unchanged.",
+      "Named event-bus propagation flags are accepted during generation for every driver.",
+      "Ordinary queue and event generation supplies the shared managed adapter, allowing baseline app support sources to compile without a full render.",
+      "Module paths are parsed with the Go module parser, including quoted and commented declarations. Shared adapter imports and file accounting participate in generation."
+    ],
+    "go": "go1.27.0",
+    "runs": 3,
+    "benchtime": "250ms",
+    "gomaxprocs": 1,
+    "measurement": "Single-revision queue smoke check, not a before/after latency comparison. Allocation counts match the earlier optimized queue measurements.",
+    "summary": [
+      {
+        "benchmark": "BenchmarkContextPropagationDispatch/disabled",
+        "ns/op": 3009.0,
+        "B/op": 2584.0,
+        "allocs/op": 23.0
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationDispatch/configured_empty",
+        "ns/op": 3189.0,
+        "B/op": 2584.0,
+        "allocs/op": 23.0
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationDispatch/valid_carrier",
+        "ns/op": 5425.0,
+        "B/op": 4081.0,
+        "allocs/op": 41.0
+      }
+    ],
+    "raw_sha256": "314d2bd9def5ccb912676469a8129bf3b51e9ab9c7d76a4a782e58c16d4d7436",
+    "limitations": "Generic two-field carrier and synchronous logical dispatch. Excludes framework W3C parsing, SDK span creation, and broker latency. No speedup claim follows from this smoke run."
+  },
+  "tracestate_identity_fix": {
+    "before_framework_commit": "41f1d2815729d70c52629255e485d5018e561725",
+    "after_template_sha256": "868058ad894b72cab1021f9b4c93393d4224e56fbc2a8d0fceba492348af31a4",
+    "events_driver_commit": "cf10973a9aaf179d1f2255832aebe342b5360ae2",
+    "changes": [
+      "Valid traceparent identity and sampling flags survive oversized or ambiguous tracestate within the existing carrier budget.",
+      "Outgoing tracestate above the existing 512-byte vendor-state budget is omitted as a whole so generated carriers retain trace identity and fit shared/native limits.",
+      "Pub/Sub optional attributes are checked against documented native limits and omitted atomically when invalid, preserving payload bytes.",
+      "Missing requirements with explicit replacements are left to Go module resolution rather than silently switching to catalog source."
+    ],
+    "go": "go1.26.0",
+    "gomaxprocs": 1,
+    "runs": 5,
+    "benchtime": "250ms",
+    "method": "Before and after binaries use the same benchmark fixture and module graph, run serially with alternating order. These normal-path API benchmarks exclude SDK span creation, export, and broker delivery.",
+    "summary": [
+      {
+        "benchmark": "BenchmarkReviewPropagation/extract/canonical",
+        "before": {
+          "ns/op": 270.0,
+          "B/op": 160.0,
+          "allocs/op": 3.0
+        },
+        "after": {
+          "ns/op": 272.1,
+          "B/op": 160.0,
+          "allocs/op": 3.0
+        },
+        "latency_delta_percent": 0.7777777777777883
+      },
+      {
+        "benchmark": "BenchmarkReviewPropagation/extract/mixed",
+        "before": {
+          "ns/op": 380.2,
+          "B/op": 496.0,
+          "allocs/op": 5.0
+        },
+        "after": {
+          "ns/op": 382.0,
+          "B/op": 496.0,
+          "allocs/op": 5.0
+        },
+        "latency_delta_percent": 0.4734350341925264
+      },
+      {
+        "benchmark": "BenchmarkReviewPropagation/extract/empty",
+        "before": {
+          "ns/op": 28.55,
+          "B/op": 0.0,
+          "allocs/op": 0.0
+        },
+        "after": {
+          "ns/op": 28.87,
+          "B/op": 0.0,
+          "allocs/op": 0.0
+        },
+        "latency_delta_percent": 1.1208406304728635
+      },
+      {
+        "benchmark": "BenchmarkReviewPropagation/inject/parent",
+        "before": {
+          "ns/op": 171.7,
+          "B/op": 400.0,
+          "allocs/op": 3.0
+        },
+        "after": {
+          "ns/op": 175.5,
+          "B/op": 400.0,
+          "allocs/op": 3.0
+        },
+        "latency_delta_percent": 2.213162492719878
+      },
+      {
+        "benchmark": "BenchmarkReviewPropagation/inject/state",
+        "before": {
+          "ns/op": 189.4,
+          "B/op": 416.0,
+          "allocs/op": 4.0
+        },
+        "after": {
+          "ns/op": 193.7,
+          "B/op": 416.0,
+          "allocs/op": 4.0
+        },
+        "latency_delta_percent": 2.2703273495248144
+      },
+      {
+        "benchmark": "BenchmarkReviewPropagation/inject/empty",
+        "before": {
+          "ns/op": 9.733,
+          "B/op": 0.0,
+          "allocs/op": 0.0
+        },
+        "after": {
+          "ns/op": 9.713,
+          "B/op": 0.0,
+          "allocs/op": 0.0
+        },
+        "latency_delta_percent": -0.20548648926334012
+      }
+    ],
+    "benchmark_fixture_sha256": "4eb62f5c6749f88698c110b05a3e5ce0a7d2dd8d357a3c839f24cb067d9a7c89",
+    "raw_sha256": "6b8e58e56126f9f27c93c126e35e71b72f7207919da8f7970c78ea20f9f5bf08",
+    "interpretation": "All six allocation and byte counts remain unchanged. Observed median changes are a few nanoseconds for normal valid injection/extraction; this is not an end-to-end throughput comparison.",
+    "scope_limit": "External carriers exceeding the existing generic 8-KiB budget are still ignored before extraction. Oversized SDK state is omitted on outgoing framework carriers to prevent that loss."
+  },
+  "native_header_validation_followup": {
+    "head": "316e9aadf07fcb32250135a4b381e53e6050cfa3",
+    "method": {
+      "toolchain": "go1.26.0 darwin/arm64",
+      "cpu": "Apple M4 Max",
+      "os": "macOS 26.5.2 (25F84)",
+      "samples": 5,
+      "benchtime": "250ms",
+      "GOMAXPROCS": 1,
+      "warmup": "50ms each benchmark, omitted from measurements",
+      "orders": "alternating before-first and after-first",
+      "command": [
+        "./adapterbench.test",
+        "-test.run=^$",
+        "-test.bench=BenchmarkHeaders",
+        "-test.benchtime=250ms",
+        "-test.benchmem",
+        "-test.cpu=1",
+        "-test.count=1"
+      ],
+      "env": {
+        "GOMAXPROCS": "1",
+        "TMPDIR": "/tmp",
+        "GOCACHE": "/tmp/gocache",
+        "GOMODCACHE": "/tmp/goforj-otel-modcache",
+        "GOWORK": "off",
+        "GOTOOLCHAIN": "go1.26.0"
+      }
+    },
+    "fixture_sha256": {
+      "adapters.go": "48be3084d843270d50a2f4342b419af1ba1d586c4a539772addbc3705ed759ca",
+      "adapters_test.go": "234c4506cebc8f0d59808fb17260456bc8c5f7768cbeaa235a684bbe73371d51",
+      "adapterbench.test": "ffc4bdc27875e79a2faeb2e7ac9414ec217975da3fedde49774180adde9184b0",
+      "go.mod": "e3bf41ab62080f1a0507da2be37cc7af848644720dae457906dc1e509d4a4fea",
+      "go.sum": "4ee681d81ea1553a3bea0d3188042661d43e1f6ef3d9a416bb8c8b1d82034be6"
+    },
+    "sources": {
+      "NATS": {
+        "before": {
+          "path": "driver/natsevents/nats.go",
+          "file_sha256": "ece423ac9785d6cf90986e82541d057ef7b9a996793a82fed04ad66d092c8d3a",
+          "function_sha256": "f4330cdb3a8aa71cc31f8d76a9793dfd334607b1151f371ed44ff264b42639e2"
+        },
+        "final": {
+          "path": "driver/natsevents/nats.go",
+          "file_sha256": "2fa5308936713cdcb5cbdb49d2928f6c832423ea4594eef8ee457a3e40c1a2c7",
+          "function_sha256": "d7d611945cdfe10942867a58d5c1243666a2951c7e4d6211389948c9d94d0899"
+        },
+        "matches_measured_code": true
+      },
+      "JetStream": {
+        "before": {
+          "path": "driver/natsjetstreamevents/natsjetstream.go",
+          "file_sha256": "78fb700ef1d83a78f6ff26eaede3a93ba35dd2791a5450546efb2d8fa3fbed12",
+          "function_sha256": "f4330cdb3a8aa71cc31f8d76a9793dfd334607b1151f371ed44ff264b42639e2"
+        },
+        "final": {
+          "path": "driver/natsjetstreamevents/natsjetstream.go",
+          "file_sha256": "84a9f7928dfc71ab29364937414e46cc9fe36217d3a8be69784bcfe834949428",
+          "function_sha256": "d7d611945cdfe10942867a58d5c1243666a2951c7e4d6211389948c9d94d0899"
+        },
+        "matches_measured_code": true
+      },
+      "SNS": {
+        "before": {
+          "path": "driver/snsevents/sns.go",
+          "file_sha256": "ef50278ab090c8b3891a56f6320daf82a7294bd72336fb9364540c6b5cd50575",
+          "function_sha256": "54a8fcfbee15348ada418f17d9853167941302f2bf470025166c61086dfe42e0"
+        },
+        "final": {
+          "path": "driver/snsevents/sns.go",
+          "file_sha256": "9a620066ee9e9a49688f3a9c5fe15f31f5c2aa574dfe89be50378e71a35ff2c2",
+          "function_sha256": "2b9f257623aabbc5fc50b77bc3d6ec0e56ed545aaa51180c17e49c361780c658"
+        },
+        "matches_measured_code": true
+      }
+    },
+    "medians": {
+      "NATS": {
+        "before_ns_op": 154.4,
+        "final_ns_op": 168.7,
+        "delta_ns_op": 14.3,
+        "delta_percent": 9.3,
+        "before_bytes_op": 432,
+        "final_bytes_op": 432,
+        "before_allocs_op": 4,
+        "final_allocs_op": 4,
+        "final_ns_min": 166.6,
+        "final_ns_max": 169.4,
+        "final_timing_directly_measured": true
+      },
+      "JetStream": {
+        "before_ns_op": 154.4,
+        "final_ns_op": 168.7,
+        "delta_ns_op": 14.3,
+        "delta_percent": 9.3,
+        "before_bytes_op": 432,
+        "final_bytes_op": 432,
+        "before_allocs_op": 4,
+        "final_allocs_op": 4,
+        "final_ns_min": 166.6,
+        "final_ns_max": 169.4,
+        "final_timing_directly_measured": false
+      },
+      "SNS": {
+        "before_ns_op": 204.8,
+        "final_ns_op": 252.8,
+        "delta_ns_op": 48.0,
+        "delta_percent": 23.4,
+        "before_bytes_op": 688,
+        "final_bytes_op": 688,
+        "before_allocs_op": 6,
+        "final_allocs_op": 6,
+        "final_ns_min": 250.4,
+        "final_ns_max": 255.0,
+        "final_timing_directly_measured": true
+      }
+    },
+    "limitations": [
+      "Warm, isolated header-conversion microbenchmark, with map inputs prebuilt and escaping output. Compilation, first-process execution, broker I/O, payload serialization, throughput, and end-to-end latency are excluded.",
+      "Five 250 ms samples per benchmark in one compiled binary; before/current order alternates, while the byte-switch variant runs after both within NATS. A 50 ms per-case warmup was discarded. No statistical significance model or cold-start measurement.",
+      "The final NATS byte-switch helper exactly matches the measured variant after identifier normalization; final JetStream conversion and helper tokens also match it. JetStream final timing is inferred from identical code, not a separate final JetStream benchmark.",
+      "Measurements apply to Apple M4 Max, darwin/arm64, Go 1.26.0, one P, exactly two valid W3C fields with lowercase keys. Header count, key length, malformed fields, different architectures and compiler versions can change results."
+    ],
+    "candidate_events_commit": "daa56aea99a71212bf49f5695113aa6090c11f2e",
+    "scope": "Native NATS/SNS invalid optional metadata omission; Redis rejects framed header JSON above 8KiB before map allocation. Framework HTTP runtime is unchanged.",
+    "redis_oversized_carrier": {
+      "wire_bytes": 638934,
+      "header_fields": 50000,
+      "business_payload_bytes": 1,
+      "before_bytes": 7066544,
+      "after_bytes": 639464,
+      "before_allocations": 100304,
+      "after_allocations": 13,
+      "method": "One local decoder iteration via Go test overlay, independently rerun against the final Redis guard. Indicative resource comparison; no broker-throughput or timing claim. Initial JSON scan and RawMessage copy remain proportional to frame size."
+    },
+    "raw_samples_sha256": "54d3098c0f09f3614a09acecf60445e69535e20eca18305f3ba0306ac837fac6"
+  }
+}

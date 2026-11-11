@@ -95,6 +95,9 @@ func TestPrepareAssetsWireAndAPIIndexUsesSafeConcurrency(t *testing.T) {
 // TestPipelineDiscardsParallelAPIIndexCandidateAfterAssetFailure preserves the final publication boundary across concurrent preparation.
 func TestPipelineDiscardsParallelAPIIndexCandidateAfterAssetFailure(t *testing.T) {
 	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/apiindexfailure\n\ngo 1.26.0\n"), 0o644); err != nil {
+		t.Fatalf("write module: %v", err)
+	}
 	config := "dev:\n  apps:\n    app:\n      spas:\n        frontend: ./frontend\n"
 	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0o644); err != nil {
 		t.Fatalf("write Project config: %v", err)

@@ -124,3 +124,13 @@ This creates a colocated subscriber, wires its provider into `wire/inject_subscr
 - transport-backed drivers are generated from `EVENTS_SUPPORTED_DRIVERS`. If that env var is unset, generation falls back to the currently active `EVENTS_DRIVER` and `EVENTS_<NAME>_DRIVER` values.
 - if a runtime bus selects a driver that is not listed in `EVENTS_SUPPORTED_DRIVERS`, generation fails fast with a validation error.
 - Handler errors are ignored by the bus; handle/log inside your handlers.
+
+## Trace continuity
+
+Generated buses propagate W3C `traceparent` and `tracestate` by default. With tracing enabled, event publication and handler execution create producer and consumer spans. Logs written with the handler context carry the consumer's trace and span IDs. Application context values and baggage are not serialized.
+
+### Redis upgrades
+
+Redis carries trace metadata in an event envelope. Upgrade every subscriber before enabling propagation on publishers. Updated subscribers accept both plain event payloads and the envelope.
+
+Set `EVENTS_CONTEXT_PROPAGATION_ENABLED=false` during a staged upgrade, then enable it after all subscribers have been deployed. Override a named bus with `EVENTS_<BUS>_CONTEXT_PROPAGATION_ENABLED` when buses have different rollout schedules.

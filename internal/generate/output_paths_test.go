@@ -14,9 +14,10 @@ func TestOutputPathsSelectsOnlyEnabledGenerators(t *testing.T) {
 	}{
 		{"none", GenerationSelection{}, nil},
 		{"cache", GenerationSelection{Cache: true}, []string{CacheManagerPath, CacheAccessorsPath}},
-		{"queue", GenerationSelection{Queue: true}, []string{QueueManagerPath, QueueAccessorsPath}},
+		{"queue", GenerationSelection{Queue: true}, []string{QueueManagerPath, QueueAccessorsPath, MessageContextPropagatorPath}},
 		{"storage", GenerationSelection{Storage: true}, []string{StorageManagerPath, StorageAccessorsPath}},
-		{"events", GenerationSelection{Events: true}, []string{EventsManagerPath, EventsAccessorsPath}},
+		{"events", GenerationSelection{Events: true}, []string{EventsManagerPath, EventsAccessorsPath, MessageContextPropagatorPath}},
+		{"queue and events", GenerationSelection{Queue: true, Events: true}, []string{QueueManagerPath, QueueAccessorsPath, EventsManagerPath, EventsAccessorsPath, MessageContextPropagatorPath}},
 		{"mail", GenerationSelection{Mail: true}, []string{MailManagerPath, MailAccessorsPath}},
 		{"database", GenerationSelection{Database: true}, []string{DatabaseConnectionsPath}},
 		{"observability", GenerationSelection{Observability: true}, []string{ObservabilityTargetsPath}},
@@ -36,7 +37,7 @@ func TestOutputPathsSelectsOnlyEnabledGenerators(t *testing.T) {
 		}
 		seen[name] = true
 	}
-	if len(paths) != 12 {
+	if len(paths) != 13 {
 		t.Fatalf("combined output contracts=%v", paths)
 	}
 	paths[0] = "owner mutation"

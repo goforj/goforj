@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"text/template"
 
 	"github.com/goforj/str/v2"
+	"golang.org/x/mod/modfile"
 )
 
 // queueAccessorTemplateData carries the named queue methods emitted for one project snapshot.
@@ -244,7 +244,14 @@ func generateQueueFiles(input generationInput) (int, error) {
 		return 0, fmt.Errorf("failed to format generated queue accessors: %w", err)
 	}
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, QueueManagerPath), formattedManager)
+	changed, err := generateMessageContextPropagator(input.projectDir)
+	if err != nil {
+		return written, err
+	}
+	if changed {
+		written++
+	}
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, QueueManagerPath), formattedManager)
 	if err != nil {
 		return written, err
 	}
@@ -313,11 +320,8 @@ func readModuleName(projectDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read go.mod: %w", err)
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "module ") {
-			return str.Of(line).TrimPrefix("module ").Trim().String(), nil
-		}
+	if moduleName := modfile.ModulePath(data); moduleName != "" {
+		return moduleName, nil
 	}
 	return "", fmt.Errorf("module name not found in go.mod")
 }
@@ -445,6 +449,9 @@ import (
 	"{{ .GoModuleName }}/internal/runtime"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/queue"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	{{- range .Drivers }}
 {{- if not .IsNative }}
 	"{{ .ImportPath }}"
@@ -651,11 +658,18 @@ func (m *Manager) instrumentJobHandler(jobType string, fn func(context.Context, 
 			})
 			recordJobPayload(ctx, msg)
 			defer func() {
+				value := recover()
+				if value != nil {
+					handlerErr = fmt.Errorf("job handler panicked")
+				}
 				status := ""
 				if handlerErr != nil {
 					status = "error"
 				}
 				m.inspects.Finish(ctx, status, handlerErr)
+				if value != nil {
+					panic(value)
+				}
 			}()
 		}
 		return fn(ctx, msg)
@@ -671,18 +685,48 @@ func (m *Manager) Dispatch(job queue.Job) (queue.DispatchResult, error) {
 			queueName = defaultQueueName
 		}
 		job = job.OnQueue(queueName)
-		recordQueuedJobPayload(m.ctx, job)
-		return m.defaultQueue.Dispatch(job)
+
+		return m.dispatchJob(m.defaultQueue, job)
 	}
-	recordQueuedJobPayload(m.ctx, job)
+
 	for _, instance := range m.Instances() {
 		if !instance.IsDefault && strings.EqualFold(instance.Name, queueName) {
-			return instance.Queue.Dispatch(job.OnQueue(instance.queueName))
+			return m.dispatchJob(instance.Queue, job.OnQueue(instance.queueName))
 		}
 	}
-	return m.defaultQueue.Dispatch(job)
+	return m.dispatchJob(m.defaultQueue, job)
 }
 
+// dispatchJob scopes one resolved enqueue operation and propagates its producer identity through the queue metadata channel.
+func (m *Manager) dispatchJob(instance *queue.Queue, job queue.Job) (result queue.DispatchResult, err error) {
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if m.inspects == nil || !m.inspects.TracingEnabled() {
+		recordQueuedJobPayload(ctx, job)
+		return instance.WithContext(ctx).Dispatch(job)
+	}
+	ctx, span := m.inspects.TracerProvider().Tracer("goforj/queue").Start(ctx, "send "+queue.DriverOptions(job).QueueName, trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(
+		attribute.String("messaging.system", string(instance.Driver())),
+		attribute.String("messaging.destination.name", queue.DriverOptions(job).QueueName),
+		attribute.String("messaging.operation.name", "send"),
+		attribute.String("messaging.operation.type", "send"),
+		attribute.String("goforj.job.type", job.Type),
+	))
+	defer func() {
+		value := recover()
+		if err != nil || value != nil {
+			span.SetStatus(codes.Error, "job dispatch failed")
+		}
+		span.End()
+		if value != nil {
+			panic(value)
+		}
+	}()
+	recordQueuedJobPayload(ctx, job)
+	return instance.WithContext(ctx).Dispatch(job)
+}
 // WithContext clones the manager so per-call context binding cannot mutate shared queue handles.
 func (m *Manager) WithContext(ctx context.Context) *Manager {
 	clone := *m
@@ -740,6 +784,7 @@ func buildQueue(name string, scope env.Scope, rootScope env.Scope, observer queu
 	}
 {{- end }}
 	options := []queue.Option{
+		queue.WithContextPropagator(inspects.MessageContextPropagator{}),
 		queue.WithWorkers(workerCount),
 		queue.WithHandlerContextDecorator(func(ctx context.Context) context.Context {
 			return runtime.WithSource(ctx, runtime.SourceJobs)

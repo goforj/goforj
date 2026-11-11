@@ -18,13 +18,13 @@ require (
 	github.com/goforj/console v0.2.0
 	github.com/goforj/crypt v1.2.0
 	github.com/goforj/env/v2 v2.6.1
-	github.com/goforj/events v0.2.1
-	github.com/goforj/events/eventscore v0.2.1
+	github.com/goforj/events v0.2.2
+	github.com/goforj/events/eventscore v0.2.2
 	github.com/goforj/httpx v1.1.0
 	github.com/goforj/mail v0.3.1
 	github.com/goforj/metrics v0.2.0
 	github.com/goforj/null/v6 v6.0.2
-	github.com/goforj/queue v0.2.1
+	github.com/goforj/queue v0.2.2
 	github.com/goforj/scheduler/v2 v2.1.4
 	github.com/goforj/storage v0.6.1
 	github.com/goforj/str v1.3.0

@@ -97,7 +97,14 @@
                   >
                     {{ entry.log._fieldsText ?? formatFields(entry.log.fields) }}
                   </td>
-                  <td class="px-2 py-2 text-right">
+                  <td class="px-2 py-2 text-right whitespace-nowrap">
+                    <RouterLink
+                      v-if="inspectLogTarget(entry.log.fields)"
+                      :to="inspectLogTarget(entry.log.fields)!"
+                      class="mr-2 text-[10px] text-muted hover:text-foreground focus-visible:underline"
+                    >
+                      Inspect
+                    </RouterLink>
                     <button
                       class="rounded-md border border-border/60 bg-muted/40 px-2 py-1 text-[10px] text-muted opacity-0 transition group-hover:opacity-100"
                       @click="copyLog(entry.log)"
@@ -119,6 +126,8 @@
 </template>
 
 <script setup lang="ts">
+import { RouterLink } from "vue-router";
+import { inspectLogTarget } from "../lib/inspect-links";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useLighthouseStore } from "../stores/lighthouse";
 import Card from "../components/ui/card/Card.vue";

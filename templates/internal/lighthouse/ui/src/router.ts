@@ -45,6 +45,7 @@ const router = createRouter({
     { path: "/inspect/requests", component: InspectsView, meta: inspectMeta("/inspect/requests", "Requests", "http") },
     { path: "/inspect/commands", component: InspectsView, meta: inspectMeta("/inspect/commands", "Commands", "cli") },
     { path: "/inspect/jobs", component: InspectsView, meta: inspectMeta("/inspect/jobs", "Jobs", "jobs") },
+    { path: "/inspect/events", component: InspectsView, meta: inspectMeta("/inspect/events", "Events", "events") },
     { path: "/inspect/schedule", component: InspectsView, meta: inspectMeta("/inspect/schedule", "Schedule", "scheduler") },
     { path: "/logs", component: LogsView, meta: { title: navTitle("/logs", "Logs") } },
     { path: "/components", component: ComponentsView, meta: { title: "Components" } },

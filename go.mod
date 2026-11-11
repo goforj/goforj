@@ -22,7 +22,7 @@ require (
 	github.com/goforj/env/v2 v2.6.1
 	github.com/goforj/execx v1.1.4
 	github.com/goforj/httpx/v2 v2.0.1
-	github.com/goforj/queue v0.2.1
+	github.com/goforj/queue v0.2.2
 	github.com/goforj/storage v0.6.1
 	github.com/goforj/storage/driver/localstorage v0.6.1
 	github.com/goforj/storage/driver/s3storage v0.6.1

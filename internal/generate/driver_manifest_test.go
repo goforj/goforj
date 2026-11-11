@@ -59,7 +59,7 @@ func TestGeneratedResourceManagersEmbedLocalDrivers(t *testing.T) {
 			fallbackCase:   "activeDriverForScope(scope) == DriverInproc",
 			manifestName:   "compiledEventDrivers",
 			managerPath:    filepath.Join("internal", "events", "manager_gen.go"),
-			prepare:        prepareManifestPackage(filepath.Join("internal", "events"), false),
+			prepare:        prepareManifestPackage(filepath.Join("internal", "events"), true),
 			generate:       GenerateEventFiles,
 		},
 		{
@@ -196,7 +196,7 @@ func TestGeneratePrimitiveFilesAllowsLocalDefaultsOutsideSupportedDrivers(t *tes
 			supportedDriver: "redis",
 			manifestName:    "compiledEventDrivers",
 			managerPath:     filepath.Join("internal", "events", "manager_gen.go"),
-			prepare:         prepareManifestPackage(filepath.Join("internal", "events"), false),
+			prepare:         prepareManifestPackage(filepath.Join("internal", "events"), true),
 			generate:        GenerateEventFiles,
 		},
 		{
@@ -311,7 +311,7 @@ func TestGeneratePrimitiveFilesCompilesDefaultsForBlankDrivers(t *testing.T) {
 			regenerateCommand: "forj generate --events",
 			managerPath:       filepath.Join("internal", "events", "manager_gen.go"),
 			fallbackCase:      "activeDriverForScope(scope) == DriverInproc",
-			prepare:           prepareManifestPackage(filepath.Join("internal", "events"), false),
+			prepare:           prepareManifestPackage(filepath.Join("internal", "events"), true),
 			generate:          GenerateEventFiles,
 		},
 		{
@@ -506,7 +506,7 @@ func resourceAppDriverManifestTests() []resourceAppDriverManifestTest {
 	return []resourceAppDriverManifestTest{
 		{name: "cache", activeKey: "CACHE_DRIVER", baseDriver: "memory", appDriver: "redis", supportedKey: "CACHE_SUPPORTED_DRIVERS", manifestName: "compiledCacheDrivers", managerPath: filepath.Join("internal", "caches", "manager_gen.go"), prepare: prepareManifestPackage(filepath.Join("internal", "caches"), false), generate: GenerateCacheFiles},
 		{name: "queue", activeKey: "QUEUE_DRIVER", baseDriver: "workerpool", appDriver: "redis", supportedKey: "QUEUE_SUPPORTED_DRIVERS", manifestName: "compiledQueueDrivers", managerPath: filepath.Join("internal", "queues", "manager_gen.go"), prepare: prepareManifestPackage(filepath.Join("internal", "queues"), true), generate: GenerateQueueFiles},
-		{name: "events", activeKey: "EVENTS_DRIVER", baseDriver: "inproc", appDriver: "redis", supportedKey: "EVENTS_SUPPORTED_DRIVERS", manifestName: "compiledEventDrivers", managerPath: filepath.Join("internal", "events", "manager_gen.go"), prepare: prepareManifestPackage(filepath.Join("internal", "events"), false), generate: GenerateEventFiles},
+		{name: "events", activeKey: "EVENTS_DRIVER", baseDriver: "inproc", appDriver: "redis", supportedKey: "EVENTS_SUPPORTED_DRIVERS", manifestName: "compiledEventDrivers", managerPath: filepath.Join("internal", "events", "manager_gen.go"), prepare: prepareManifestPackage(filepath.Join("internal", "events"), true), generate: GenerateEventFiles},
 		{name: "storage", activeKey: "STORAGE_DRIVER", baseDriver: "local", appDriver: "s3", supportedKey: "STORAGE_SUPPORTED_DRIVERS", manifestName: "compiledStorageDrivers", managerPath: filepath.Join("internal", "storages", "manager_gen.go"), prepare: prepareManifestPackage(filepath.Join("internal", "storages"), false), generate: GenerateStorageFiles},
 		{name: "mail", activeKey: "MAIL_DRIVER", baseDriver: "log", appDriver: "resend", supportedKey: "MAIL_SUPPORTED_DRIVERS", manifestName: "compiledMailDrivers", managerPath: filepath.Join("internal", "mail", "manager_gen.go"), prepare: prepareManifestPackage(filepath.Join("internal", "mail"), false), generate: GenerateMailFiles},
 		{name: "database", activeKey: "DB_DRIVER", baseDriver: "sqlite", appDriver: "mysql", supportedKey: "DB_SUPPORTED_DRIVERS", manifestName: "compiledDatabaseDrivers", managerPath: filepath.Join("internal", "database", "connections_gen.go"), prepare: prepareManifestPackage(filepath.Join("internal", "database"), false), generate: GenerateDBFiles},

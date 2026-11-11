@@ -1,0 +1,405 @@
+package observability
+
+import (
+	"bytes"
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"example.com/asynctracing/internal/events"
+	"example.com/asynctracing/internal/inspects"
+	"example.com/asynctracing/internal/logger"
+	"example.com/asynctracing/internal/queues"
+	"example.com/asynctracing/internal/runtime"
+	"github.com/goforj/queue"
+	"go.opentelemetry.io/otel/sdk/trace"
+	collector "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/protobuf/proto"
+)
+
+// processTraceEvent crosses the transport boundary with a recognizable application payload.
+type processTraceEvent struct{ ID string }
+
+// Topic isolates the acceptance event from other generated examples.
+func (processTraceEvent) Topic() string { return "acceptance.orders.finished" }
+
+// processSpan retains collector resource identity alongside the exported span.
+type processSpan struct {
+	service string
+	span    *tracepb.Span
+}
+
+// TestAsyncSeparateProcesses coordinates independent publisher, worker, and event consumer lifetimes.
+func TestAsyncSeparateProcesses(t *testing.T) {
+	var mu sync.Mutex
+	var spans []processSpan
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		var request collector.ExportTraceServiceRequest
+		if err := proto.Unmarshal(body, &request); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		for _, resource := range request.ResourceSpans {
+			service := ""
+			for _, attr := range resource.Resource.Attributes {
+				if attr.Key == "service.name" {
+					service = attr.Value.GetStringValue()
+				}
+			}
+			for _, scope := range resource.ScopeSpans {
+				for _, span := range scope.Spans {
+					spans = append(spans, processSpan{service, span})
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+	}))
+	defer receiver.Close()
+	dir := t.TempDir()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	processes := map[string]*exec.Cmd{}
+	outputs := map[string]*bytes.Buffer{}
+	for _, role := range []string{"eventconsumer", "worker", "publisher"} {
+		if role == "publisher" {
+			processWait(t, func() bool { return processExists(dir, "worker.ready") && processExists(dir, "eventconsumer.ready") }, "role readiness")
+			client := http.Client{Timeout: time.Second}
+			processWait(t, func() bool {
+				response, err := client.Get(os.Getenv("ASYNC_NATS_MONITOR") + "/varz")
+				if err != nil {
+					return false
+				}
+				defer response.Body.Close()
+				var state struct {
+					Subscriptions int `json:"subscriptions"`
+				}
+				return json.NewDecoder(response.Body).Decode(&state) == nil && state.Subscriptions >= 2
+			}, "broker subscription registration")
+		}
+		cmd := exec.CommandContext(ctx, executable, "-test.run=^TestAsyncProcessRole$", "-test.timeout=55s", "-test.v")
+		env := []string{}
+		for _, entry := range os.Environ() {
+			if !strings.HasPrefix(entry, "OTEL_") && !strings.HasPrefix(entry, "LIGHTHOUSE_") {
+				env = append(env, entry)
+			}
+		}
+		cmd.Env = append(env, "ASYNC_PROCESS_ROLE="+role, "ASYNC_PROCESS_DIR="+dir, "OTEL_SERVICE_NAME=async-"+role, "OTEL_TRACES_EXPORTER=otlp", "OTEL_TRACES_SAMPLER=always_on", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="+receiver.URL+"/v1/traces", "LIGHTHOUSE_ENABLED=false", "LIGHTHOUSE_INSPECT_ENABLED=false")
+		output := &bytes.Buffer{}
+		cmd.Stdout = output
+		cmd.Stderr = output
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		processes[role] = cmd
+		outputs[role] = output
+		t.Cleanup(func() {
+			if cmd.ProcessState == nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+			}
+		})
+	}
+	for _, role := range []string{"publisher", "worker", "eventconsumer"} {
+		if err := processes[role].Wait(); err != nil {
+			t.Fatalf("%s: %v\n%s", role, err, outputs[role])
+		}
+		processWrite(t, dir, role+".exited", nil)
+	}
+	pids := map[string]bool{}
+	for _, role := range []string{"publisher", "worker", "eventconsumer"} {
+		body, err := os.ReadFile(filepath.Join(dir, role+".pid"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		pid := string(body)
+		if pids[pid] || pid == strconv.Itoa(os.Getpid()) {
+			t.Fatalf("roles share process %s", pid)
+		}
+		pids[pid] = true
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	byName := map[string][]processSpan{}
+	for _, span := range spans {
+		byName[span.span.Name] = append(byName[span.span.Name], span)
+	}
+	for name, count := range map[string]int{"POST /orders": 1, "send default": 1, "acceptance.orders.process": 2, "send acceptance.orders.finished": 1, "process acceptance.orders.finished": 1} {
+		if len(byName[name]) != count {
+			t.Fatalf("%s: got %d spans, want %d; collected=%v", name, len(byName[name]), count, spans)
+		}
+	}
+	request := byName["POST /orders"][0]
+	producer := byName["send default"][0]
+	attempts := byName["acceptance.orders.process"]
+	var failed, succeeded processSpan
+	for _, attempt := range attempts {
+		if attempt.span.Status.GetCode() == tracepb.Status_STATUS_CODE_ERROR {
+			failed = attempt
+		} else {
+			succeeded = attempt
+		}
+	}
+	if failed.span == nil || succeeded.span == nil {
+		t.Fatal("retry must export one failed and one successful execution")
+	}
+	eventProducer := byName["send acceptance.orders.finished"][0]
+	consumer := byName["process acceptance.orders.finished"][0]
+	for _, edge := range [][2]processSpan{{request, producer}, {producer, failed}, {producer, succeeded}, {succeeded, eventProducer}, {eventProducer, consumer}} {
+		if !bytes.Equal(edge[0].span.SpanId, edge[1].span.ParentSpanId) {
+			t.Fatalf("parent mismatch: %s -> %s", edge[0].span.Name, edge[1].span.Name)
+		}
+	}
+	for _, span := range spans {
+		if !bytes.Equal(span.span.TraceId, request.span.TraceId) {
+			t.Fatalf("split trace: %s", span.span.Name)
+		}
+	}
+	for _, identity := range []struct {
+		span    processSpan
+		service string
+	}{{request, "async-publisher"}, {producer, "async-publisher"}, {failed, "async-worker"}, {succeeded, "async-worker"}, {eventProducer, "async-worker"}, {consumer, "async-eventconsumer"}} {
+		if identity.span.service != identity.service {
+			t.Fatalf("%s service=%q", identity.span.span.Name, identity.span.service)
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "handler.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry logger.LogEntry
+	if err := json.Unmarshal(body, &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Message != "order finished" || entry.Fields["trace_id"] != hex.EncodeToString(request.span.TraceId) || entry.Fields["span_id"] != hex.EncodeToString(consumer.span.SpanId) {
+		t.Fatalf("handler log lost trace correlation: %s", body)
+	}
+}
+
+// TestAsyncProcessRole runs exactly one generated application role without inherited telemetry state.
+func TestAsyncProcessRole(t *testing.T) {
+	role := os.Getenv("ASYNC_PROCESS_ROLE")
+	if role == "" {
+		t.Skip("subprocess fixture")
+	}
+	dir := os.Getenv("ASYNC_PROCESS_DIR")
+	processWrite(t, dir, role+".pid", []byte(strconv.Itoa(os.Getpid())))
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	manager := inspects.NewManager()
+	if err := manager.ConfigureTelemetry(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := manager.Shutdown(shutdown); err != nil {
+			t.Error(err)
+		}
+	}()
+	if role == "publisher" {
+		jobs, err := queues.NewManagerWithObserver(nil, nil, manager)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer jobs.Default().Shutdown(context.Background())
+		request := manager.Begin(ctx, runtime.SourceHTTP, "POST /orders", nil)
+		_, err = jobs.WithContext(request).Dispatch(queue.NewJob("acceptance.orders.process").Payload(map[string]string{"id": "order-42"}).Retry(1))
+		manager.Finish(request, "ok", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	buses, err := events.NewManagerWithContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buses.WithObserver(EventObserver(manager, nil))
+	defer buses.Default().Close(context.Background())
+	if role == "worker" {
+		jobs, err := queues.NewManagerWithObserver(nil, nil, manager)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var attempts atomic.Int32
+		jobs.Register("acceptance.orders.process", func(jobContext context.Context, message queue.Message) error {
+			if err := processBarrier(jobContext, dir, "publisher.exited"); err != nil {
+				return err
+			}
+			var payload struct {
+				ID string `json:"id"`
+			}
+			if err := message.Bind(&payload); err != nil {
+				return err
+			}
+			if payload.ID != "order-42" {
+				return errors.New("job payload lost")
+			}
+			if runtime.SourceFromContext(jobContext) != runtime.SourceJobs {
+				return errors.New("job source lost")
+			}
+			if attempts.Add(1) == 1 {
+				return errors.New("transient acceptance failure")
+			}
+			return buses.Default().WithContext(jobContext).Publish(processTraceEvent{ID: "order-42"})
+		})
+		if err := jobs.Default().StartWorkers(ctx); err != nil {
+			t.Fatal(err)
+		}
+		defer jobs.Default().Shutdown(context.Background())
+		processWrite(t, dir, "worker.ready", nil)
+		processWait(t, func() bool { return processExists(dir, "event.received") }, "event delivery")
+		if attempts.Load() != 2 {
+			t.Fatalf("attempts=%d", attempts.Load())
+		}
+		return
+	}
+	if role != "eventconsumer" {
+		t.Fatalf("unknown role %q", role)
+	}
+	ended := &processCompletion{done: make(chan struct{})}
+	manager.TracerProvider().RegisterSpanProcessor(ended)
+	t.Setenv("APP_LOG_FORMAT", "json")
+	appLogger := logger.NewAppLogger()
+	var logMu sync.Mutex
+	var logBody []byte
+	appLogger.AddSink(func(entry logger.LogEntry) { logMu.Lock(); defer logMu.Unlock(); logBody, _ = json.Marshal(entry) })
+	handled := make(chan error, 1)
+	subscription, err := buses.Default().Subscribe(func(eventContext context.Context, event processTraceEvent) error {
+		if event.ID != "order-42" || runtime.SourceFromContext(eventContext) != runtime.SourceEvents {
+			err := fmt.Errorf("event payload or source lost: %+v", event)
+			handled <- err
+			return err
+		}
+		processWrite(t, dir, "event.received", nil)
+		if err := processBarrier(eventContext, dir, "worker.exited"); err != nil {
+			handled <- err
+			return err
+		}
+		appLogger.WithContext(eventContext).Info().Msg("order finished")
+		handled <- nil
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	processWrite(t, dir, "eventconsumer.ready", nil)
+	select {
+	case err := <-handled:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case <-ended.done:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err := subscription.Close(); err != nil {
+		t.Fatal(err)
+	}
+	logMu.Lock()
+	body := append([]byte(nil), logBody...)
+	logMu.Unlock()
+	processWrite(t, dir, "handler.log", body)
+}
+
+// processWait bounds coordination failures without assuming process or broker startup timing.
+func processWait(t *testing.T, ready func() bool, label string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if ready() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", label)
+}
+
+// processExists observes a barrier only after the originating process has published it.
+func processExists(dir, name string) bool {
+	_, err := os.Stat(filepath.Join(dir, name))
+	return err == nil
+}
+
+// processWrite atomically publishes evidence so readers cannot observe partial output.
+func processWrite(t *testing.T, dir, name string, body []byte) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path+".tmp", body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".tmp", path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// processBarrier verifies downstream work can continue after its sending process has exited.
+func processBarrier(ctx context.Context, dir, name string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if processExists(dir, name) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for %s: %w", name, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// processCompletion synchronizes test shutdown with the fully ended event handler span.
+type processCompletion struct {
+	done chan struct{}
+	once sync.Once
+}
+
+// OnStart leaves span construction to the configured telemetry provider.
+func (*processCompletion) OnStart(context.Context, trace.ReadWriteSpan) {}
+
+// OnEnd releases the role only after its instrumented callback has returned.
+func (p *processCompletion) OnEnd(span trace.ReadOnlySpan) {
+	if span.Name() == "process acceptance.orders.finished" {
+		p.once.Do(func() { close(p.done) })
+	}
+}
+
+// Shutdown requires no resource cleanup because export belongs to ConfigureTelemetry.
+func (*processCompletion) Shutdown(context.Context) error { return nil }
+
+// ForceFlush requires no work because this processor does not buffer spans.
+func (*processCompletion) ForceFlush(context.Context) error { return nil }

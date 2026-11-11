@@ -1,0 +1,45 @@
+{
+  "scope": "Observability review for PR267. Separate follow-ups are recorded outside the queue and event propagation scope.",
+  "framework_contract": "GoForj owns tracing SDK integration. Shared libraries expose context-aware operations and transport metadata where application execution crosses a message boundary.",
+  "surfaces": [
+    {
+      "library": "cache",
+      "version": "v0.4.0 / core v0.4.3",
+      "current": "WithContext forwards the caller context to backend operations and observers; framework observations emit client spans under that context.",
+      "required_change_for_message_propagation": false,
+      "follow_up": "Refresh-ahead replaces the execution context with Background for metadata, loader and writes while retaining request context for locks. Review background lifetime, parent correlation and cleanup separately.",
+      "evidence": "cache.go:395-422"
+    },
+    {
+      "library": "storage",
+      "version": "v0.6.1",
+      "current": "Bound contexts reach contextual drivers and framework observers. Synchronous copy reuses that context.",
+      "required_change_for_message_propagation": false,
+      "follow_up": "The framework observedStorage wrapper hides optional ObjectStorage streaming capabilities. Add a separate capability-preservation regression and fix.",
+      "evidence": "storage/objects.go:8-21 and framework internal/generate/storages.go observedStorage"
+    },
+    {
+      "library": "mail",
+      "version": "v0.3.1",
+      "current": "Send(ctx) preserves context through drivers and observers; framework emits client spans. Queued mail should use the queue propagation boundary.",
+      "required_change_for_message_propagation": false
+    },
+    {
+      "library": "scheduler",
+      "version": "v2.1.4",
+      "current": "Periodic runs start their own execution spans. Jobs dispatched from a run should continue that run through the queue carrier.",
+      "required_change_for_message_propagation": false
+    },
+    {
+      "library": "database",
+      "current": "Query observers use the supplied GORM context and framework emits client spans.",
+      "required_change_for_message_propagation": false
+    },
+    {
+      "library": "outbound HTTP",
+      "current": "The framework instrumented HTTPClient uses the active context and W3C headers. Callers must use it and pass their execution context for downstream propagation.",
+      "required_change_for_message_propagation": false
+    }
+  ],
+  "data_rule": "Do not persist request trace identity in cache values or storage object contents. Later requests reuse those resources under their own traces."
+}

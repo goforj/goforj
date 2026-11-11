@@ -1238,23 +1238,27 @@ func TestRecordStorageOperationEmitsSourceLabel(t *testing.T) {
 {{- end }}
 
 {{- if .ProjectComponents.Events }}
+// TestRecordEventPublishEmitsSourceLabel retains scheduler and event consumer identities in bounded metric labels.
 func TestRecordEventPublishEmitsSourceLabel(t *testing.T) {
-	manager := NewManagerWithConfig(Config{Events: true})
-	ctx := runtime.WithSource(context.Background(), runtime.SourceScheduler)
+	for _, source := range []runtime.Source{runtime.SourceScheduler, runtime.SourceEvents} {
+		manager := NewManagerWithConfig(Config{Events: true})
+		ctx := runtime.WithSource(context.Background(), source)
 
-	manager.RecordEventPublish(ctx, EventPublishMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created"})
+		manager.RecordEventPublish(ctx, EventPublishMetricEvent{Bus: "default", Driver: "sync", Topic: "users.created"})
 
-	if got := counterValueByLabels(t, manager, "events.publishes", []gmetrics.Label{
-		{Key: "source", Value: "scheduler"},
-		{Key: "bus", Value: "default"},
-		{Key: "driver", Value: "sync"},
-		{Key: "topic", Value: "users.created"},
-		{Key: "status", Value: "ok"},
-		{Key: "reason", Value: "ok"},
-	}); got != 1 {
-		t.Fatalf("event publish source-labeled count: got %d want 1", got)
+		if got := counterValueByLabels(t, manager, "events.publishes", []gmetrics.Label{
+			{Key: "source", Value: source.String()},
+			{Key: "bus", Value: "default"},
+			{Key: "driver", Value: "sync"},
+			{Key: "topic", Value: "users.created"},
+			{Key: "status", Value: "ok"},
+			{Key: "reason", Value: "ok"},
+		}); got != 1 {
+			t.Fatalf("event publish source-labeled count: got %d want 1", got)
+		}
 	}
 }
+
 {{- end }}
 
 {{- if .ProjectComponents.Mail }}

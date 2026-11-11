@@ -64,6 +64,8 @@ This is a fragment using `go.opentelemetry.io/otel` and `go.opentelemetry.io/ote
 
 For outbound HTTP, inject a client built with `manager.HTTPClient(http.DefaultClient)`, then use `http.NewRequestWithContext` with the execution context. The helper wraps a copy of the client, creates client spans, and injects W3C context without modifying the process-wide default client. Other clients can use their standard OTel instrumentation with the app's provider.
 
+Queue and event adapters use a 512-byte budget for vendor `tracestate`. Larger outgoing values are omitted. Unusable incoming state does not discard a valid `traceparent`; the shared message-carrier limits still apply.
+
 The helper's automatic URL attributes omit user information, query strings, and fragments. Automatic transport and response-body failures use a generic span status description while the original errors remain available to the caller. The actual outgoing URL is unchanged. Explicit application instrumentation retains its own capture policy.
 
 App-owned OTLP exporters return generic configuration, delivery, and shutdown error messages so automatic diagnostics cannot expose collector URLs, authentication headers, or response bodies. `errors.Is`, `errors.As`, and `errors.Unwrap` retain access to the underlying cause for explicit inspection. Application-registered exporters and processors retain their own diagnostic policy.
@@ -76,13 +78,13 @@ The existing `trace_id` field remains the unique inspect lookup ID for compatibi
 
 Application span events and completed child spans in the execution's trace are projected into the bounded timeline. Spans started with `trace.WithNewRoot()` are independent traces and are exported without being attached to the previous inspect. Rich observations retained in the calling inspect omit span IDs when their SDK spans belong to a different trace. A child that ends after its owning execution is finalized is still eligible for OTLP export but does not reopen the finished inspect. Active child associations and retained events are bounded.
 
-Cache, storage, mail, and database completion observations produce timed child spans. Because these hooks run after completion, those spans cannot become active parents of work that already happened inside the operation. Queue/event observations become span events. Rich request/response bodies, arbitrary logs, job payloads, cache keys, object paths, and raw SQL remain Lighthouse-only enrichment; framework instrumentation does not automatically send them to OTLP. Framework terminal errors export an exception type and a generic message; their original error text remains in Lighthouse. Explicit attributes, errors, and events added by application or third-party OTel instrumentation follow that instrumentation's own capture policy.
+Cache, storage, mail, and database completion observations produce timed child spans. Because these hooks run after completion, those spans cannot become active parents of work that already happened inside the operation. Queue/event lifecycle observations add span events to their producer or consumer execution spans. Rich request/response bodies, arbitrary logs, job payloads, cache keys, object paths, and raw SQL remain Lighthouse-only enrichment; framework instrumentation does not automatically send them to OTLP. Framework terminal errors export an exception type and a generic message; their original error text remains in Lighthouse. Explicit attributes, errors, and events added by application or third-party OTel instrumentation follow that instrumentation's own capture policy.
 
 ### Current Boundaries
 
 This integration covers tracing. Existing Prometheus metrics, dashboards, and logging contracts remain available independently.
 
-Generated queue handlers emit consumer spans. The current queue Job contract has no general propagation metadata carrier, so broker-backed jobs do not yet preserve a dispatching request's parent context across processes. They produce their own execution traces. Event transport propagation is also driver-specific and is not installed by this integration. Do not infer distributed propagation from local context sharing.
+Generated queue and event managers install W3C context propagation across supported message transports. Producer and consumer spans preserve the dispatching trace across processes while retaining the receiver's cancellation and deadline. Redis event subscribers must enable header framing before propagating publishers are deployed; see the generated events README for staged rollout. Direct use of a queue's underlying runtime bypasses the manager's producer instrumentation.
 
 ### Verification
 
