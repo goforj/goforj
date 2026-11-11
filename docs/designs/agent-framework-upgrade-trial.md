@@ -10,8 +10,9 @@ customized application while preserving its workflows?
 The first pilot produced a substantial, reviewable reconciliation. Independent
 validation found no lost baseline test passes or changes to existing tests and
 migration SQL. The candidate adopted new framework behavior and built successfully.
-It did not complete the upgrade: existing application test failures and a deferred
-persisted-database migration prevent full acceptance. One pilot cannot establish
+The actor reported a partial upgrade, and existing application test failures
+prevent full acceptance. Retaining an application's infrastructure policy is not
+itself evidence of an incomplete framework upgrade. One pilot cannot establish
 reliability across applications or repeated agent runs.
 
 The experiment also reproduced a tooling sequence that can corrupt an upgrade's
@@ -83,7 +84,8 @@ production-rollout validation.
 ## Scope and remaining decisions
 
 The actor supplied exactly one decision for each of the 636 plan records:
-538 preserved, 53 applied, 26 adapted, 17 regenerated, and 2 deferred.
+538 preserved, 53 applied, 26 adapted, 17 regenerated, and 2 deferred. These are
+the actor's original labels; the MariaDB deferral classification is corrected below.
 
 The candidate includes target logging/export, tracing, HTTP handling, maintenance,
 runtime deadlines, lifecycle cleanup, and Lighthouse assets. Independent inventory
@@ -94,11 +96,16 @@ registration contract. A default-byte mismatch alone does not establish failure.
 
 Two existing Go test packages have stale application constructor calls. The
 frontend has an existing page-persistence assertion failure. Neither was hidden
-by editing tests. The actor also deferred the target's MariaDB version/configuration
-and automatic-upgrade transition because there was no disposable persisted dataset
-or accepted migration/rollback decision. That is an operational migration concern,
-not a claimed Go source/API break. The application version marker was not advanced
-to imply complete adoption.
+by editing tests. The application version marker was not advanced to imply
+complete adoption.
+
+The actor classified retaining MariaDB 10.11.6 as deferred work because the target
+scaffold already uses 12.3.3 and automatic-upgrade configuration. That classification
+was too broad: we did not establish that this database change is required by the
+framework code changes. The app's image and configuration remained unchanged, and
+no database was touched. Retaining them is an app infrastructure policy choice;
+matching every scaffold default is not an acceptance requirement. An actual server
+upgrade would need its own operational validation.
 
 ## Reproduced tooling failure
 

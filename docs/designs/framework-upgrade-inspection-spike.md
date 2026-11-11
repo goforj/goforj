@@ -216,7 +216,9 @@ A separate Codex session attempted a full unversioned Ditracker upgrade using th
 plan and snapshot, without a prescribed reconciliation patch. Independent checks
 preserved all 1,453 baseline unit and 103 auth passing identities, and verified
 new trace correlation behavior plus a real app build. The result remains partial:
-existing app test failures and an operational database transition block completion.
+existing app test failures prevent full-suite acceptance. The app retained its
+database version as infrastructure policy; adopting every scaffold default is not
+an upgrade requirement.
 A second agent found no actionable source regression. The experiment also
 reproduced a help/build/generation sequence that prunes driver pins and later
 selects incompatible dependencies. See the [agent trial report](agent-framework-upgrade-trial.md)
