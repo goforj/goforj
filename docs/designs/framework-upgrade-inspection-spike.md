@@ -106,6 +106,8 @@ Driver-dependent differences and owner extension behavior require review. The
 input digest uses a dedicated versioned recipe (contract v1), independent of
 incidental configuration schema changes. One frozen recipe is passed to both
 renderers, with configuration and App discovery rechecked before returning results.
+Every supported persisted component flag participates, including `demo_app`, which
+is intentionally absent from the project wizard's component catalog.
 
 Both renderers receive the same current projected inputs. This does not recover
 historical configuration changes or prove that an app adopted the supplied

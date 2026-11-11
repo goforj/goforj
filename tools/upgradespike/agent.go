@@ -297,6 +297,7 @@ func assessResults(results trialResults, protected []string) (bool, map[string][
 	regressions := map[string][]string{}
 	for _, suite := range []string{"unit", "auth"} {
 		baseline, candidate := results["baseline"][suite], results["app"][suite]
+		accepted = accepted && (baseline.ExitCode == 0 || baseline.ExitCode == 1)
 		regressions[suite] = difference(baseline.Passed, candidate.Passed)
 		accepted = accepted && len(regressions[suite]) == 0 && len(baseline.Passed) > 0 && len(candidate.Passed) > 0 && len(difference(candidate.Skipped, baseline.Skipped)) == 0
 	}
@@ -310,6 +311,37 @@ func assessResults(results trialResults, protected []string) (bool, map[string][
 		accepted = accepted && len(loss.Tests) == 0 && len(loss.Packages) == 0
 	}
 	return accepted, regressions
+}
+
+// verifyTrialInputs keeps the complete frozen packet and renderer stable across application validation.
+func verifyTrialInputs(root string, metadata trialMetadata) error {
+	if err := verifyDigest(metadata.Binary, metadata.BinarySHA256, "frozen renderer changed; the trial requires a new preparation"); err != nil {
+		return err
+	}
+	for _, name := range []string{"TASK.md", "plan.json", "target-snapshot.json"} {
+		if metadata.PacketSHA256[name] == "" {
+			return fmt.Errorf("frozen packet lacks a digest for %s", name)
+		}
+	}
+	for name, expected := range metadata.PacketSHA256 {
+		if err := verifyDigest(filepath.Join(root, "packet", name), expected, "actor input packet changed; the trial requires a new preparation"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// readFrozenSnapshot binds residual evidence to the exact packet bytes measured before validation.
+func readFrozenSnapshot(root, expected string) ([]byte, error) {
+	snapshot, err := os.ReadFile(filepath.Join(root, "packet", "target-snapshot.json"))
+	if err != nil {
+		return nil, err
+	}
+	fingerprint := sha256.Sum256(snapshot)
+	if hex.EncodeToString(fingerprint[:]) != expected {
+		return nil, fmt.Errorf("target snapshot changed while being read")
+	}
+	return snapshot, nil
 }
 
 // hasTestName compares the test portion while retaining package identity in stored evidence.
@@ -442,13 +474,12 @@ func evaluateTrialWithRunner(ctx context.Context, root string, runner func(conte
 	if err = json.Unmarshal(raw, &metadata); err != nil {
 		return nil, err
 	}
-	if err = verifyDigest(metadata.Binary, metadata.BinarySHA256, "frozen renderer changed; the trial requires a new preparation"); err != nil {
+	if err = verifyTrialInputs(root, metadata); err != nil {
 		return nil, err
 	}
-	for name, expected := range metadata.PacketSHA256 {
-		if err = verifyDigest(filepath.Join(root, "packet", name), expected, "actor input packet changed; the trial requires a new preparation"); err != nil {
-			return nil, err
-		}
+	snapshot, err := readFrozenSnapshot(root, metadata.PacketSHA256["target-snapshot.json"])
+	if err != nil {
+		return nil, err
 	}
 	baseline, err := inventory(filepath.Join(root, "baseline"))
 	if err != nil {
@@ -502,8 +533,7 @@ func evaluateTrialWithRunner(ctx context.Context, root string, runner func(conte
 	losses := coverageLosses(results)
 	accepted = accepted && len(validationChanges) == 0
 	status := trialStatus(accepted, protected, regressions, validationChanges, losses)
-	snapshot, err := os.ReadFile(filepath.Join(root, "packet", "target-snapshot.json"))
-	if err != nil {
+	if err = verifyTrialInputs(root, metadata); err != nil {
 		return nil, err
 	}
 	residual, err := residualArtifacts(snapshot, after)

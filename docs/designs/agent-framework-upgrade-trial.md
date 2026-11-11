@@ -164,7 +164,9 @@ go run ./tools/upgradespike evaluate /tmp/goforj-agent-upgrade-CASE
 ```
 
 Preparation freezes a private executable copy for the trial. Evaluation verifies
-that executable and the input packet before running tests. It rejects explicit
+that executable and all three packet fingerprints before and after running tests.
+It captures verified target-snapshot bytes before validation so residual evidence
+uses those exact inputs. It rejects explicit
 failed-test or package-failure events even if a test process incorrectly exits
 zero, requires executable build mode so a non-main Go archive cannot satisfy the
 application-build check, and terminates validation process groups after success
@@ -174,6 +176,12 @@ packages and packages without tests. Adding a nested module cannot silently hide
 those packages from the upgrade checks. Previously failed or skipped test identities
 must remain observed; unchanged pre-existing failures still block acceptance. These
 local controls are not an executable sandbox.
+
+A timed-out or interrupted baseline cannot establish complete comparison evidence,
+so it prevents measured acceptance. Ordinary baseline failures remain available for
+comparison with a repaired candidate. Platform CI executes the planner and portable
+experiment tests on macOS and Windows; fixtures requiring the pilot's POSIX `/tmp`
+environment explicitly skip Windows.
 
 The driver retains source/mode fingerprints, target-packet hashes, complete Go
 logs, test identities, protected-file changes, residual artifacts, and a summary

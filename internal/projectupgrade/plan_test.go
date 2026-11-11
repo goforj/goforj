@@ -2,6 +2,7 @@ package projectupgrade
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/build"
 	"os"
@@ -9,8 +10,20 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
+
+// symlinkFixture preserves symlink coverage when Windows grants the required privilege.
+func symlinkFixture(t *testing.T, target, name string) {
+	t.Helper()
+	if err := os.Symlink(target, name); err != nil {
+		if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+			t.Skipf("symlink fixture requires Windows symlink privilege: %v", err)
+		}
+		t.Fatal(err)
+	}
+}
 
 // testSnapshot supplies a reproducible comparison reference without claiming application adoption.
 func testSnapshot(source string) Snapshot {
@@ -332,12 +345,12 @@ func TestBuildRejectsSpecialFiles(t *testing.T) {
 			case "ancestor":
 				err = os.RemoveAll(filepath.Join(root, "internal/auth"))
 				if err == nil {
-					err = os.Symlink(outside, filepath.Join(root, "internal/auth"))
+					symlinkFixture(t, outside, filepath.Join(root, "internal/auth"))
 				}
 			case "file":
 				err = os.Remove(filepath.Join(root, "internal/auth/service.go"))
 				if err == nil {
-					err = os.Symlink(filepath.Join(outside, "secret"), filepath.Join(root, "internal/auth/service.go"))
+					symlinkFixture(t, filepath.Join(outside, "secret"), filepath.Join(root, "internal/auth/service.go"))
 				}
 			case "directory":
 				err = os.Remove(filepath.Join(root, "internal/auth/service.go"))
@@ -354,7 +367,7 @@ func TestBuildRejectsSpecialFiles(t *testing.T) {
 			case "derived-symlink":
 				err = os.MkdirAll(filepath.Join(root, "internal/caches"), 0o755)
 				if err == nil {
-					err = os.Symlink(filepath.Join(outside, "secret"), filepath.Join(root, "internal/caches/accessors_gen.go"))
+					symlinkFixture(t, filepath.Join(outside, "secret"), filepath.Join(root, "internal/caches/accessors_gen.go"))
 				}
 			}
 			if err != nil {
@@ -450,9 +463,7 @@ func TestDerivedSymlinksAreNotRead(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "internal/caches"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(t.TempDir(), "absent-secret"), filepath.Join(root, "internal/caches/accessors_gen.go")); err != nil {
-		t.Fatal(err)
-	}
+	symlinkFixture(t, filepath.Join(t.TempDir(), "absent-secret"), filepath.Join(root, "internal/caches/accessors_gen.go"))
 	target := testSnapshot("package auth\n")
 	target.Artifacts = append(target.Artifacts, Artifact{Path: "internal/caches/accessors_gen.go", Ownership: "app-derived"})
 	plan, err := Build(root, target, nil)

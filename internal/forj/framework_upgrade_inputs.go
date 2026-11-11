@@ -28,9 +28,14 @@ type frameworkRenderInputs struct {
 // frameworkInputSelection preserves declared selections and optional values without materializing engine-specific defaults.
 func frameworkInputSelection(components project.Components, starter project.StarterKit, options *project.StarterKitOptions, help project.HelpFormat) frameworkAppInputs {
 	input := frameworkAppInputs{Components: []string{}, StarterKit: string(starter), HelpFormat: string(help)}
+	// The wizard omits demo_app, but persisted projects can still render that surface.
+	keys := map[project.ComponentKey]bool{project.ComponentDemoApp: true}
 	for _, definition := range project.ComponentCatalog() {
-		if components.Enabled(definition.Key) {
-			input.Components = append(input.Components, string(definition.Key))
+		keys[definition.Key] = true
+	}
+	for key := range keys {
+		if components.Enabled(key) {
+			input.Components = append(input.Components, string(key))
 		}
 	}
 	sort.Strings(input.Components)

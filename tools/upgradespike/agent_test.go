@@ -240,6 +240,7 @@ func agentTrialFixture(t *testing.T) (string, trialMetadata) {
 	root := t.TempDir()
 	agentWrite(t, filepath.Join(root, "baseline", "owner.go"), "package owner")
 	agentWrite(t, filepath.Join(root, "packet", "TASK.md"), "frozen task")
+	agentWrite(t, filepath.Join(root, "packet", "plan.json"), `{"scope":"framework","files":[]}`)
 	agentWrite(t, filepath.Join(root, "packet", "target-snapshot.json"), `{"artifacts":[]}`)
 	agentWrite(t, filepath.Join(root, "renderer"), "frozen renderer")
 	for _, side := range []string{"baseline", "app"} {
@@ -253,15 +254,101 @@ func agentTrialFixture(t *testing.T) (string, trialMetadata) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	packet, err := digestFile(filepath.Join(root, "packet", "TASK.md"))
-	if err != nil {
-		t.Fatal(err)
+	metadata := trialMetadata{Binary: filepath.Join(root, "renderer"), BinarySHA256: binary, Files: files, PacketSHA256: map[string]string{}}
+	for _, name := range []string{"TASK.md", "plan.json", "target-snapshot.json"} {
+		metadata.PacketSHA256[name], err = digestFile(filepath.Join(root, "packet", name))
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
-	metadata := trialMetadata{Binary: filepath.Join(root, "renderer"), BinarySHA256: binary, Files: files, PacketSHA256: map[string]string{"TASK.md": packet}}
 	if err = writeJSON(filepath.Join(root, "trial.json"), metadata); err != nil {
 		t.Fatal(err)
 	}
 	return root, metadata
+}
+
+// TestAgentIncompleteBaselineBlocksAcceptance refuses partial discovery after timeouts or interrupted validation.
+func TestAgentIncompleteBaselineBlocksAcceptance(t *testing.T) {
+	for _, suite := range []string{"unit", "auth"} {
+		for _, code := range []int{0, 1, 2, 124, 130} {
+			results := agentPassingResults()
+			baseline := results["baseline"][suite]
+			baseline.ExitCode = code
+			results["baseline"][suite] = baseline
+			accepted, regressions := assessResults(results, nil)
+			if accepted != (code == 0 || code == 1) {
+				t.Fatalf("suite=%s code=%d accepted=%v", suite, code, accepted)
+			}
+			if !accepted && trialStatus(accepted, nil, regressions, nil, coverageLosses(results)) != "blocked" {
+				t.Fatal("incomplete baseline was reported as an app regression")
+			}
+		}
+	}
+}
+
+// TestAgentRequiresCompleteFrozenPacket prevents omitted metadata from bypassing input integrity checks.
+func TestAgentRequiresCompleteFrozenPacket(t *testing.T) {
+	for _, name := range []string{"TASK.md", "plan.json", "target-snapshot.json"} {
+		t.Run(name, func(t *testing.T) {
+			root, metadata := agentTrialFixture(t)
+			delete(metadata.PacketSHA256, name)
+			if err := writeJSON(filepath.Join(root, "trial.json"), metadata); err != nil {
+				t.Fatal(err)
+			}
+			_, err := evaluateTrialWithRunner(context.Background(), root, func(context.Context, string, string, string, []string) (testResult, error) {
+				t.Fatal("tools ran with an incomplete frozen packet")
+				return testResult{}, nil
+			})
+			if err == nil || !strings.Contains(err.Error(), "lacks a digest") {
+				t.Fatalf("incomplete packet error=%v", err)
+			}
+		})
+	}
+}
+
+// TestAgentValidationCannotReplaceFrozenInputs rejects tool side effects before writing successful evidence.
+func TestAgentValidationCannotReplaceFrozenInputs(t *testing.T) {
+	for _, name := range []string{"renderer", "packet/TASK.md", "packet/plan.json", "packet/target-snapshot.json"} {
+		for _, mutationCall := range []int{1, 8} {
+			t.Run(fmt.Sprintf("%s/%d", name, mutationCall), func(t *testing.T) {
+				root, _ := agentTrialFixture(t)
+				calls := 0
+				_, err := evaluateTrialWithRunner(context.Background(), root, func(ctx context.Context, app, evaluation, command string, args []string) (testResult, error) {
+					calls++
+					if calls == mutationCall {
+						agentWrite(t, filepath.Join(root, name), "changed by validation")
+					}
+					parts := strings.SplitN(command, "-", 2)
+					return agentPassingResults()[parts[0]][parts[1]], nil
+				})
+				if err == nil || !strings.Contains(err.Error(), "changed") {
+					t.Fatalf("changed input accepted: %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(root, "evaluation/summary.json")); !os.IsNotExist(err) {
+					t.Fatalf("published evidence after input changes: %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestReadFrozenSnapshotVerifiesComparedBytes catches replacement between the packet precheck and capture.
+func TestReadFrozenSnapshotVerifiesComparedBytes(t *testing.T) {
+	root, metadata := agentTrialFixture(t)
+	expected := metadata.PacketSHA256["target-snapshot.json"]
+	if _, err := readFrozenSnapshot(root, expected); err != nil {
+		t.Fatal(err)
+	}
+	agentWrite(t, filepath.Join(root, "packet/target-snapshot.json"), `{"artifacts":[{}]}`)
+	if _, err := readFrozenSnapshot(root, expected); err == nil {
+		t.Fatal("captured unverified snapshot bytes")
+	}
+	if err := os.Remove(filepath.Join(root, "packet/target-snapshot.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readFrozenSnapshot(root, expected); !os.IsNotExist(err) {
+		t.Fatalf("missing snapshot error=%v", err)
+	}
 }
 
 // TestAgentIntegrityChecksPrecedeTools rejects changed packets, renderers, and baselines before invocation.
@@ -383,6 +470,9 @@ func TestAgentPreparationRejectsChangingBinary(t *testing.T) {
 
 // TestAgentExecutableBuildRejectsArchives proves the real build gate requires a main package.
 func TestAgentExecutableBuildRejectsArchives(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("validation environment intentionally uses /tmp")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	root := t.TempDir()
@@ -421,6 +511,9 @@ func TestAgentExecutableBuildRejectsArchives(t *testing.T) {
 
 // TestAgentNestedModulesCannotHideCoverage uses the Go tool to expose vanished failing and empty packages.
 func TestAgentNestedModulesCannotHideCoverage(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("validation environment intentionally uses /tmp")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	root := t.TempDir()
