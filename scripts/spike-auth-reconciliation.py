@@ -121,7 +121,8 @@ def main():
     root = workspace / "ditracker"
     root.mkdir()
     source = arguments.ditracker.expanduser().resolve(strict=True)
-    helpers["copy_committed_app"](source, root)
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+    helpers["copy_committed_app"](source, root, revision)
     before = auth_fingerprints(root)
     environment = {key: value for key, value in os.environ.items() if key in ("PATH", "HOME", "GOCACHE", "GOMODCACHE")}
     environment.update({"TMPDIR": "/tmp", "GOWORK": "off", "DB_DRIVER": "sqlite", "APP_ENV": "testing",
@@ -168,7 +169,7 @@ def main():
     changed = sorted(name for name in set(before) | set(after) if before.get(name) != after.get(name))
     if changed != ["oauth_state.go", "upgrade_probe_integration_test.go"]:
         raise RuntimeError("candidate changed unexpected auth source")
-    summary = {"workspace": str(workspace), "revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip(),
+    summary = {"workspace": str(workspace), "revision": revision,
                "changed_auth_files": changed, "phases": phases}
     (workspace / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps({"workspace": str(workspace), "changed_auth_files": changed}), flush=True)

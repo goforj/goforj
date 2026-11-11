@@ -1,0 +1,40 @@
+package logger_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"go.opentelemetry.io/otel/trace"
+	"{{MODULE}}/internal/logger"
+)
+
+// TestAgentUpgradeContextCorrelation verifies target behavior through existing public APIs without depending on implementation layout.
+func TestAgentUpgradeContextCorrelation(t *testing.T) {
+	for _, access := range []bool{false, true} {
+		name := "event"
+		if access {
+			name = "http-access"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("APP_LOG_FORMAT", "json")
+			log := logger.NewAppLogger()
+			var entries []logger.LogEntry
+			log.AddSink(func(entry logger.LogEntry) { entries = append(entries, entry) })
+			span := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1, 2, 3}, SpanID: trace.SpanID{4, 5, 6}, TraceFlags: trace.FlagsSampled})
+			ctx := trace.ContextWithSpanContext(context.Background(), span)
+			bound := log.WithContext(ctx)
+			if access {
+				bound.HTTPAccess("/agent-upgrade-proof", 200, "GET", time.Millisecond, nil)
+			} else {
+				bound.Info().Msg("agent upgrade proof")
+			}
+			if len(entries) != 1 {
+				t.Fatalf("expected one structured entry, got %d", len(entries))
+			}
+			if entries[0].Fields["trace_id"] != span.TraceID().String() || entries[0].Fields["span_id"] != span.SpanID().String() {
+				t.Fatal("logger lost the active trace/span correlation")
+			}
+		})
+	}
+}

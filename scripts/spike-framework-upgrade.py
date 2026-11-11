@@ -25,9 +25,9 @@ def tree_digest(root):
     return digest.hexdigest()
 
 
-def copy_committed_app(source, destination):
+def copy_committed_app(source, destination, revision="HEAD"):
     """Copy regular tracked files while excluding all environment-file layers."""
-    archive = subprocess.check_output(["git", "archive", "HEAD"], cwd=source)
+    archive = subprocess.check_output(["git", "archive", revision], cwd=source)
     with tarfile.open(fileobj=io.BytesIO(archive)) as entries:
         for entry in entries:
             path = PurePosixPath(entry.name)
@@ -58,7 +58,7 @@ def main():
         destination = workspace / f"{index}-{source.name}"
         destination.mkdir()
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
-        copy_committed_app(source, destination)
+        copy_committed_app(source, destination, revision)
         before = tree_digest(destination)
         command = [str(binary), "render", "--plan", "--json"]
         if arguments.from_renderer:

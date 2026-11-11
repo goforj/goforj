@@ -210,6 +210,18 @@ Ship's two untagged auth tests pass. Its broader SQLite auth suite encounters an
 existing deployment-policy migration dependency before establishing a baseline.
 The experiment does not alter migrations to bypass that limitation.
 
+## Independent agent trial
+
+A separate Codex session attempted a full unversioned Ditracker upgrade using the
+plan and snapshot, without a prescribed reconciliation patch. Independent checks
+preserved all 1,453 baseline unit and 103 auth passing identities, and verified
+new trace correlation behavior plus a real app build. The result remains partial:
+existing app test failures and an operational database transition block completion.
+A second agent found no actionable source regression. The experiment also
+reproduced a help/build/generation sequence that prunes driver pins and later
+selects incompatible dependencies. See the [agent trial report](agent-framework-upgrade-trial.md)
+for controls, evidence, corrections, and the requirements for a repeatable upgrade.
+
 ## Validation and remaining work
 
 Tests cover framework planning without auth, named Apps, all starter-kit choices,
