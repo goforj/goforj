@@ -48,6 +48,12 @@ copy per trial.
 The retained trial and candidate are local disposable artifacts. This PR does
 not vendor application source, generated baselines, or the candidate patch.
 
+The Go evaluator was rerun against that retained candidate. It reproduced the
+original passing, failing, and skipped test identities, changed-file list, and
+residual artifact lists. Its package coverage check retained all 47 baseline
+packages within the candidate's 48 packages. Existing suite failures still block
+acceptance; moving the experiment to Go does not change that assessment.
+
 ## Independent observations
 
 | Check | Original application copy | Reconciled candidate |
@@ -144,7 +150,7 @@ Build the desired renderer, then prepare a frozen application copy:
 
 ```sh
 go build -o /tmp/forj-agent-target ./cmd/forj
-python3 scripts/spike-agent-upgrade.py prepare \
+go run ./tools/upgradespike prepare \
   --source ~/code/ditracker \
   --revision 6fe4b4842a08b131ba6723d5ce16fa3dcc431e49 \
   --forj /tmp/forj-agent-target
@@ -154,7 +160,7 @@ Give the printed `TASK.md` to a fresh agent session. Do not provide a successful
 candidate or a prescribed patch. Once that session has stopped, evaluate its copy:
 
 ```sh
-python3 scripts/spike-agent-upgrade.py evaluate /tmp/goforj-agent-upgrade-CASE
+go run ./tools/upgradespike evaluate /tmp/goforj-agent-upgrade-CASE
 ```
 
 Preparation freezes a private executable copy for the trial. Evaluation verifies

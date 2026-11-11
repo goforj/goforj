@@ -145,14 +145,16 @@ Ambiguous or incompatible peers fail closed.
 
 ```sh
 go build -o /tmp/forj-framework-upgrade ./cmd/forj
-python3 scripts/spike-framework-upgrade.py \
+go run ./tools/upgradespike reference \
   --forj /tmp/forj-framework-upgrade \
   --project ~/code/ship \
   --project ~/code/ditracker
 ```
 
-The runner copies regular tracked files from committed revisions into `/tmp`,
-excluding environment files and symlinks. It invokes the actual CLI, verifies all
+The Go experiment command lives in `tools/upgradespike`; its regression tests run
+with the ordinary `go test ./...` suite. It copies regular tracked files from
+committed revisions into `/tmp`, excluding environment files and symlinks. It
+invokes the actual CLI, verifies all
 copied bytes and modes remain unchanged, and retains plans plus a summary outside
 source repositories. Add `--from-renderer` for a two-renderer comparison.
 
@@ -192,7 +194,7 @@ still inventoried and retain unverified-baseline semantics.
 ## Auth as a behavioral case study
 
 ```sh
-python3 scripts/spike-auth-reconciliation.py \
+go run ./tools/upgradespike auth \
   --forj /tmp/forj-framework-upgrade \
   --ditracker ~/code/ditracker
 ```
@@ -273,10 +275,17 @@ The same pass removed quadratic concatenation for repeated declaration names.
 On a local Apple M4 Max benchmark with 2,500 initializers, two runs decreased from
 85.7 MB allocated per operation and 13.3 to 13.5 ms to 4.0 MB and 4.4 to 6.3 ms.
 These measurements describe this synthetic inspection workload only. The auth
-experiment's evidence checks also have direct Python tests for skipped tests,
+experiment's evidence checks also have direct Go tests for skipped tests,
 missing baseline identities, compiler failures, and incomplete negative controls.
 The reference copier also tests case-insensitive environment-layer exclusion and
 symlink exclusion so those private paths never enter a disposable app copy.
+
+The reference, controlled-auth, and independent-agent experiment runners are all
+implemented in Go. The Go runners reproduced the reference inventory counts and
+the controlled auth red/green results. Re-evaluating the retained agent candidate
+preserved the original test identities, changed-file list, and residual differences.
+Tests also cover malformed evidence, normal-exit descendant cleanup, tracked
+dependency preservation, and nested modules hiding failing or empty packages.
 
 An independent core review also reproduced three cases now covered by direct
 regressions: upstream executable changes beside local content edits, discovery
