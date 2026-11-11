@@ -5,7 +5,7 @@ import ts from 'typescript'
 
 const source = await readFile(new URL('../src/eats/model.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText
-const { orderedHistory, traceURL } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
+const { activityHistory, orderedHistory, traceURL } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
 
 test('broker reordering and duplicates preserve the latest business milestone', () => {
   const history = [{ step: 64, stage: 'delivered' }, { step: 25, stage: 'retrying' }, { step: 10, stage: 'preparing' }, { step: 25, stage: 'retrying' }]
@@ -53,3 +53,20 @@ for (const [stage, visual, label] of [
     if (stage !== 'ready') assert.ok(!html.includes('class="pickup-box"'))
   })
 }
+
+
+test('activity groups courier updates while keeping a retried cooking sequence visible', () => {
+  const history = [
+    { step: 10, stage: 'preparing', service: 'kitchen' },
+    { step: 20, stage: 'baking', service: 'kitchen' },
+    { step: 25, stage: 'retrying', service: 'kitchen' },
+    { step: 30, stage: 'preparing', service: 'kitchen' },
+    { step: 40, stage: 'baking', service: 'kitchen' },
+    { step: 50, stage: 'ready', service: 'kitchen' },
+    ...Array.from({ length: 20 }, (_, index) => ({ step: 60 + index, stage: 'delivering', service: 'delivery' })),
+    { step: 80, stage: 'delivered', service: 'delivery' },
+  ]
+  assert.deepEqual(activityHistory(history).map(update => update.step), [10, 20, 25, 30, 40, 50, 60, 80])
+  assert.equal(history.length, 27)
+  assert.deepEqual(activityHistory([]), [])
+})
