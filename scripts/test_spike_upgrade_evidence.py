@@ -226,7 +226,15 @@ class AgentTrialTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), executable, "failed build replaced the prior executable with an archive")
 
     def test_timeout_stops_descendant_processes(self):
-        """A timed-out compiler cannot leave a child that writes into a later validation phase."""
+        """A timed-out compiler cannot mutate a later validation phase."""
+        self.assert_descendant_cleanup(False)
+
+    def test_success_stops_descendant_processes(self):
+        """A successful validation cannot leave an untracked background writer."""
+        self.assert_descendant_cleanup(True)
+
+    def assert_descendant_cleanup(self, success):
+        """Exercise a real descendant waiting to write after its leader completes."""
         if not hasattr(os, "killpg"):
             self.skipTest("the disposable trial harness requires POSIX process groups")
         real_popen = subprocess.Popen
@@ -237,7 +245,7 @@ class AgentTrialTests(unittest.TestCase):
             child_code = ("import time\nfrom pathlib import Path\ngate=Path(" + repr(str(gate)) +
                           ")\nwhile not gate.exists(): time.sleep(.01)\nPath(" + repr(str(marker)) + ").write_text('late')\n")
             parent_code = ("import subprocess,sys,time;from pathlib import Path;subprocess.Popen([sys.executable,'-c'," +
-                           repr(child_code) + "]);Path(" + repr(str(ready)) + ").write_text('ready');time.sleep(5)")
+                           repr(child_code) + "]);Path(" + repr(str(ready)) + ").write_text('ready');time.sleep(" + ("0" if success else "5") + ")")
 
             def spawn(_command, **options):
                 """Start a real process tree and wait for its readiness before applying the short test deadline."""
@@ -253,7 +261,7 @@ class AgentTrialTests(unittest.TestCase):
             try:
                 with patch("subprocess.Popen", side_effect=spawn):
                     result = self.trial["run_go"](root, root, "timeout", ["test"], timeout=.1)
-                self.assertEqual(result["exit_code"], 124)
+                self.assertEqual(result["exit_code"], 0 if success else 124)
                 gate.write_text("release")
                 time.sleep(.65)
                 self.assertFalse(marker.exists(), "a descendant survived the validation deadline")
@@ -303,15 +311,45 @@ class AgentTrialTests(unittest.TestCase):
     def test_status_distinguishes_blockers_from_regressions(self):
         """Pre-existing failures must not be reported as newly introduced behavior regressions."""
         status = self.trial["trial_status"]
-        self.assertEqual(status(True, [], {"unit": []}, []), "measured-gates-pass")
-        self.assertEqual(status(False, [], {"unit": []}, []), "blocked")
-        self.assertEqual(status(False, ["weakened_test.go"], {"unit": []}, []), "regressed")
-        self.assertEqual(status(False, [], {"unit": ["LostBehavior"]}, []), "regressed")
-        self.assertEqual(status(False, [], {"unit": []}, ["concurrent_write.go"]), "invalidated")
+        self.assertEqual(status(True, [], {"unit": []}, [], {}), "measured-gates-pass")
+        self.assertEqual(status(False, [], {"unit": []}, [], {}), "blocked")
+        self.assertEqual(status(False, ["weakened_test.go"], {"unit": []}, [], {}), "regressed")
+        self.assertEqual(status(False, [], {"unit": ["LostBehavior"]}, [], {}), "regressed")
+        self.assertEqual(status(False, [], {"unit": []}, ["concurrent_write.go"], {}), "invalidated")
+
+    def test_nested_modules_cannot_hide_baseline_packages(self):
+        """Unchanged failing tests and packages without tests must remain visible to validation."""
+        if shutil.which("go") is None:
+            self.skipTest("Go toolchain unavailable")
+        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+            root = Path(directory)
+            (root / "go.mod").write_text("module example.com/coverage\n\ngo 1.25.0\n")
+            for name, source in {"healthy": "func TestPolicy(t *testing.T){}", "broken": 'func TestExisting(t *testing.T){t.Fatal("existing defect")}'}.items():
+                package = root / name
+                package.mkdir()
+                (package / "policy_test.go").write_text('package ' + name + '\nimport "testing"\n' + source)
+            (root / "notests").mkdir()
+            (root / "notests/policy.go").write_text("package notests\n")
+            baseline = self.trial["run_go"](root, root, "baseline", ["test", "-json", "./...", "-count=1"])
+            before = self.trial["inventory"](root)
+            for name in ("broken", "notests"):
+                (root / name / "go.mod").write_text("module example.com/coverage/" + name + "\n\ngo 1.25.0\n")
+            candidate = self.trial["run_go"](root, root, "candidate", ["test", "-json", "./...", "-count=1"])
+            self.assertEqual(candidate["exit_code"], 0)
+            self.assertEqual(self.trial["protected_changes"](before, self.trial["inventory"](root)), [])
+            results = {"baseline": {"unit": baseline, "auth": baseline}, "app": {"unit": candidate, "auth": candidate}}
+            losses = self.trial["coverage_losses"](results)
+            self.assertEqual(losses["unit"]["packages"], ["example.com/coverage/broken", "example.com/coverage/notests"])
+            self.assertEqual(losses["unit"]["tests"], ["example.com/coverage/broken::TestExisting"])
+            self.assertEqual(self.trial["trial_status"](False, [], {"unit": []}, [], losses), "regressed")
+            results["app"] = results["baseline"]
+            unchanged = self.trial["coverage_losses"](results)
+            self.assertEqual(unchanged["unit"], {"packages": [], "tests": []})
+            self.assertEqual(self.trial["trial_status"](False, [], {"unit": []}, [], unchanged), "blocked")
 
     def test_assessment_rejects_false_success(self):
         """Exercise no-op upgrades, zero-test runs, regressions, skips, and protected edits."""
-        empty = {"exit_code": 0, "passed": [], "failed": [], "skipped": [], "package_failures": []}
+        empty = {"exit_code": 0, "passed": [], "failed": [], "skipped": [], "package_failures": [], "packages": []}
         results = {side: {suite: copy.deepcopy(empty) for suite in ("unit", "auth", "holdout", "build")} for side in ("baseline", "app")}
         for side in results.values():
             side["unit"]["passed"] = ["app::TestPolicy"]
@@ -338,6 +376,17 @@ class AgentTrialTests(unittest.TestCase):
         invalid = copy.deepcopy(results)
         invalid["baseline"]["holdout"]["failed"] = []
         self.assertFalse(self.trial["assess_results"](invalid, [])[0])
+        for field, identity in (("failed", "app::PreviouslyBroken"), ("skipped", "app::PreviouslySkipped"), ("packages", "app/previously-broken")):
+            invalid = copy.deepcopy(results)
+            invalid["baseline"]["unit"][field] = [identity]
+            with self.subTest(disappearing=field):
+                self.assertFalse(self.trial["assess_results"](invalid, [])[0])
+            repaired = copy.deepcopy(invalid)
+            if field == "packages":
+                repaired["app"]["unit"][field] = [identity]
+            else:
+                repaired["app"]["unit"]["passed"].append(identity)
+            self.assertTrue(self.trial["assess_results"](repaired, [])[0])
 
 
 if __name__ == "__main__":

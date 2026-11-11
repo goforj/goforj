@@ -89,8 +89,9 @@ baseline classifications explicitly say `relative-to-baseline`. No action grants
 permission to overwrite or delete application files.
 
 Executable-bit differences and unavailable Go syntax hints are visible in both
-text and JSON plans. Empty Go source remains a comparison input and is diagnosed
-rather than mistaken for an omitted payload. Executable-bit differences are
+text and JSON plans. Text paths are quoted to escape filenames containing line
+breaks or terminal control characters. Empty Go source remains a comparison input
+and is diagnosed rather than mistaken for an omitted payload. Executable-bit differences are
 reported on platforms that support them. Group read/write permissions are not
 framework drift; Git archives and local umasks can vary them without changing
 tracked source semantics.
@@ -110,11 +111,12 @@ Both renderers receive the same current projected inputs. This does not recover
 historical configuration changes or prove that an app adopted the supplied
 baseline. Engine metadata is diagnostic, not cryptographic provenance.
 
-Go declaration hints retain package names, build constraints, and Go compiler
-directives associated with their next or enclosing declaration while omitting
-ordinary comments and formatting. They can still include semantically equivalent
-implementation changes. Disjoint declarations can depend
-on one another. A test explicitly verifies that non-overlapping declarations do
+Go declaration hints retain package names, build constraints (including effective
+legacy placement), and Go compiler directives associated with their next or enclosing
+declaration while omitting ordinary comments and formatting. Package-variable
+declaration order remains visible because initializer side effects can depend on
+it. Hints can still include semantically equivalent implementation changes. Disjoint
+declarations can depend on one another. A test explicitly verifies that non-overlapping declarations do
 not authorize a clean automatic upgrade.
 
 Named Apps participate in framework snapshots and Wire classification. The

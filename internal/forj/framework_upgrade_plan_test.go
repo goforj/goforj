@@ -782,3 +782,16 @@ func TestFrameworkTextPlanIncludesDiagnostics(t *testing.T) {
 		}
 	}
 }
+
+// TestFrameworkTextPlanEscapesPaths prevents owner filenames from forging records or executing terminal control sequences.
+func TestFrameworkTextPlanEscapesPaths(t *testing.T) {
+	name := "owner\nforged-record\x1b]8;;https://example.com\x07file.go"
+	plan := projectupgrade.Plan{Files: []projectupgrade.File{{Path: name, Ownership: "unknown-neighbor", Action: "preserve"}}}
+	var output bytes.Buffer
+	if err := writeFrameworkUpgradePlan(&output, plan); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(output.String(), "\x1b\x07") || strings.Count(output.String(), "\n") != 2 || !strings.Contains(output.String(), fmt.Sprintf("%q", name)) {
+		t.Fatalf("unsafe path output: %q", output.String())
+	}
+}

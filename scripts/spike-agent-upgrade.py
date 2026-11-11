@@ -92,7 +92,7 @@ def prepare(source, renderer, revision="HEAD"):
 
 def parse_tests(path, exit_code):
     """Keep test identity distinct from aggregate counts, package failures, and zero-test invocations."""
-    passed, failed, skipped, build_failed = set(), set(), set(), set()
+    passed, failed, skipped, build_failed, packages = set(), set(), set(), set(), set()
     for line in path.read_text().splitlines():
         try:
             event = json.loads(line)
@@ -102,13 +102,15 @@ def parse_tests(path, exit_code):
             continue
         package = event.get("Package") or event.get("ImportPath") or "unknown"
         action = event.get("Action")
+        if action in ("start", "pass", "fail", "skip", "build-fail") and package != "unknown":
+            packages.add(package)
         identity = package + "::" + event["Test"] if event.get("Test") else None
         if identity and action in ("pass", "fail", "skip"):
             {"pass": passed, "fail": failed, "skip": skipped}[action].add(identity)
         elif action in ("fail", "build-fail"):
             build_failed.add(package)
     return {"exit_code": exit_code, "passed": sorted(passed), "failed": sorted(failed),
-            "skipped": sorted(skipped), "package_failures": sorted(build_failed)}
+            "skipped": sorted(skipped), "package_failures": sorted(build_failed), "packages": sorted(packages)}
 
 
 def run_go(app, evaluation, name, arguments, timeout=300):
@@ -119,12 +121,13 @@ def run_go(app, evaluation, name, arguments, timeout=300):
         try:
             exit_code = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            exit_code = 124
+        finally:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             process.wait()
-            exit_code = 124
     return parse_tests(log, exit_code)
 
 
@@ -152,6 +155,18 @@ def holdout_overlay(app, evaluation, name):
     return overlay
 
 
+def coverage_losses(results):
+    """Detect disappearing failed or skipped tests and packages hidden by new module boundaries."""
+    losses = {}
+    for suite in ("unit", "auth"):
+        baseline, candidate = results["baseline"][suite], results["app"][suite]
+        required = set(baseline["passed"]) | set(baseline["failed"])
+        missing_tests = required - (set(candidate["passed"]) | set(candidate["failed"]))
+        missing_tests |= set(baseline["skipped"]) - (set(candidate["passed"]) | set(candidate["skipped"]))
+        losses[suite] = {"tests": sorted(missing_tests), "packages": sorted(set(baseline["packages"]) - set(candidate["packages"]))}
+    return losses
+
+
 def assess_results(results, protected):
     """Refuse green claims from empty runs, lost behaviors, skipped coverage, or an ineffective negative control."""
     regressions = {suite: sorted(set(results["baseline"][suite]["passed"]) - set(results["app"][suite]["passed"])) for suite in ("unit", "auth")}
@@ -163,14 +178,15 @@ def assess_results(results, protected):
     gates_pass = gates_pass and HOLDOUT_TESTS.issubset(holdout_names) and HOLDOUT_TESTS.issubset(baseline_holdout)
     gates_pass = gates_pass and all(results[side][suite]["passed"] for side in ("baseline", "app") for suite in ("unit", "auth"))
     gates_pass = gates_pass and all(set(candidate[suite]["skipped"]).issubset(results["baseline"][suite]["skipped"]) for suite in ("unit", "auth"))
+    gates_pass = gates_pass and not any(value["tests"] or value["packages"] for value in coverage_losses(results).values())
     return gates_pass, regressions
 
 
-def trial_status(accepted, protected, regressions, validation_changes):
+def trial_status(accepted, protected, regressions, validation_changes, losses):
     """Distinguish observed regressions from incomplete acceptance and validation side effects."""
     if validation_changes:
         return "invalidated"
-    if protected or any(regressions.values()):
+    if protected or any(regressions.values()) or any(value["tests"] or value["packages"] for value in losses.values()):
         return "regressed"
     return "measured-gates-pass" if accepted else "blocked"
 
@@ -232,15 +248,16 @@ def evaluate(root):
     changed = sorted(name for name in set(before) | set(after) if before.get(name) != after.get(name))
     protected = protected_changes(before, after)
     gates_pass, regressions = assess_results(results, protected)
+    losses = coverage_losses(results)
     gates_pass = gates_pass and not validation_changes
-    summary = {"status": trial_status(gates_pass, protected, regressions, validation_changes), "manual_upgrade_review_required": True,
+    summary = {"status": trial_status(gates_pass, protected, regressions, validation_changes, losses), "manual_upgrade_review_required": True,
                "source_revision": metadata["source_revision"], "binary_sha256": metadata["binary_sha256"],
                "changed_files": changed, "protected_changes": protected, "validation_changes": validation_changes,
-               "lost_baseline_test_passes": regressions, "results": results,
+               "lost_baseline_test_passes": regressions, "lost_baseline_coverage": losses, "results": results,
                "residual_artifacts": residual_artifacts(json.loads((root / "packet/target-snapshot.json").read_text()), after)}
     (evaluation / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return {"workspace": str(root), "status": summary["status"], "changed_files": len(changed), "protected_changes": protected,
-            "lost_baseline_test_passes": {name: len(values) for name, values in regressions.items()}, "summary": str(evaluation / "summary.json")}
+            "lost_baseline_test_passes": {name: len(values) for name, values in regressions.items()}, "lost_baseline_coverage": losses, "summary": str(evaluation / "summary.json")}
 
 
 def main():

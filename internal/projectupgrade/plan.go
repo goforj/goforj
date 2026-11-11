@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"go/ast"
+	"go/build/constraint"
 	"go/format"
 	"go/parser"
 	"go/scanner"
@@ -380,6 +381,7 @@ func declarations(source string) (map[string]string, bool) {
 	}
 	result := map[string]string{"package": file.Name.Name}
 	var constraints, directives []string
+	legacyEnd := legacyBuildConstraintEnd(source)
 	var directiveOffsets []int
 	var lexer scanner.Scanner
 	lexer.Init(positions.AddFile("directives.go", -1, len(source)), []byte(source), nil, scanner.ScanComments)
@@ -391,8 +393,12 @@ func declarations(source string) (map[string]string, bool) {
 		if kind != token.COMMENT {
 			continue
 		}
-		if strings.HasPrefix(line, "//go:build ") || strings.HasPrefix(line, "// +build ") {
+		if strings.HasPrefix(line, "//go:build ") {
 			constraints = append(constraints, line)
+		} else if positions.Position(location).Offset < legacyEnd && constraint.IsPlusBuild(line) {
+			if _, err := constraint.Parse(line); err == nil {
+				constraints = append(constraints, line)
+			}
 		}
 		if strings.HasPrefix(line, "//go:") && !strings.HasPrefix(line, "//go:build ") {
 			directives = append(directives, line)
@@ -402,6 +408,7 @@ func declarations(source string) (map[string]string, bool) {
 	result["build-constraints"] = strings.Join(constraints, "\n")
 	result["compiler-directives"] = strings.Join(directives, "\n")
 	fragments := map[string][]string{}
+	var initializationOrder []string
 	directiveIndex := 0
 	for _, declaration := range file.Decls {
 		var key string
@@ -425,6 +432,9 @@ func declarations(source string) (map[string]string, bool) {
 					}
 				}
 			}
+			if node.Tok == token.VAR {
+				initializationOrder = append(initializationOrder, key)
+			}
 		}
 		// Bind directives to their next or enclosing declaration so relocation cannot disappear from the hints.
 		for directiveIndex < len(directives) && directiveOffsets[directiveIndex] < positions.Position(declaration.End()).Offset {
@@ -438,7 +448,32 @@ func declarations(source string) (map[string]string, bool) {
 	for key, parts := range fragments {
 		result[key] = strings.Join(parts, "")
 	}
+	result["variable-initialization-order"] = strings.Join(initializationOrder, "\n")
 	return result, false
+}
+
+// legacyBuildConstraintEnd preserves Go's blank-line boundary before the first non-line-comment header content.
+func legacyBuildConstraintEnd(source string) int {
+	end, offset := 0, 0
+	if strings.HasPrefix(source, "\ufeff") {
+		source = strings.TrimPrefix(source, "\ufeff")
+		offset = len("\ufeff")
+	}
+	for len(source) > 0 {
+		line, rest, hasNewline := strings.Cut(source, "\n")
+		offset += len(line)
+		if hasNewline {
+			offset++
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			end = offset
+		} else if !strings.HasPrefix(line, "//") {
+			break
+		}
+		source = rest
+	}
+	return end
 }
 
 // changedDeclarations highlights inspection targets without claiming that disjoint declarations are behaviorally independent.

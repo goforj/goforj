@@ -237,7 +237,7 @@ func writeFrameworkUpgradePlan(output io.Writer, plan projectupgrade.Plan) error
 		}
 	}
 	for _, file := range plan.Files {
-		if _, err := fmt.Fprintf(output, "%s\t%s\t%s\n", file.Path, file.Ownership, file.Action); err != nil {
+		if _, err := fmt.Fprintf(output, "%q\t%s\t%s\n", file.Path, file.Ownership, file.Action); err != nil {
 			return err
 		}
 		if file.InvalidGo {

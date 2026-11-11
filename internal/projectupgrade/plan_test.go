@@ -3,6 +3,7 @@ package projectupgrade
 import (
 	"encoding/json"
 	"fmt"
+	"go/build"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -681,5 +682,146 @@ func TestSnapshotUnicodeRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(snapshot, decoded) {
 		t.Fatal("protocol changed valid Unicode source or metadata")
+	}
+}
+
+// TestDeclarationHintsPreserveDistinctInitializerOrder keeps side-effecting package initialization visible across declaration keys.
+func TestDeclarationHintsPreserveDistinctInitializerOrder(t *testing.T) {
+	before := "package app\nvar A = next()\nvar B = next()\n"
+	after := "package app\nvar B = next()\nvar A = next()\n"
+	changed, invalid := changedDeclarations(before, after)
+	if invalid || !reflect.DeepEqual(changed, []string{"variable-initialization-order"}) {
+		t.Fatalf("initializer order lost: changed=%v invalid=%v", changed, invalid)
+	}
+	root := t.TempDir()
+	baseline := testSnapshot(before + "var C = next()\n")
+	target := testSnapshot("package app\nvar A = next()\nvar C = next()\nvar B = next()\n")
+	writeFixture(t, root, target.Artifacts[0].Path, after+"var C = next()\n")
+	plan, err := Build(root, target, &baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Files[0].Action != "reconcile" || !contains(plan.Files[0].Overlaps, "variable-initialization-order") {
+		t.Fatalf("overlapping initializer edits hidden: %+v", plan.Files[0])
+	}
+}
+
+// TestDeclarationHintsTrackEffectiveLegacyBuildConstraints checks placement against the Go file selector.
+func TestDeclarationHintsTrackEffectiveLegacyBuildConstraints(t *testing.T) {
+	tests := []struct {
+		name        string
+		before      string
+		after       string
+		beforeMatch bool
+		afterMatch  bool
+		changed     bool
+	}{
+		{
+			name:       "relocated below package",
+			before:     "// +build ignore\n\npackage app\n",
+			after:      "package app\n\n// +build ignore\n",
+			afterMatch: true,
+			changed:    true,
+		},
+		{
+			name:       "leading byte order mark",
+			before:     "\ufeff// +build ignore\n\npackage app\n",
+			after:      "\ufeffpackage app\n// +build ignore\n",
+			afterMatch: true,
+			changed:    true,
+		},
+		{
+			name:       "missing separating blank line",
+			before:     "// +build ignore\n\npackage app\n",
+			after:      "// +build ignore\npackage app\n",
+			afterMatch: true,
+			changed:    true,
+		},
+		{
+			name:   "ordinary header comments",
+			before: "// License.\n// +build ignore\n\n// Package app.\npackage app\n",
+			after:  "// Updated license.\n\n// +build ignore\n\n// Updated package comment.\npackage app\n",
+		},
+		{
+			name:        "ineffective legacy comment",
+			before:      "package app\n// +build ignore\n",
+			after:       "package app\n// +build linux\n",
+			beforeMatch: true,
+			afterMatch:  true,
+		},
+		{
+			name:        "block comment ends legacy header",
+			before:      "/* License. */\n// +build ignore\n\npackage app\n",
+			after:       "/* License. */\n// +build linux\n\npackage app\n",
+			beforeMatch: true,
+			afterMatch:  true,
+		},
+		{
+			name:        "blank line only before constraint",
+			before:      "// License.\n\n// +build ignore\npackage app\n",
+			after:       "// License.\n\n// +build linux\npackage app\n",
+			beforeMatch: true,
+			afterMatch:  true,
+		},
+		{
+			name:       "legacy spelling without space",
+			before:     "//+build ignore\n\npackage app\n",
+			after:      "package app\n//+build ignore\n",
+			afterMatch: true,
+			changed:    true,
+		},
+		{
+			name:        "overly complex legacy expression is ignored",
+			before:      "// +build " + strings.Repeat("ignore ", 102) + "\n\npackage app\n",
+			after:       "package app\n",
+			beforeMatch: true,
+			afterMatch:  true,
+		},
+		{
+			name:       "tabs and carriage returns",
+			before:     "\t// +build\tignore\r\n\r\npackage app\r\n",
+			after:      "package app\r\n\t// +build\tignore\r\n",
+			afterMatch: true,
+			changed:    true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, fixture := range []struct {
+				name   string
+				source string
+				want   bool
+			}{{"before.go", test.before, test.beforeMatch}, {"after.go", test.after, test.afterMatch}} {
+				writeFixture(t, root, fixture.name, fixture.source)
+				matches, err := build.Default.MatchFile(root, fixture.name)
+				if err != nil || matches != fixture.want {
+					t.Fatalf("Go selector for %s: matches=%v err=%v, want %v", fixture.name, matches, err, fixture.want)
+				}
+			}
+			changed, invalid := changedDeclarations(test.before, test.after)
+			var want []string
+			if test.changed {
+				want = []string{"build-constraints"}
+			}
+			if invalid || !reflect.DeepEqual(changed, want) {
+				t.Fatalf("legacy constraints: changed=%v invalid=%v, want %v", changed, invalid, want)
+			}
+		})
+	}
+}
+
+// TestLegacyBuildConstraintRelocationOverlaps exposes competing changes to file selection in upgrade plans.
+func TestLegacyBuildConstraintRelocationOverlaps(t *testing.T) {
+	root := t.TempDir()
+	baseline := testSnapshot("// +build ignore\n\npackage app\n")
+	target := testSnapshot("// +build linux\n\npackage app\n")
+	writeFixture(t, root, target.Artifacts[0].Path, "package app\n\n// +build ignore\n")
+	plan, err := Build(root, target, &baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file := plan.Files[0]; file.InvalidGo || !reflect.DeepEqual(file.Overlaps, []string{"build-constraints"}) {
+		t.Fatalf("legacy relocation overlap lost: %+v", file)
 	}
 }

@@ -53,6 +53,7 @@ not vendor application source, generated baselines, or the candidate patch.
 | Check | Original application copy | Reconciled candidate |
 | --- | --- | --- |
 | Unit test/subtest passes | 1,453 | 1,825, with every baseline passing identity retained |
+| Discovered unit packages | 47 | 48, with every baseline package retained |
 | Auth integration test/subtest passes | 103 | 103, no skipped auth tests |
 | Full Go suite | Blocked by missing frontend output and two stale constructor calls | Blocked by the same two constructor calls |
 | Trace correlation probe | Both event and HTTP-access cases fail behaviorally | Both cases pass, plus their parent test |
@@ -160,9 +161,13 @@ Preparation freezes a private executable copy for the trial. Evaluation verifies
 that executable and the input packet before running tests. It rejects explicit
 failed-test or package-failure events even if a test process incorrectly exits
 zero, requires executable build mode so a non-main Go archive cannot satisfy the
-application-build check, and terminates validation process groups on timeout. A real
-child-process regression test checks that a timed-out descendant cannot write into
-a later phase. These local controls are not an executable sandbox.
+application-build check, and terminates validation process groups after success
+as well as timeout. Real child-process regression tests check that descendants
+cannot write into a later phase. Package discovery is retained, including failing
+packages and packages without tests. Adding a nested module cannot silently hide
+those packages from the upgrade checks. Previously failed or skipped test identities
+must remain observed; unchanged pre-existing failures still block acceptance. These
+local controls are not an executable sandbox.
 
 The driver retains source/mode fingerprints, target-packet hashes, complete Go
 logs, test identities, protected-file changes, residual artifacts, and a summary
