@@ -83,7 +83,7 @@ func generateDBFiles(input generationInput) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to format generated db accessors: %w", err)
 	}
-	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, "internal", "database", "connections_gen.go"), formatted)
+	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, DatabaseConnectionsPath), formatted)
 	if err != nil {
 		return 0, err
 	}

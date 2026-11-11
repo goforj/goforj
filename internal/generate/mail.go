@@ -214,14 +214,14 @@ func generateMailFiles(input generationInput) (int, error) {
 	}
 
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, "internal", "mail", "manager_gen.go"), formattedManager)
+	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, MailManagerPath), formattedManager)
 	if err != nil {
 		return written, err
 	}
 	if changed {
 		written++
 	}
-	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, "internal", "mail", "accessors_gen.go"), formattedAccessors)
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, MailAccessorsPath), formattedAccessors)
 	if err != nil {
 		return written, err
 	}

@@ -2,6 +2,7 @@ package projectlayout
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -83,7 +84,26 @@ func RuntimeReadyStamp(root string, app project.App) string {
 
 // Discover reports filesystem failures while retaining Apps proven by readable markers, so compatibility callers can safely use the partial inventory.
 func Discover(root string) (Discovery, error) {
-	names, err := discoverConventionalAppNames(root)
+	return discover(root, discoveryFiles{stat: os.Stat, readDir: os.ReadDir})
+}
+
+// DiscoverFS uses the same App markers through a caller-provided filesystem, allowing inspection to retain os.Root confinement.
+func DiscoverFS(files fs.FS) (Discovery, error) {
+	return discover(".", discoveryFiles{
+		stat:    func(name string) (fs.FileInfo, error) { return fs.Stat(files, filepath.ToSlash(name)) },
+		readDir: func(name string) ([]fs.DirEntry, error) { return fs.ReadDir(files, filepath.ToSlash(name)) },
+	})
+}
+
+// discoveryFiles keeps marker policy shared while allowing each caller to choose its filesystem boundary.
+type discoveryFiles struct {
+	stat    func(string) (fs.FileInfo, error)
+	readDir func(string) ([]fs.DirEntry, error)
+}
+
+// discover builds one stable App inventory without changing the filesystem operations chosen by its caller.
+func discover(root string, files discoveryFiles) (Discovery, error) {
+	names, err := discoverConventionalAppNames(root, files)
 	apps := make([]project.App, 0, len(names))
 	for name := range names {
 		if name == project.DefaultAppName || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
@@ -141,7 +161,7 @@ func RuntimeApps(root string, config *project.Config, pending ...project.App) []
 }
 
 // discoverConventionalAppNames treats established cmd and app ownership markers as filesystem source of truth.
-func discoverConventionalAppNames(root string) (map[string]struct{}, error) {
+func discoverConventionalAppNames(root string, files discoveryFiles) (map[string]struct{}, error) {
 	names := map[string]struct{}{}
 	var discoveryErr error
 	recordError := func(err error) {
@@ -151,7 +171,7 @@ func discoverConventionalAppNames(root string) (map[string]struct{}, error) {
 	}
 
 	commandRoot := rootedPath(root, "cmd")
-	entries, err := readDirectory(commandRoot)
+	entries, err := readDirectory(commandRoot, files)
 	if err != nil && !os.IsNotExist(err) {
 		recordError(fmt.Errorf("discover Apps in %s: %w", commandRoot, err))
 	}
@@ -165,7 +185,7 @@ func discoverConventionalAppNames(root string) (map[string]struct{}, error) {
 				continue
 			}
 			marker := filepath.Join(commandRoot, name, "main.go")
-			if _, err := os.Stat(marker); err == nil {
+			if _, err := files.stat(marker); err == nil {
 				names[name] = struct{}{}
 			} else if !os.IsNotExist(err) {
 				recordError(fmt.Errorf("inspect App marker %s: %w", marker, err))
@@ -174,7 +194,7 @@ func discoverConventionalAppNames(root string) (map[string]struct{}, error) {
 	}
 
 	appRoot := rootedPath(root, "app")
-	entries, err = readDirectory(appRoot)
+	entries, err = readDirectory(appRoot, files)
 	if err != nil && !os.IsNotExist(err) {
 		recordError(fmt.Errorf("discover Apps in %s: %w", appRoot, err))
 	}
@@ -187,7 +207,7 @@ func discoverConventionalAppNames(root string) (map[string]struct{}, error) {
 			if name == project.DefaultAppName || !project.IsSafeAppName(name) || project.IsReservedAppName(name) {
 				continue
 			}
-			hasFiles, err := hasConventionalAppFiles(filepath.Join(appRoot, name))
+			hasFiles, err := hasConventionalAppFiles(filepath.Join(appRoot, name), files)
 			if err != nil {
 				recordError(err)
 			}
@@ -200,19 +220,19 @@ func discoverConventionalAppNames(root string) (map[string]struct{}, error) {
 }
 
 // readDirectory rejects non-directory roots consistently because Windows can report a regular file as an empty directory listing.
-func readDirectory(path string) ([]os.DirEntry, error) {
-	info, err := os.Stat(path)
+func readDirectory(path string, files discoveryFiles) ([]os.DirEntry, error) {
+	info, err := files.stat(path)
 	if err != nil {
 		return nil, err
 	}
 	if !info.IsDir() {
 		return nil, fmt.Errorf("%s is not a directory", path)
 	}
-	return os.ReadDir(path)
+	return files.readDir(path)
 }
 
 // hasConventionalAppFiles excludes arbitrary app subpackages unless they contain an App-owned composition marker.
-func hasConventionalAppFiles(appDir string) (bool, error) {
+func hasConventionalAppFiles(appDir string, files discoveryFiles) (bool, error) {
 	var markerErr error
 	for _, path := range []string{
 		filepath.Join(appDir, "wire"),
@@ -222,7 +242,7 @@ func hasConventionalAppFiles(appDir string) (bool, error) {
 		filepath.Join(appDir, "schedules.go"),
 		filepath.Join(appDir, "lifecycle.go"),
 	} {
-		if _, err := os.Stat(path); err == nil {
+		if _, err := files.stat(path); err == nil {
 			return true, markerErr
 		} else if !os.IsNotExist(err) {
 			if markerErr == nil {

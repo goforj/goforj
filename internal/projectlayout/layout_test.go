@@ -272,3 +272,40 @@ func writeLayoutTestFile(t *testing.T, path string) {
 		t.Fatalf("WriteFile(%s) error = %v", path, err)
 	}
 }
+
+// TestDiscoverFSKeepsMarkerSemantics shares one discovery policy with callers that supply confined filesystems.
+func TestDiscoverFSKeepsMarkerSemantics(t *testing.T) {
+	for _, badRoot := range []string{"", "cmd", "app"} {
+		t.Run("root-"+badRoot, func(t *testing.T) {
+			root := t.TempDir()
+			writeLayoutTestFile(t, filepath.Join(root, "cmd/billing/main.go"))
+			writeLayoutTestFile(t, filepath.Join(root, "app/worker/lifecycle.go"))
+			writeLayoutTestFile(t, filepath.Join(root, "app/helpers/helper.go"))
+			if badRoot != "" {
+				if err := os.RemoveAll(filepath.Join(root, badRoot)); err != nil {
+					t.Fatal(err)
+				}
+				writeLayoutTestFile(t, filepath.Join(root, badRoot))
+			}
+			ordinary, ordinaryErr := Discover(root)
+			filesystem, err := os.OpenRoot(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer filesystem.Close()
+			confined, confinedErr := DiscoverFS(filesystem.FS())
+			if (ordinaryErr == nil) != (confinedErr == nil) || !reflect.DeepEqual(ordinary.NamedApps(), confined.NamedApps()) {
+				t.Fatalf("discovery policies diverged: ordinary=%v/%v confined=%v/%v", ordinary.NamedApps(), ordinaryErr, confined.NamedApps(), confinedErr)
+			}
+		})
+	}
+	root := t.TempDir()
+	filesystem, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer filesystem.Close()
+	if discovery, err := DiscoverFS(filesystem.FS()); err != nil || len(discovery.NamedApps()) != 0 {
+		t.Fatalf("empty root=%v/%v", discovery.NamedApps(), err)
+	}
+}

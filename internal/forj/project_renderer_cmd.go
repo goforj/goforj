@@ -11,9 +11,14 @@ type RenderCmd struct {
 	logger   *logger.AppLogger
 	renderer *ProjectRenderer
 
-	Components []string `help:"Components to render"`
-	Only       string   `help:"Render only OpenAPI handlers and server route registration (openapi)"`
-	Timings    bool     `help:"Print render phase timings"`
+	Components     []string `help:"Components to render"`
+	Only           string   `help:"Render OpenAPI handlers (openapi), or inspect framework upgrades with --plan"`
+	Timings        bool     `help:"Print render phase timings"`
+	Plan           bool     `help:"Inspect a framework upgrade without changing the project"`
+	JSON           bool     `help:"Print the experimental framework upgrade plan as JSON"`
+	FromRenderer   string   `help:"Comparison renderer executable supporting the framework snapshot protocol"`
+	TargetRenderer string   `help:"Target renderer executable; defaults to this binary"`
+	Snapshot       bool     `help:"Emit the experimental framework renderer snapshot protocol" hidden:""`
 }
 
 // Signature returns the command-line contract used for registration.
@@ -31,6 +36,13 @@ func NewCmd(logger *logger.AppLogger, renderer *ProjectRenderer) *RenderCmd {
 
 // Run executes the command.
 func (c *RenderCmd) Run() error {
+	inspection, err := c.frameworkInspectionRequested()
+	if err != nil {
+		return err
+	}
+	if inspection {
+		return c.runFrameworkUpgradeInspectionStdout()
+	}
 	if c.Only != "" {
 		if c.Only != "openapi" {
 			return fmt.Errorf("unknown render surface %q; supported: openapi", c.Only)
@@ -85,7 +97,7 @@ func (c *RenderCmd) Run() error {
 		}
 	}
 
-	err := c.renderer.Render(i)
+	err = c.renderer.Render(i)
 	if err != nil {
 		return err
 	}
