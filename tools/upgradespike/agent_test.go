@@ -679,11 +679,11 @@ func TestAgentIncompleteLifecyclesBlockEveryPhase(t *testing.T) {
 
 // TestAgentRealGoBaselineLifecycles requires a successful baseline despite candidate repairs.
 func TestAgentRealGoBaselineLifecycles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("validation environment intentionally uses /tmp")
+	}
 	for _, mode := range []string{"signal", "test-main-exit", "assertion", "assertion-and-test-main-exit"} {
 		t.Run(mode, func(t *testing.T) {
-			if mode == "signal" && runtime.GOOS == "windows" {
-				t.Skip("Windows does not support signaling a process with SIGTERM")
-			}
 			root := t.TempDir()
 			app, evaluation := filepath.Join(root, "app"), filepath.Join(root, "evaluation")
 			agentWrite(t, filepath.Join(app, "go.mod"), "module example.com/lifecycle\n\ngo 1.20\n")
