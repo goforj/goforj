@@ -124,6 +124,9 @@ Read:
 - [Runtime Architecture](runtime-architecture.md)
 - [../designs/completed/metrics-design.md](../designs/completed/metrics-design.md)
 
+For a reproducible HTTP-to-job-to-event trace with correlated Grafana logs, read
+[Async Tracing in Grafana](async-tracing-demo.md).
+
 Add if the issue mentions:
 
 - per-surface metrics toggles

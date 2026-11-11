@@ -35,8 +35,8 @@ import (
 // processTraceEvent crosses the transport boundary with a recognizable application payload.
 type processTraceEvent struct{ ID string }
 
-// Topic isolates the acceptance event from other generated examples.
-func (processTraceEvent) Topic() string { return "acceptance.orders.finished" }
+// Topic keeps business routing independent from the Go event type name.
+func (processTraceEvent) Topic() string { return "orders.finished" }
 
 // processSpan retains collector resource identity alongside the exported span.
 type processSpan struct {
@@ -52,6 +52,16 @@ func TestAsyncSeparateProcesses(t *testing.T) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
+			return
+		}
+		if endpoint := os.Getenv("FORJ_ASYNC_DEMO_OTLP_ENDPOINT"); endpoint != "" {
+			if err := processForwardTelemetry(r.Context(), strings.TrimRight(endpoint, "/")+r.URL.Path, body); err != nil {
+				http.Error(w, "demo telemetry forwarding failed", http.StatusBadGateway)
+				return
+			}
+		}
+		if r.URL.Path == "/v1/logs" {
+			w.Header().Set("Content-Type", "application/x-protobuf")
 			return
 		}
 		var request collector.ExportTraceServiceRequest
@@ -110,6 +120,10 @@ func TestAsyncSeparateProcesses(t *testing.T) {
 			}
 		}
 		cmd.Env = append(env, "ASYNC_PROCESS_ROLE="+role, "ASYNC_PROCESS_DIR="+dir, "OTEL_SERVICE_NAME=async-"+role, "OTEL_TRACES_EXPORTER=otlp", "OTEL_TRACES_SAMPLER=always_on", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="+receiver.URL+"/v1/traces", "LIGHTHOUSE_ENABLED=false", "LIGHTHOUSE_INSPECT_ENABLED=false")
+		cmd.Env = append(cmd.Env, "OTEL_LOGS_EXPORTER=none")
+		if os.Getenv("FORJ_ASYNC_DEMO_OTLP_ENDPOINT") != "" {
+			cmd.Env = append(cmd.Env, "OTEL_LOGS_EXPORTER=otlp", "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT="+receiver.URL+"/v1/logs")
+		}
 		output := &bytes.Buffer{}
 		cmd.Stdout = output
 		cmd.Stderr = output
@@ -149,14 +163,14 @@ func TestAsyncSeparateProcesses(t *testing.T) {
 	for _, span := range spans {
 		byName[span.span.Name] = append(byName[span.span.Name], span)
 	}
-	for name, count := range map[string]int{"POST /orders": 1, "send default": 1, "acceptance.orders.process": 2, "send acceptance.orders.finished": 1, "process acceptance.orders.finished": 1} {
+	for name, count := range map[string]int{"POST /orders": 1, "send default": 1, "orders.process": 2, "send orders.finished": 1, "process orders.finished": 1} {
 		if len(byName[name]) != count {
 			t.Fatalf("%s: got %d spans, want %d; collected=%v", name, len(byName[name]), count, spans)
 		}
 	}
 	request := byName["POST /orders"][0]
 	producer := byName["send default"][0]
-	attempts := byName["acceptance.orders.process"]
+	attempts := byName["orders.process"]
 	var failed, succeeded processSpan
 	for _, attempt := range attempts {
 		if attempt.span.Status.GetCode() == tracepb.Status_STATUS_CODE_ERROR {
@@ -168,8 +182,8 @@ func TestAsyncSeparateProcesses(t *testing.T) {
 	if failed.span == nil || succeeded.span == nil {
 		t.Fatal("retry must export one failed and one successful execution")
 	}
-	eventProducer := byName["send acceptance.orders.finished"][0]
-	consumer := byName["process acceptance.orders.finished"][0]
+	eventProducer := byName["send orders.finished"][0]
+	consumer := byName["process orders.finished"][0]
 	for _, edge := range [][2]processSpan{{request, producer}, {producer, failed}, {producer, succeeded}, {succeeded, eventProducer}, {eventProducer, consumer}} {
 		if !bytes.Equal(edge[0].span.SpanId, edge[1].span.ParentSpanId) {
 			t.Fatalf("parent mismatch: %s -> %s", edge[0].span.Name, edge[1].span.Name)
@@ -198,6 +212,82 @@ func TestAsyncSeparateProcesses(t *testing.T) {
 	}
 	if entry.Message != "order finished" || entry.Fields["trace_id"] != hex.EncodeToString(request.span.TraceId) || entry.Fields["span_id"] != hex.EncodeToString(consumer.span.SpanId) {
 		t.Fatalf("handler log lost trace correlation: %s", body)
+	}
+	if reportPath := os.Getenv("FORJ_ASYNC_DEMO_REPORT"); reportPath != "" {
+		relationships := make([]map[string]any, 0, len(spans))
+		for _, exported := range spans {
+			relationships = append(relationships, map[string]any{
+				"name": exported.span.Name, "service": exported.service,
+				"trace_id": exported.span.TraceId, "span_id": exported.span.SpanId,
+				"parent_span_id": exported.span.ParentSpanId, "status": exported.span.GetStatus().GetCode().String(),
+			})
+		}
+		report, err := json.MarshalIndent(map[string]any{
+			"trace_id":        hex.EncodeToString(request.span.TraceId),
+			"handler_span_id": hex.EncodeToString(consumer.span.SpanId),
+			"services":        []string{"async-publisher", "async-worker", "async-eventconsumer"},
+			"span_count":      len(spans), "job_attempts": len(attempts), "handler_log": entry, "span_relationships": relationships,
+		}, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		processWrite(t, filepath.Dir(reportPath), filepath.Base(reportPath), report)
+	}
+}
+
+// processForwardTelemetry sends the real SDK exports to an opt-in local demo collector before acknowledging delivery.
+func processForwardTelemetry(ctx context.Context, endpoint string, body []byte) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return errors.New("invalid demo collector endpoint")
+	}
+	request.Header.Set("Content-Type", "application/x-protobuf")
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return errors.New("demo collector unavailable")
+	}
+	defer response.Body.Close()
+	if _, err := io.Copy(io.Discard, response.Body); err != nil {
+		return errors.New("demo collector response failed")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return errors.New("demo collector rejected export")
+	}
+	return nil
+}
+
+// TestProcessForwardTelemetry prevents the demo from acknowledging lost or rejected SDK exports.
+func TestProcessForwardTelemetry(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusBadGateway} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, err := io.ReadAll(r.Body)
+			if err != nil || string(body) != "sdk export" || r.Method != http.MethodPost || r.URL.Path != "/v1/logs" || r.Header.Get("Content-Type") != "application/x-protobuf" {
+				t.Error("forwarding changed the SDK request")
+			}
+			w.WriteHeader(status)
+		}))
+		err := processForwardTelemetry(context.Background(), server.URL+"/v1/logs", []byte("sdk export"))
+		server.Close()
+		if (err != nil) != (status != http.StatusOK) {
+			t.Fatalf("status=%d error=%v", status, err)
+		}
+	}
+	if err := processForwardTelemetry(context.Background(), "://invalid", nil); err == nil {
+		t.Fatal("invalid endpoint accepted")
+	}
+	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	closed.Close()
+	if err := processForwardTelemetry(context.Background(), closed.URL, nil); err == nil {
+		t.Fatal("unavailable collector accepted")
+	}
+	truncated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "20")
+		_, _ = io.WriteString(w, "short")
+	}))
+	defer truncated.Close()
+	if err := processForwardTelemetry(context.Background(), truncated.URL, nil); err == nil {
+		t.Fatal("truncated collector response accepted")
 	}
 }
 
@@ -228,11 +318,32 @@ func TestAsyncProcessRole(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer jobs.Default().Shutdown(context.Background())
-		request := manager.Begin(ctx, runtime.SourceHTTP, "POST /orders", nil)
-		_, err = jobs.WithContext(request).Dispatch(queue.NewJob("acceptance.orders.process").Payload(map[string]string{"id": "order-42"}).Retry(1))
-		manager.Finish(request, "ok", nil)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			request := manager.BeginHTTP(r.Context(), "POST /orders")
+			_, dispatchErr := jobs.WithContext(request).Dispatch(queue.NewJob("orders.process").Payload(map[string]string{"id": "order-42"}).Retry(1))
+			status := "ok"
+			if dispatchErr != nil {
+				status = "error"
+			}
+			manager.Finish(request, status, dispatchErr)
+			if dispatchErr != nil {
+				http.Error(w, "order dispatch failed", http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+		}))
+		defer server.Close()
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/orders", nil)
 		if err != nil {
 			t.Fatal(err)
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusAccepted {
+			t.Fatalf("HTTP order response: %d", response.StatusCode)
 		}
 		return
 	}
@@ -248,7 +359,7 @@ func TestAsyncProcessRole(t *testing.T) {
 			t.Fatal(err)
 		}
 		var attempts atomic.Int32
-		jobs.Register("acceptance.orders.process", func(jobContext context.Context, message queue.Message) error {
+		jobs.Register("orders.process", func(jobContext context.Context, message queue.Message) error {
 			if err := processBarrier(jobContext, dir, "publisher.exited"); err != nil {
 				return err
 			}
@@ -287,6 +398,16 @@ func TestAsyncProcessRole(t *testing.T) {
 	manager.TracerProvider().RegisterSpanProcessor(ended)
 	t.Setenv("APP_LOG_FORMAT", "json")
 	appLogger := logger.NewAppLogger()
+	if err := appLogger.ConfigureTelemetry(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := appLogger.Shutdown(shutdown); err != nil {
+			t.Error(err)
+		}
+	}()
 	var logMu sync.Mutex
 	var logBody []byte
 	appLogger.AddSink(func(entry logger.LogEntry) { logMu.Lock(); defer logMu.Unlock(); logBody, _ = json.Marshal(entry) })
@@ -393,7 +514,7 @@ func (*processCompletion) OnStart(context.Context, trace.ReadWriteSpan) {}
 
 // OnEnd releases the role only after its instrumented callback has returned.
 func (p *processCompletion) OnEnd(span trace.ReadOnlySpan) {
-	if span.Name() == "process acceptance.orders.finished" {
+	if span.Name() == "process orders.finished" {
 		p.once.Do(func() { close(p.done) })
 	}
 }

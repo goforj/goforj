@@ -70,8 +70,10 @@ func TestRenderedAsyncTraceSeparateProcesses(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "test", "-race", "-count=1", "-run", "^TestAsyncSeparateProcesses$", "-timeout", "90s", "./internal/observability")
+	cmd := exec.CommandContext(ctx, "go", "test", "-race", "-count=1", "-run", "^(TestAsyncSeparateProcesses|TestProcessForwardTelemetry)$", "-timeout", "90s", "./internal/observability")
 	cmd.Dir = root
+	env["FORJ_ASYNC_DEMO_OTLP_ENDPOINT"] = os.Getenv("FORJ_ASYNC_DEMO_OTLP_ENDPOINT")
+	env["FORJ_ASYNC_DEMO_REPORT"] = os.Getenv("FORJ_ASYNC_DEMO_REPORT")
 	cmd.Env = testkit.IntegrationGoProcessEnv(t, env)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		manifest, readErr := os.ReadFile(filepath.Join(root, "go.mod"))
