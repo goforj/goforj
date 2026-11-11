@@ -830,5 +830,143 @@
     "raw_sha256": "6b8e58e56126f9f27c93c126e35e71b72f7207919da8f7970c78ea20f9f5bf08",
     "interpretation": "All six allocation and byte counts remain unchanged. Observed median changes are a few nanoseconds for normal valid injection/extraction; this is not an end-to-end throughput comparison.",
     "scope_limit": "External carriers exceeding the existing generic 8-KiB budget are still ignored before extraction. Oversized SDK state is omitted on outgoing framework carriers to prevent that loss."
+  },
+  "native_header_validation_followup": {
+    "head": "316e9aadf07fcb32250135a4b381e53e6050cfa3",
+    "method": {
+      "toolchain": "go1.26.0 darwin/arm64",
+      "cpu": "Apple M4 Max",
+      "os": "macOS 26.5.2 (25F84)",
+      "samples": 5,
+      "benchtime": "250ms",
+      "GOMAXPROCS": 1,
+      "warmup": "50ms each benchmark, omitted from measurements",
+      "orders": "alternating before-first and after-first",
+      "command": [
+        "./adapterbench.test",
+        "-test.run=^$",
+        "-test.bench=BenchmarkHeaders",
+        "-test.benchtime=250ms",
+        "-test.benchmem",
+        "-test.cpu=1",
+        "-test.count=1"
+      ],
+      "env": {
+        "GOMAXPROCS": "1",
+        "TMPDIR": "/tmp",
+        "GOCACHE": "/tmp/gocache",
+        "GOMODCACHE": "/tmp/goforj-otel-modcache",
+        "GOWORK": "off",
+        "GOTOOLCHAIN": "go1.26.0"
+      }
+    },
+    "fixture_sha256": {
+      "adapters.go": "48be3084d843270d50a2f4342b419af1ba1d586c4a539772addbc3705ed759ca",
+      "adapters_test.go": "234c4506cebc8f0d59808fb17260456bc8c5f7768cbeaa235a684bbe73371d51",
+      "adapterbench.test": "ffc4bdc27875e79a2faeb2e7ac9414ec217975da3fedde49774180adde9184b0",
+      "go.mod": "e3bf41ab62080f1a0507da2be37cc7af848644720dae457906dc1e509d4a4fea",
+      "go.sum": "4ee681d81ea1553a3bea0d3188042661d43e1f6ef3d9a416bb8c8b1d82034be6"
+    },
+    "sources": {
+      "NATS": {
+        "before": {
+          "path": "driver/natsevents/nats.go",
+          "file_sha256": "ece423ac9785d6cf90986e82541d057ef7b9a996793a82fed04ad66d092c8d3a",
+          "function_sha256": "f4330cdb3a8aa71cc31f8d76a9793dfd334607b1151f371ed44ff264b42639e2"
+        },
+        "final": {
+          "path": "driver/natsevents/nats.go",
+          "file_sha256": "2fa5308936713cdcb5cbdb49d2928f6c832423ea4594eef8ee457a3e40c1a2c7",
+          "function_sha256": "d7d611945cdfe10942867a58d5c1243666a2951c7e4d6211389948c9d94d0899"
+        },
+        "matches_measured_code": true
+      },
+      "JetStream": {
+        "before": {
+          "path": "driver/natsjetstreamevents/natsjetstream.go",
+          "file_sha256": "78fb700ef1d83a78f6ff26eaede3a93ba35dd2791a5450546efb2d8fa3fbed12",
+          "function_sha256": "f4330cdb3a8aa71cc31f8d76a9793dfd334607b1151f371ed44ff264b42639e2"
+        },
+        "final": {
+          "path": "driver/natsjetstreamevents/natsjetstream.go",
+          "file_sha256": "84a9f7928dfc71ab29364937414e46cc9fe36217d3a8be69784bcfe834949428",
+          "function_sha256": "d7d611945cdfe10942867a58d5c1243666a2951c7e4d6211389948c9d94d0899"
+        },
+        "matches_measured_code": true
+      },
+      "SNS": {
+        "before": {
+          "path": "driver/snsevents/sns.go",
+          "file_sha256": "ef50278ab090c8b3891a56f6320daf82a7294bd72336fb9364540c6b5cd50575",
+          "function_sha256": "54a8fcfbee15348ada418f17d9853167941302f2bf470025166c61086dfe42e0"
+        },
+        "final": {
+          "path": "driver/snsevents/sns.go",
+          "file_sha256": "9a620066ee9e9a49688f3a9c5fe15f31f5c2aa574dfe89be50378e71a35ff2c2",
+          "function_sha256": "2b9f257623aabbc5fc50b77bc3d6ec0e56ed545aaa51180c17e49c361780c658"
+        },
+        "matches_measured_code": true
+      }
+    },
+    "medians": {
+      "NATS": {
+        "before_ns_op": 154.4,
+        "final_ns_op": 168.7,
+        "delta_ns_op": 14.3,
+        "delta_percent": 9.3,
+        "before_bytes_op": 432,
+        "final_bytes_op": 432,
+        "before_allocs_op": 4,
+        "final_allocs_op": 4,
+        "final_ns_min": 166.6,
+        "final_ns_max": 169.4,
+        "final_timing_directly_measured": true
+      },
+      "JetStream": {
+        "before_ns_op": 154.4,
+        "final_ns_op": 168.7,
+        "delta_ns_op": 14.3,
+        "delta_percent": 9.3,
+        "before_bytes_op": 432,
+        "final_bytes_op": 432,
+        "before_allocs_op": 4,
+        "final_allocs_op": 4,
+        "final_ns_min": 166.6,
+        "final_ns_max": 169.4,
+        "final_timing_directly_measured": false
+      },
+      "SNS": {
+        "before_ns_op": 204.8,
+        "final_ns_op": 252.8,
+        "delta_ns_op": 48.0,
+        "delta_percent": 23.4,
+        "before_bytes_op": 688,
+        "final_bytes_op": 688,
+        "before_allocs_op": 6,
+        "final_allocs_op": 6,
+        "final_ns_min": 250.4,
+        "final_ns_max": 255.0,
+        "final_timing_directly_measured": true
+      }
+    },
+    "limitations": [
+      "Warm, isolated header-conversion microbenchmark, with map inputs prebuilt and escaping output. Compilation, first-process execution, broker I/O, payload serialization, throughput, and end-to-end latency are excluded.",
+      "Five 250 ms samples per benchmark in one compiled binary; before/current order alternates, while the byte-switch variant runs after both within NATS. A 50 ms per-case warmup was discarded. No statistical significance model or cold-start measurement.",
+      "The final NATS byte-switch helper exactly matches the measured variant after identifier normalization; final JetStream conversion and helper tokens also match it. JetStream final timing is inferred from identical code, not a separate final JetStream benchmark.",
+      "Measurements apply to Apple M4 Max, darwin/arm64, Go 1.26.0, one P, exactly two valid W3C fields with lowercase keys. Header count, key length, malformed fields, different architectures and compiler versions can change results."
+    ],
+    "candidate_events_commit": "daa56aea99a71212bf49f5695113aa6090c11f2e",
+    "scope": "Native NATS/SNS invalid optional metadata omission; Redis rejects framed header JSON above 8KiB before map allocation. Framework HTTP runtime is unchanged.",
+    "redis_oversized_carrier": {
+      "wire_bytes": 638934,
+      "header_fields": 50000,
+      "business_payload_bytes": 1,
+      "before_bytes": 7066544,
+      "after_bytes": 639464,
+      "before_allocations": 100304,
+      "after_allocations": 13,
+      "method": "One local decoder iteration via Go test overlay, independently rerun against the final Redis guard. Indicative resource comparison; no broker-throughput or timing claim. Initial JSON scan and RawMessage copy remain proportional to frame size."
+    },
+    "raw_samples_sha256": "54d3098c0f09f3614a09acecf60445e69535e20eca18305f3ba0306ac837fac6"
   }
 }
