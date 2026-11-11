@@ -305,6 +305,8 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 			matchesBaselineMode := runtime.GOOS == "windows" ||
 				(old.Mode == 0 && !file.ModeChanged) ||
 				(old.Mode != 0 && observation.mode&0o111 == old.Mode&0o111)
+			unchangedUpstreamMode := runtime.GOOS == "windows" || next.Mode == 0 ||
+				(old.Mode != 0 && old.Mode&0o111 == next.Mode&0o111)
 			switch {
 			case !hasNext:
 				file.Action = "review-retirement"
@@ -320,7 +322,7 @@ func Build(root string, target Snapshot, baseline *Snapshot) (Plan, error) {
 				file.Action = "review-collision"
 			case file.CurrentDigest == file.BaselineDigest && matchesBaselineMode:
 				file.Action = "upstream-only-relative-to-baseline"
-			case file.TargetDigest == file.BaselineDigest:
+			case file.TargetDigest == file.BaselineDigest && (!file.ModeChanged || unchangedUpstreamMode):
 				file.Action = "preserve-local-relative-to-baseline"
 			default:
 				file.Action = "reconcile"

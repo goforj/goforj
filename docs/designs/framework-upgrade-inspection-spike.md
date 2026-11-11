@@ -32,7 +32,9 @@ Renderer processes receive disposable workspaces with projected configuration
 and neutral environment layers. They do not receive application source, private
 environment values, owner commands, local module replacements, or configuration
 extras. The protocol uses bounded output, a timeout, direct executable invocation,
-and actual binary version/commit/dirty metadata. Global CLI installations and
+and actual binary version/commit/dirty metadata. Comparison commands use the
+existing native process supervisor so managed descendants are stopped on
+cancellation and after a renderer leader exits. Global CLI installations and
 authentication configuration remain unchanged.
 
 Older released binaries do not implement this protocol. Downloading versions,
@@ -114,12 +116,16 @@ Named Apps participate in framework snapshots and Wire classification. The
 snapshot serializes its App rendering so inventory capture remains deterministic;
 ordinary rendering retains its existing concurrency.
 
-Managed files are opened through a rooted filesystem handle. Inspection rejects
-symlinks, bounds source reads to 4 MiB, streams raw-asset digests up to 64 MiB,
+Managed files are opened through a rooted filesystem handle. Managed-file reads
+reject symlinks, bounds source reads to 4 MiB, streams raw-asset digests up to 64 MiB,
 and verifies file identity and compared state before returning a plan. Opaque
 private, seeded, and owner files are not opened. These checks detect common
 concurrent edits; inspection is not a filesystem transaction or an executable
 sandbox for supplied renderer binaries.
+
+App marker discovery shares the ordinary renderer's marker catalog through a
+rooted filesystem. Discovery-root or marker symlinks cannot select Apps outside
+the inspected project; ordinary discovery retains its existing behavior.
 
 Peer responses require strict, bounded JSON: canonical field names, no duplicate
 keys, valid UTF-8, limited nesting, and exactly one document. Artifacts require
@@ -262,6 +268,14 @@ experiment's evidence checks also have direct Python tests for skipped tests,
 missing baseline identities, compiler failures, and incomplete negative controls.
 The reference copier also tests case-insensitive environment-layer exclusion and
 symlink exclusion so those private paths never enter a disposable app copy.
+
+An independent core review also reproduced three cases now covered by direct
+regressions: upstream executable changes beside local content edits, discovery
+through external directory/marker symlinks, and renderer descendants surviving
+timeout or normal leader exit. Mode classification now considers upstream
+executable bits, discovery uses the confined shared marker policy, and renderer
+orchestration reuses native process-tree supervision. A maximal normal render
+and both committed reference inspections passed after these corrections.
 
 The Windows CI failure on the earlier revision came from a MySQL readiness test
 that indexed beyond its three shell responses after an unexpected extra probe.

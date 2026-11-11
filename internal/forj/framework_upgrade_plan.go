@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/goforj/goforj/internal/devwatch"
 	"github.com/goforj/goforj/internal/projectupgrade"
 	"github.com/goforj/goforj/project"
 )
@@ -60,23 +61,24 @@ func frameworkSnapshotFromRenderer(ctx context.Context, config *project.Config, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, resolved, "render", "--snapshot")
-	command.Dir = staging
+	environment := map[string]string{"APP_ENV": "local"}
 	for _, key := range []string{"PATH", "HOME", "TMPDIR", "GOCACHE", "GOMODCACHE", "SYSTEMROOT", "USERPROFILE"} {
 		if value, ok := os.LookupEnv(key); ok {
-			command.Env = append(command.Env, key+"="+value)
+			environment[key] = value
 		}
 	}
-	command.Env = append(command.Env, "APP_ENV=local")
-	command.WaitDelay = time.Second
 	var output boundedSnapshotOutput
-	command.Stdout = &output
-	command.Stderr = io.Discard
-	if err := command.Run(); err != nil {
+	supervisor := devwatch.NewSupervisor(devwatch.SupervisorOptions{StopTimeout: 100 * time.Millisecond})
+	defer supervisor.Close()
+	_, runErr := supervisor.Run(ctx, "comparison-renderer", devwatch.Command{
+		Args: []string{resolved, "render", "--snapshot"}, Dir: staging,
+		Env: environment, ReplaceEnv: true, Stdout: &output, Stderr: io.Discard,
+	})
+	if runErr != nil {
 		if ctx.Err() != nil {
 			return projectupgrade.Snapshot{}, fmt.Errorf("comparison renderer interrupted: %w", ctx.Err())
 		}
-		return projectupgrade.Snapshot{}, fmt.Errorf("comparison renderer failed or lacks framework snapshot protocol v%d: %w", projectupgrade.ProtocolVersion, err)
+		return projectupgrade.Snapshot{}, fmt.Errorf("comparison renderer failed or lacks framework snapshot protocol v%d: %w", projectupgrade.ProtocolVersion, runErr)
 	}
 	if err := validateSnapshotJSON(output.buffer.Bytes()); err != nil {
 		return projectupgrade.Snapshot{}, err

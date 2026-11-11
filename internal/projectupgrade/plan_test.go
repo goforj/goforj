@@ -586,3 +586,41 @@ func TestDeclarationHintsPreserveRepeatedInitializerOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildCombinesContentAndModeChanges keeps upstream executable changes visible beside owner source edits.
+func TestBuildCombinesContentAndModeChanges(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix executable bits")
+	}
+	for _, test := range []struct {
+		name               string
+		old, next, current uint32
+		action             string
+	}{
+		{"upstream mode and local content", 0o644, 0o755, 0o644, "reconcile"},
+		{"local mode and content", 0o644, 0o644, 0o755, "preserve-local-relative-to-baseline"},
+		{"upstream mode already applied", 0o644, 0o755, 0o755, "preserve-local-relative-to-baseline"},
+		{"unknown baseline mode", 0, 0o644, 0o755, "reconcile"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			baseline := testSnapshot("original\n")
+			baseline.Artifacts[0].Path = "tool.sh"
+			baseline.Artifacts[0].Mode = test.old
+			target := testSnapshot("original\n")
+			target.Artifacts[0].Path = "tool.sh"
+			target.Artifacts[0].Mode = test.next
+			writeFixture(t, root, "tool.sh", "owner customization\n")
+			if err := os.Chmod(filepath.Join(root, "tool.sh"), os.FileMode(test.current)); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := Build(root, target, &baseline)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Files[0].Action != test.action {
+				t.Fatalf("action=%s, want %s", plan.Files[0].Action, test.action)
+			}
+		})
+	}
+}

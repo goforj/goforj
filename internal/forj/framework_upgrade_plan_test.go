@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -636,5 +637,105 @@ func TestFrameworkUpgradeMaximalInventoryNeedsNoTools(t *testing.T) {
 		if !seen[name] {
 			t.Fatalf("maximal framework artifact missing: %s", name)
 		}
+	}
+}
+
+// TestFrameworkDiscoveryCannotEscapeProject confines both discovery roots and individual ownership markers.
+func TestFrameworkDiscoveryCannotEscapeProject(t *testing.T) {
+	for _, location := range []string{"cmd", "app", "marker"} {
+		t.Run(location, func(t *testing.T) {
+			root := frameworkUpgradeFixture(t, false)
+			outside := t.TempDir()
+			writeProjectRendererTestFile(t, filepath.Join(outside, "privateworker/main.go"), "package main\n")
+			writeProjectRendererTestFile(t, filepath.Join(outside, "privateworker/lifecycle.go"), "package privateworker\n")
+			link, target := filepath.Join(root, location), outside
+			if location == "marker" {
+				link = filepath.Join(root, "cmd/privateworker/main.go")
+				target = filepath.Join(outside, "privateworker/main.go")
+				if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			} else if location == "app" {
+				if err := os.RemoveAll(link); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			if _, err := frameworkUpgradeConfig(root); err == nil {
+				t.Fatal("discovery accepted an external ownership marker")
+			}
+		})
+	}
+}
+
+// TestRendererLifecycleStopsDescendants covers cancellation and descendants left behind by a successful protocol response.
+func TestRendererLifecycleStopsDescendants(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable fixture; supervisor has native Windows process-tree tests")
+	}
+	projection, err := frameworkUpgradeConfig(frameworkUpgradeFixture(t, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := frameworkSnapshotForConfig(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, successful := range []bool{false, true} {
+		t.Run(fmt.Sprint(successful), func(t *testing.T) {
+			directory := t.TempDir()
+			ready, release, marker := filepath.Join(directory, "ready"), filepath.Join(directory, "release"), filepath.Join(directory, "survived")
+			binary := filepath.Join(directory, "renderer")
+			script := "#!/bin/sh\ntrap '' TERM\n(remaining=200; while [ ! -f " + shellSingleQuote(release) + " ] && [ \"$remaining\" -gt 0 ]; do sleep .05; remaining=$((remaining-1)); done; if [ -f " + shellSingleQuote(release) + " ]; then printf survived > " + shellSingleQuote(marker) + "; fi) >/dev/null 2>&1 &\nprintf ready > " + shellSingleQuote(ready) + "\n"
+			if successful {
+				script += "cat <<'RENDERER_SNAPSHOT'\n" + string(payload) + "\nRENDERER_SNAPSHOT\n"
+			} else {
+				script += "while :; do sleep 1; done\n"
+			}
+			if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { _, err := frameworkSnapshotFromRenderer(ctx, projection, binary); done <- err }()
+			if !successful {
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					if _, err := os.Stat(ready); err == nil {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("renderer did not become ready")
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				cancel()
+			}
+			select {
+			case err := <-done:
+				if successful && err != nil {
+					t.Fatal(err)
+				}
+				if !successful && !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancellation=%v", err)
+				}
+			case <-time.After(8 * time.Second):
+				t.Fatal("renderer lifecycle did not finish")
+			}
+			if err := os.WriteFile(release, []byte("release"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(200 * time.Millisecond)
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("renderer descendant survived: %v", err)
+			}
+		})
 	}
 }

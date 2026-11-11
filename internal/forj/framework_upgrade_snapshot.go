@@ -62,7 +62,12 @@ func frameworkUpgradeConfig(root string) (*project.Config, error) {
 		}
 		config.Apps[name] = project.AppConfig{Components: app.Components, StarterKit: app.StarterKit, StarterKitOptions: app.StarterKitOptions, HelpFormat: app.HelpFormat}
 	}
-	discovery, err := projectlayout.Discover(root)
+	filesystem, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer filesystem.Close()
+	discovery, err := projectlayout.DiscoverFS(filesystem.FS())
 	if err != nil {
 		return nil, err
 	}
