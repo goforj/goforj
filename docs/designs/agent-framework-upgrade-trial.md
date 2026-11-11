@@ -50,16 +50,18 @@ not vendor application source, generated baselines, or the candidate patch.
 
 The Go evaluator was rerun against that retained candidate. It reproduced the
 original passing, failing, and skipped test identities, changed-file list, and
-residual artifact lists. Its package coverage check retained all 47 baseline
-packages within the candidate's 48 packages. Existing suite failures still block
-acceptance; moving the experiment to Go does not change that assessment.
+residual artifact lists. Its package coverage check retained all 45 selected baseline
+packages within the candidate's 46 packages. Build-only import paths remain failure
+diagnostics and are excluded from selected test-package counts. Existing suite
+failures still block acceptance; moving the experiment to Go does not change that
+assessment.
 
 ## Independent observations
 
 | Check | Original application copy | Reconciled candidate |
 | --- | --- | --- |
 | Unit test/subtest passes | 1,453 | 1,825, with every baseline passing identity retained |
-| Discovered unit packages | 47 | 48, with every baseline package retained |
+| Selected unit test packages | 45 | 46, with every baseline package retained |
 | Auth integration test/subtest passes | 103 | 103, no skipped auth tests |
 | Full Go suite | Blocked by missing frontend output and two stale constructor calls | Blocked by the same two constructor calls |
 | Trace correlation probe | Both event and HTTP-access cases fail behaviorally | Both cases pass, plus their parent test |

@@ -270,9 +270,10 @@ func parseTests(source io.Reader, exitCode int) (testResult, error) {
 			pkg = "unknown"
 		}
 		switch event.Action {
-		case "start", "pass", "fail", "skip", "build-fail":
-			if pkg != "unknown" {
-				sets[4][pkg] = true
+		case "start", "pass", "fail", "skip":
+			// Build events identify dependencies through ImportPath, not selected test packages.
+			if event.Package != "" {
+				sets[4][event.Package] = true
 			}
 		}
 		if event.Test != "" {

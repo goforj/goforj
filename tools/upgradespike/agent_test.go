@@ -766,3 +766,63 @@ func TestPolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestAgentRealGoDependencyBuildRepair keeps dependency diagnostics separate from selected package coverage.
+func TestAgentRealGoDependencyBuildRepair(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("validation environment intentionally uses /tmp")
+	}
+	root := t.TempDir()
+	app, evaluation := filepath.Join(root, "app"), filepath.Join(root, "evaluation")
+	sources := map[string]string{
+		"go.mod":                "module example.com/buildrepair\n\ngo 1.20\n\nrequire example.com/dependency v0.0.0\nreplace example.com/dependency => ./dependency\n",
+		"policy.go":             "package buildrepair\nconst policy = true\n",
+		"policy_test.go":        "package buildrepair\nimport \"testing\"\n// TestExisting retains passing evidence while another package cannot compile.\nfunc TestExisting(t *testing.T) {}\n",
+		"nested/policy.go":      "package nested\nimport \"example.com/dependency\"\n// Policy uses the external module without changing the application's selected packages.\nfunc Policy() bool { return dependency.Policy }\n",
+		"nested/policy_test.go": "package nested\nimport \"testing\"\n// TestPolicy exercises the dependency after its compilation is repaired.\nfunc TestPolicy(t *testing.T) { if !Policy() { t.Fatal(\"policy failed\") } }\n",
+		"dependency/go.mod":     "module example.com/dependency\n\ngo 1.20\n",
+	}
+	for name, source := range sources {
+		agentWrite(t, filepath.Join(app, filepath.FromSlash(name)), source)
+	}
+	dependency := filepath.Join(app, "dependency", "policy.go")
+	agentWrite(t, dependency, "package dependency\n// Policy exposes the dependency behavior consumed by the app.\nconst Policy = undefinedPolicy\n")
+	if err := os.MkdirAll(evaluation, 0700); err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := runGo(context.Background(), app, evaluation, "baseline", []string{"test", "-json", "-count=1", "./..."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPackages := []string{"example.com/buildrepair", "example.com/buildrepair/nested"}
+	if baseline.ExitCode != 1 || !hasTestName(baseline.Passed, "TestExisting") || !reflect.DeepEqual(baseline.Packages, wantPackages) {
+		t.Fatalf("baseline lost selected-package coverage: %+v", baseline)
+	}
+	if !reflect.DeepEqual(baseline.PackageFailures, []string{"example.com/buildrepair/nested", "example.com/dependency"}) {
+		t.Fatalf("baseline lost build-failure diagnostics: %+v", baseline)
+	}
+	agentWrite(t, dependency, "package dependency\n// Policy exposes the dependency behavior consumed by the app.\nconst Policy = true\n")
+	candidate, err := runGo(context.Background(), app, evaluation, "candidate", []string{"test", "-json", "-count=1", "./..."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.ExitCode != 0 || !completeTestEvidence(candidate) || len(candidate.PackageFailures) != 0 || !hasTestName(candidate.Passed, "TestPolicy") || !reflect.DeepEqual(candidate.Packages, wantPackages) {
+		t.Fatalf("candidate did not pass with unchanged selected packages: %+v", candidate)
+	}
+	for name, source := range sources {
+		retained, err := os.ReadFile(filepath.Join(app, filepath.FromSlash(name)))
+		if err != nil || string(retained) != source {
+			t.Fatalf("application source changed: %s: %v", name, err)
+		}
+	}
+	results := agentPassingResults()
+	results["baseline"]["unit"], results["app"]["unit"] = baseline, candidate
+	accepted, regressions := assessResults(results, nil)
+	losses := coverageLosses(results)
+	if len(regressions["unit"]) != 0 || len(losses["unit"].Tests) != 0 || len(losses["unit"].Packages) != 0 {
+		t.Fatalf("dependency repair invented coverage loss: regressions=%+v losses=%+v", regressions, losses)
+	}
+	if accepted || trialStatus(accepted, nil, regressions, nil, losses) != "blocked" {
+		t.Fatal("failing baseline did not block acceptance")
+	}
+}

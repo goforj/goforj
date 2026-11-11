@@ -421,17 +421,21 @@ func declarations(source string) (map[string]string, bool) {
 				key = strings.TrimPrefix(receiver.String(), "*") + "." + key
 			}
 		case *ast.GenDecl:
-			key = node.Tok.String()
+			var names strings.Builder
+			names.WriteString(node.Tok.String())
 			for _, spec := range node.Specs {
 				switch typed := spec.(type) {
 				case *ast.TypeSpec:
-					key += " " + typed.Name.Name
+					names.WriteByte(' ')
+					names.WriteString(typed.Name.Name)
 				case *ast.ValueSpec:
 					for _, name := range typed.Names {
-						key += " " + name.Name
+						names.WriteByte(' ')
+						names.WriteString(name.Name)
 					}
 				}
 			}
+			key = names.String()
 			if node.Tok == token.VAR {
 				initializationOrder = append(initializationOrder, key)
 			}

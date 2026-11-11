@@ -23,7 +23,7 @@ func TestParseTests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := testResult{ExitCode: 0, Passed: []string{"a::Parent/child"}, Failed: []string{"b::Parent/child"}, Skipped: []string{"a::Skipped"}, PackageFailures: []string{"b", "c"}, Packages: []string{"a", "b", "c", "empty"}, IncompletePackages: []string{"a"}}
+	expected := testResult{ExitCode: 0, Passed: []string{"a::Parent/child"}, Failed: []string{"b::Parent/child"}, Skipped: []string{"a::Skipped"}, PackageFailures: []string{"b", "c"}, Packages: []string{"a", "b", "empty"}, IncompletePackages: []string{"a"}}
 	if !reflect.DeepEqual(result, expected) {
 		t.Fatalf("got %+v, want %+v", result, expected)
 	}
@@ -34,6 +34,27 @@ func TestParseTests(t *testing.T) {
 	_, err = parseTests(failingReader{}, 0)
 	if err == nil {
 		t.Fatal("reader failure was discarded")
+	}
+}
+
+// TestParseTestsSeparatesBuildDependencies preserves diagnostics without inventing selected test packages.
+func TestParseTestsSeparatesBuildDependencies(t *testing.T) {
+	input := strings.Join([]string{
+		`{"Action":"build-fail","ImportPath":"example.com/dependency"}`,
+		`{"Action":"start","Package":"example.com/app","ImportPath":"example.com/other"}`,
+		`{"Action":"fail","Package":"example.com/app","ImportPath":"example.com/other"}`,
+		`{"Action":"pass","Package":"example.com/passing"}`,
+		`{"Action":"skip","Package":"example.com/skipped"}`,
+	}, "\n")
+	result, err := parseTests(strings.NewReader(input), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.Packages, []string{"example.com/app", "example.com/passing", "example.com/skipped"}) {
+		t.Fatalf("build dependencies entered test coverage: %+v", result)
+	}
+	if !reflect.DeepEqual(result.PackageFailures, []string{"example.com/app", "example.com/dependency"}) || !completeTestEvidence(result) {
+		t.Fatalf("lost selected-package failure or dependency diagnostics: %+v", result)
 	}
 }
 

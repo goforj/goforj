@@ -291,6 +291,14 @@ missing baseline identities, compiler failures, and incomplete negative controls
 The reference copier also tests case-insensitive environment-layer exclusion and
 symlink exclusion so those private paths never enter a disposable app copy.
 
+Grouped declarations also use a single key builder, avoiding repeated prefix
+copies for large `var`, `const`, and `type` groups. A valid 192 KB fixture with
+16,000 variable names measured about 6.57 GB of cumulative allocation per plan
+before the fix and 109 MB afterward. Three local samples decreased median plan
+time from 1.10 seconds to 82.6 ms. These are allocation totals, not peak resident
+memory or an out-of-memory result. Grouped-key and receiver regressions preserve
+the existing hint identities, and multi-size benchmarks retain the measurement.
+
 The reference, controlled-auth, and independent-agent experiment runners are all
 implemented in Go. The Go runners reproduced the reference inventory counts and
 the controlled auth red/green results. Re-evaluating the retained agent candidate
