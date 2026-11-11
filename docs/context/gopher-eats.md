@@ -41,13 +41,21 @@ runs the storefront at `http://localhost:3000`. Grafana is available at
 
 Each cooking stage has its own scene, driven by the corresponding service event:
 
-| Received | Preparing |
-| --- | --- |
-| ![Gopher chef receives the order ticket.](../screenshots/gopher-eats/scene-received.png) | ![Gopher chef prepares dough and toppings.](../screenshots/gopher-eats/scene-preparing.png) |
+### Received
 
-| Baking | Ready |
-| --- | --- |
-| ![Pizza bakes in a glowing stone oven.](../screenshots/gopher-eats/scene-baking.png) | ![Steaming pizza box waits at the pickup counter.](../screenshots/gopher-eats/scene-ready.png) |
+![Gopher chef receives the order ticket.](../screenshots/gopher-eats/scene-received.png)
+
+### Preparing
+
+![Gopher chef prepares dough and toppings.](../screenshots/gopher-eats/scene-preparing.png)
+
+### Baking
+
+![Pizza bakes in a glowing stone oven.](../screenshots/gopher-eats/scene-baking.png)
+
+### Ready
+
+![Steaming pizza box waits at the pickup counter.](../screenshots/gopher-eats/scene-ready.png)
 
 Delivery switches to the neighborhood map. Preparing takes three seconds,
 baking four, and pickup two by default. The courier moves in 5% increments,
