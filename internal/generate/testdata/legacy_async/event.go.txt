@@ -1,0 +1,56 @@
+package events
+
+import (
+	"context"
+	"time"
+
+	goforjevents "github.com/goforj/events"
+	"github.com/goforj/events/eventscore"
+)
+
+type API = goforjevents.API
+type Driver = eventscore.Driver
+type Subscription = goforjevents.Subscription
+
+type EventPublishEvent struct {
+	Bus      string
+	Topic    string
+	Err      error
+	Duration time.Duration
+	Driver   Driver
+}
+
+type EventSubscriptionEvent struct {
+	Bus     string
+	Topic   string
+	Handler string
+	Err     error
+	Driver  Driver
+}
+
+type EventDeliveryEvent struct {
+	Bus      string
+	Topic    string
+	Handler  string
+	Err      error
+	Duration time.Duration
+	Driver   Driver
+}
+
+const (
+	DriverInproc        Driver = eventscore.DriverSync
+	DriverNull          Driver = eventscore.DriverNull
+	DriverRedis         Driver = eventscore.DriverRedis
+	DriverNATS          Driver = eventscore.DriverNATS
+	DriverNATSJetStream Driver = eventscore.DriverNATSJetStream
+	DriverKafka         Driver = eventscore.DriverKafka
+	DriverGCPPubSub     Driver = eventscore.DriverGCPPubSub
+	DriverSNS           Driver = eventscore.DriverSNS
+)
+
+// Bus is the application-facing event bus with lifecycle hooks.
+type Bus interface {
+	API
+	Start(ctx context.Context) error
+	Close(ctx context.Context) error
+}

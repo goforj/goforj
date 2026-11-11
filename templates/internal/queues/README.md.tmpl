@@ -47,6 +47,8 @@ _, err := app.Queues().Dispatch(queue.NewJob("reports:generate").OnQueue("critic
 
 Bind the active context with `app.Queues().WithContext(ctx).Dispatch(...)` to connect enqueue and receiving-handler spans. Generated queues carry W3C trace identity independently from job payloads and preserve the receiving worker's cancellation and deadline. Producer spans are created by manager dispatch; direct runtime handles remain the lower-level API.
 
+Redis workers require the matching queue and Redis adapter upgrades so context is restored before native process observations. Worker startup fails with a capability error for an older adapter; publishing without starting workers remains supported.
+
 Driver-owned retry-publication diagnostics on NATS, RabbitMQ, and SQS currently use their worker context and may lack the receiving handler's trace identity. Normal handler execution and retry delivery retain propagated context.
 
 ## Apps

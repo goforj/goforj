@@ -86,6 +86,7 @@ func generatedModuleRequirements(projectDir string, selection GenerationSelectio
 		{selection.Mail, "mail"},
 		{selection.Queue, "queues"},
 		{selection.Events, "events"},
+		{selection.Queue || selection.Events, "inspects"},
 		{selection.Database, "database"},
 	}
 	catalog := coredeps.AllPinnedModules()
@@ -95,8 +96,11 @@ func generatedModuleRequirements(projectDir string, selection GenerationSelectio
 			continue
 		}
 		names := []string{"manager_gen.go", "accessors_gen.go"}
-		if pkg.name == "database" {
+		switch pkg.name {
+		case "database":
 			names = []string{"connections_gen.go"}
+		case "inspects":
+			names = []string{"propagation_gen.go"}
 		}
 		for _, name := range names {
 			path := filepath.Join(projectDir, "internal", pkg.name, name)

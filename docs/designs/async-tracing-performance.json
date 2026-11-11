@@ -679,5 +679,48 @@
     "scope_limit": "Driver-owned retry-publication diagnostics for NATS, RabbitMQ, and SQS retain worker context; receiving handlers and normal retry delivery retain propagated context.",
     "discarded_candidate": "A blanket comma check in traceparent was withdrawn after reviewing W3C future-version rules. Unknown extensions remain opaque, matching the pinned OTel extractor. The raw capture also contains timing samples for that discarded check; they are excluded from accepted results.",
     "specification": "https://www.w3.org/TR/trace-context/#versioning-of-traceparent"
+  },
+  "generated_adapter_relocation": {
+    "previous_template": "templates/internal/inspects/propagation.go.tmpl",
+    "current_template": "templates/internal/inspects/propagation_gen.go.tmpl",
+    "current_template_sha256": "0b6372abf64df5c562bbe7f497bef3eac59517c422ff7eff90e22bfaa24aa661",
+    "implementation_sha256": "57d071f3b2fab1b7746856f69488df9f673308639d21d9af10c770e968e8f677",
+    "interpretation": "The adapter implementation is byte-identical to the measured source after removing the generated-file header. Ordinary queue and event generation now emits it for existing apps; the renderer uses the same template. Historical measured-source hashes above remain unchanged."
+  },
+  "upgrade_review_followup": {
+    "queue_commit": "12e3b5710a83c309a0c77a7cafd674ad15fa933d",
+    "changes": [
+      "Redis propagated worker startup requires early-preparation capability and cleans up an unsupported candidate without changing shared worker state. Legacy queues without a propagator remain unchanged.",
+      "Named event-bus propagation flags are accepted during generation for every driver.",
+      "Ordinary queue and event generation supplies the shared managed adapter, allowing baseline app support sources to compile without a full render.",
+      "Module paths are parsed with the Go module parser, including quoted and commented declarations. Shared adapter imports and file accounting participate in generation."
+    ],
+    "go": "go1.27.0",
+    "runs": 3,
+    "benchtime": "250ms",
+    "gomaxprocs": 1,
+    "measurement": "Single-revision queue smoke check, not a before/after latency comparison. Allocation counts match the earlier optimized queue measurements.",
+    "summary": [
+      {
+        "benchmark": "BenchmarkContextPropagationDispatch/disabled",
+        "ns/op": 3009.0,
+        "B/op": 2584.0,
+        "allocs/op": 23.0
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationDispatch/configured_empty",
+        "ns/op": 3189.0,
+        "B/op": 2584.0,
+        "allocs/op": 23.0
+      },
+      {
+        "benchmark": "BenchmarkContextPropagationDispatch/valid_carrier",
+        "ns/op": 5425.0,
+        "B/op": 4081.0,
+        "allocs/op": 41.0
+      }
+    ],
+    "raw_sha256": "314d2bd9def5ccb912676469a8129bf3b51e9ab9c7d76a4a782e58c16d4d7436",
+    "limitations": "Generic two-field carrier and synchronous logical dispatch. Excludes framework W3C parsing, SDK span creation, and broker latency. No speedup claim follows from this smoke run."
   }
 }

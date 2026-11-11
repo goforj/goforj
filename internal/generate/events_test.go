@@ -7,10 +7,37 @@ import (
 	"testing"
 )
 
+// eventGenerationRoot supplies the module path used by the generated shared adapter import.
+func eventGenerationRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/eventfixture\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// TestGenerateEventFilesAcceptsNamedPropagationForEveryDriver keeps propagation available independently of transport selection.
+func TestGenerateEventFilesAcceptsNamedPropagationForEveryDriver(t *testing.T) {
+	for driver := range eventDriverKeys {
+		t.Run(driver, func(t *testing.T) {
+			for _, enabled := range []string{"true", "false"} {
+				input := fixtureGenerationInput(eventGenerationRoot(t), map[string]string{
+					"EVENTS_DRIVER": "inproc", "EVENTS_AUDIT_DRIVER": driver,
+					"EVENTS_AUDIT_CONTEXT_PROPAGATION_ENABLED": enabled,
+				})
+				if _, err := generateEventFiles(input); err != nil {
+					t.Fatalf("named %s propagation=%s: %v", driver, enabled, err)
+				}
+			}
+		})
+	}
+}
+
 func TestGenerateEventFilesUsesSelectedDriverImports(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "redis")
 
-	root := t.TempDir()
+	root := eventGenerationRoot(t)
 	if err := os.MkdirAll(filepath.Join(root, "internal", "events"), 0o755); err != nil {
 		t.Fatalf("mkdir events package: %v", err)
 	}
@@ -67,7 +94,7 @@ func TestGenerateEventFilesRedisAlwaysEnablesHeaderDecoding(t *testing.T) {
 	for _, enabled := range []string{"true", "false"} {
 		t.Run(enabled, func(t *testing.T) {
 			t.Setenv("EVENTS_CONTEXT_PROPAGATION_ENABLED", enabled)
-			root := t.TempDir()
+			root := eventGenerationRoot(t)
 			if _, err := GenerateEventFiles(root); err != nil {
 				t.Fatal(err)
 			}
@@ -86,7 +113,7 @@ func TestGenerateEventFilesUsesSupportedDriverImports(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "inproc")
 	t.Setenv("EVENTS_SUPPORTED_DRIVERS", "inproc,redis")
 
-	root := t.TempDir()
+	root := eventGenerationRoot(t)
 	if err := os.MkdirAll(filepath.Join(root, "internal", "events"), 0o755); err != nil {
 		t.Fatalf("mkdir events package: %v", err)
 	}
@@ -109,7 +136,7 @@ func TestGenerateEventFilesBuildsNamedAccessors(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "inproc")
 	t.Setenv("EVENTS_AUDIT_DRIVER", "null")
 
-	root := t.TempDir()
+	root := eventGenerationRoot(t)
 	if err := os.MkdirAll(filepath.Join(root, "internal", "events"), 0o755); err != nil {
 		t.Fatalf("mkdir events package: %v", err)
 	}
@@ -147,7 +174,7 @@ func TestGenerateEventFilesChainsMultipleObservers(t *testing.T) {
 			"github.com/goforj/events/eventscore",
 			"github.com/goforj/str/v2",
 		},
-		nil,
+		[]string{"go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace"},
 		eventsLocalReplaces(t),
 	))
 
@@ -166,13 +193,6 @@ import (
 )
 
 type API = goforjevents.API
-
-// messageContextPropagator satisfies the generated constructor while these fixtures test observer composition.
-type messageContextPropagator struct{}
-// Inject leaves these observer-only fixtures without transport metadata.
-func (messageContextPropagator) Inject(context.Context)map[string]string {return nil}
-// Extract preserves the receiving fixture context.
-func (messageContextPropagator) Extract(ctx context.Context,_ map[string]string)context.Context {return ctx}
 
 type Driver = eventscore.Driver
 type Subscription = goforjevents.Subscription
@@ -413,7 +433,7 @@ func TestGenerateEventFilesSupportsObserverWrapping(t *testing.T) {
 			"github.com/goforj/events/eventscore",
 			"github.com/goforj/str/v2",
 		},
-		nil,
+		[]string{"go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace"},
 		eventsLocalReplaces(t),
 	))
 
@@ -432,13 +452,6 @@ import (
 )
 
 type API = goforjevents.API
-
-// messageContextPropagator satisfies the generated constructor while these fixtures test observer composition.
-type messageContextPropagator struct{}
-// Inject leaves these observer-only fixtures without transport metadata.
-func (messageContextPropagator) Inject(context.Context)map[string]string {return nil}
-// Extract preserves the receiving fixture context.
-func (messageContextPropagator) Extract(ctx context.Context,_ map[string]string)context.Context {return ctx}
 
 type Driver = eventscore.Driver
 type Subscription = goforjevents.Subscription
@@ -848,7 +861,7 @@ func TestGenerateEventFilesIgnoresUnknownPrefixedEnvVars(t *testing.T) {
 	t.Setenv("EVENTS_DRIVER", "redis")
 	t.Setenv("EVENTS_UNKNOWN_VALUE", "1")
 
-	if _, err := GenerateEventFiles(t.TempDir()); err != nil {
+	if _, err := GenerateEventFiles(eventGenerationRoot(t)); err != nil {
 		t.Fatalf("GenerateEventFiles() rejected an unrecognized application env var: %v", err)
 	}
 }
@@ -858,7 +871,7 @@ func TestGenerateEventFilesAllowsInactiveRootDriverEnvVars(t *testing.T) {
 	t.Setenv("EVENTS_ADDR", "127.0.0.1:6379")
 	t.Setenv("EVENTS_REDIS_CHANNEL_PREFIX", "events")
 
-	if _, err := GenerateEventFiles(t.TempDir()); err != nil {
+	if _, err := GenerateEventFiles(eventGenerationRoot(t)); err != nil {
 		t.Fatalf("expected GenerateEventFiles to allow documented inactive root events env vars, got %v", err)
 	}
 }

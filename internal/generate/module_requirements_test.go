@@ -99,7 +99,7 @@ func TestGenerationPinsBeforeTidy(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if result.TotalFiles != 4 || (index == 1 && result.ChangedFiles != 0) {
+					if result.TotalFiles != 5 || (index == 1 && result.ChangedFiles != 0) {
 						t.Fatalf("generation %d result=%+v", index, result)
 					}
 				}
@@ -180,8 +180,8 @@ func TestGeneratedRequirementsSelectionAndMissingManifest(t *testing.T) {
 	}
 	artifactRoot := t.TempDir()
 	writeModuleRequirementsFixture(t, artifactRoot, map[string]string{".env": "EVENTS_DRIVER=inproc\nEVENTS_SUPPORTED_DRIVERS=inproc\n"})
-	if _, err := generateProjectFiles(artifactRoot, GenerationSelection{Events: true}, skipModuleTidy); err != nil {
-		t.Fatal(err)
+	if changed, err := syncGeneratedModuleRequirements(artifactRoot, GenerationSelection{Events: true}); err != nil || changed {
+		t.Fatalf("missing manifest changed=%v error=%v", changed, err)
 	}
 	if _, err := os.Stat(filepath.Join(artifactRoot, "go.mod")); !os.IsNotExist(err) {
 		t.Fatalf("artifact-only generation created manifest: %v", err)
@@ -277,5 +277,37 @@ func TestGeneratedRequirementsReportWriteFailure(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
 	if changed, err := syncGeneratedModuleRequirements(root, GenerationSelection{Queue: true}); changed || err == nil || !strings.Contains(err.Error(), "write generated module requirements") {
 		t.Fatalf("changed=%v error=%v", changed, err)
+	}
+}
+
+// TestGeneratedRequirementsIncludeSharedPropagation pins the adapter's direct SDK API imports only for selected async resources.
+func TestGeneratedRequirementsIncludeSharedPropagation(t *testing.T) {
+	for _, selection := range []GenerationSelection{{Queue: true}, {Events: true}, {Queue: true, Events: true}, {}} {
+		root := t.TempDir()
+		writeModuleRequirementsFixture(t, root, map[string]string{
+			"go.mod": "module example.com/adapterpins\n\ngo 1.26.0\n",
+			"internal/inspects/propagation_gen.go": `package inspects
+import (
+ "go.opentelemetry.io/otel/propagation"
+ "go.opentelemetry.io/otel/trace"
+)
+var _ propagation.TextMapCarrier
+var _ trace.TracerProvider
+`,
+		})
+		changed, err := syncGeneratedModuleRequirements(root, selection)
+		want := selection.Queue || selection.Events
+		if err != nil || changed != want {
+			t.Fatalf("selection=%+v changed=%v want=%v error=%v", selection, changed, want, err)
+		}
+		versions := moduleRequirementsFixtureVersions(readModuleRequirementsFixture(t, root))
+		for _, module := range []string{"go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace"} {
+			if want && versions[module] != coredeps.MustVersionFor(module) || !want && versions[module] != "" {
+				t.Fatalf("selection=%+v %s=%q", selection, module, versions[module])
+			}
+		}
+		if changed, err := syncGeneratedModuleRequirements(root, selection); err != nil || changed {
+			t.Fatalf("stable repeat selection=%+v changed=%v error=%v", selection, changed, err)
+		}
 	}
 }

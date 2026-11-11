@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"text/template"
 
 	"github.com/goforj/str/v2"
+	"golang.org/x/mod/modfile"
 )
 
 // queueAccessorTemplateData carries the named queue methods emitted for one project snapshot.
@@ -244,7 +244,14 @@ func generateQueueFiles(input generationInput) (int, error) {
 		return 0, fmt.Errorf("failed to format generated queue accessors: %w", err)
 	}
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, QueueManagerPath), formattedManager)
+	changed, err := generateMessageContextPropagator(input.projectDir)
+	if err != nil {
+		return written, err
+	}
+	if changed {
+		written++
+	}
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, QueueManagerPath), formattedManager)
 	if err != nil {
 		return written, err
 	}
@@ -313,11 +320,8 @@ func readModuleName(projectDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read go.mod: %w", err)
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "module ") {
-			return str.Of(line).TrimPrefix("module ").Trim().String(), nil
-		}
+	if moduleName := modfile.ModulePath(data); moduleName != "" {
+		return moduleName, nil
 	}
 	return "", fmt.Errorf("module name not found in go.mod")
 }

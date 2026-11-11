@@ -165,7 +165,7 @@ override_version_for_module() {
     github.com/goforj/mail/mailses) echo "v0.3.1" ;;
     github.com/goforj/metrics) echo "v0.2.0" ;;
     github.com/goforj/null/v6) echo "v6.0.2" ;;
-    github.com/goforj/queue) echo "v0.2.2-0.20261111004045-a3262c31758b" ;;
+    github.com/goforj/queue) echo "v0.2.2-0.20261111014902-12e3b5710a83" ;;
     github.com/goforj/scheduler/v2) echo "v2.1.4" ;;
     github.com/goforj/web) echo "v0.6.5" ;;
     github.com/klauspost/compress) echo "v1.20.3" ;;

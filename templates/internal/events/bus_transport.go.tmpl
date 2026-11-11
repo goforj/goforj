@@ -2,14 +2,10 @@ package events
 
 import (
 	"context"
-	"{{.GoModuleName}}/internal/inspects"
 
 	goforjevents "github.com/goforj/events"
 	"github.com/goforj/events/eventscore"
 )
-
-// messageContextPropagator shares the framework W3C carrier with the event transport constructors.
-type messageContextPropagator = inspects.MessageContextPropagator
 
 type managedBus struct {
 	api   goforjevents.API

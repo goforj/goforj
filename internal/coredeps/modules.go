@@ -55,7 +55,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/mail/mailses":                                  "v0.3.1",
 	"github.com/goforj/metrics":                                       "v0.2.0",
 	"github.com/goforj/null/v6":                                       "v6.0.2",
-	"github.com/goforj/queue":                                         "v0.2.2-0.20261111004045-a3262c31758b",
+	"github.com/goforj/queue":                                         "v0.2.2-0.20261111014902-12e3b5710a83",
 	"github.com/goforj/queue/driver/mysqlqueue":                       "v0.2.1",
 	"github.com/goforj/queue/driver/natsqueue":                        "v0.2.1",
 	"github.com/goforj/queue/driver/postgresqueue":                    "v0.2.1",

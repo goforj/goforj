@@ -597,7 +597,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/inspects/README.md.tmpl",
 				"internal/inspects/manager.go.tmpl",
 				"internal/inspects/telemetry.go.tmpl",
-				"internal/inspects/propagation.go.tmpl",
+				"internal/inspects/propagation_gen.go.tmpl",
 				"internal/inspects/propagation_test.go.tmpl",
 				"internal/inspects/telemetry_local.go.tmpl",
 				"internal/inspects/telemetry_local_test.go.tmpl",

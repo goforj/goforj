@@ -153,7 +153,7 @@ func TestQualityReleaseVersionsArePinned(t *testing.T) {
 		{module: "github.com/goforj/env/v2", version: "v2.6.1"},
 		{module: "github.com/goforj/str", version: "v1.3.0"},
 		{module: "github.com/goforj/str/v2", version: "v2.0.1"},
-		{module: "github.com/goforj/queue", version: "v0.2.2-0.20261111004045-a3262c31758b"},
+		{module: "github.com/goforj/queue", version: "v0.2.2-0.20261111014902-12e3b5710a83"},
 		{module: "github.com/goforj/queue/driver/mysqlqueue", version: "v0.2.1"},
 		{module: "github.com/goforj/queue/driver/natsqueue", version: "v0.2.1"},
 		{module: "github.com/goforj/queue/driver/postgresqueue", version: "v0.2.1"},

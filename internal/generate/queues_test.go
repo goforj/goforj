@@ -62,13 +62,6 @@ type Manager struct{}
 func (*Manager) TracingEnabled()bool {return false}
 // TracerProvider satisfies the generated producer instrumentation.
 func (*Manager) TracerProvider()trace.TracerProvider {return noop.NewTracerProvider()}
-// MessageContextPropagator satisfies the generated queue's optional metadata seam.
-type MessageContextPropagator struct{}
-// Inject leaves generator fixtures without transport metadata.
-func (MessageContextPropagator) Inject(context.Context)map[string]string {return nil}
-// Extract preserves the fixture worker context.
-func (MessageContextPropagator) Extract(ctx context.Context,_ map[string]string)context.Context {return ctx}
-
 
 type InspectEvent struct {
 	Kind       string

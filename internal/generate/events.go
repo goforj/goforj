@@ -13,6 +13,7 @@ import (
 
 // eventConfigTemplateData keeps compiled transports and named buses aligned while rendering the manager.
 type eventConfigTemplateData struct {
+	GoModuleName     string
 	CompiledDrivers  []string
 	Drivers          []eventDriverSpec
 	HasRedis         bool
@@ -158,7 +159,7 @@ var eventRootKeys = []string{
 	"INPROC_BUFFER",
 }
 
-var eventCommonKeys = makeSet("DRIVER", "REDIS_CHANNEL_PREFIX")
+var eventCommonKeys = makeSet("DRIVER", "REDIS_CHANNEL_PREFIX", "CONTEXT_PROPAGATION_ENABLED")
 
 var eventDriverKeys = map[string]map[string]struct{}{
 	"inproc":        makeSet("INPROC_WORKERS", "INPROC_BUFFER"),
@@ -212,7 +213,14 @@ func generateEventFiles(input generationInput) (int, error) {
 		return 0, fmt.Errorf("failed to format generated events accessors: %w", err)
 	}
 	written := 0
-	changed, err := writeGeneratedSource(filepath.Join(input.projectDir, EventsManagerPath), formattedManager)
+	changed, err := generateMessageContextPropagator(input.projectDir)
+	if err != nil {
+		return written, err
+	}
+	if changed {
+		written++
+	}
+	changed, err = writeGeneratedSource(filepath.Join(input.projectDir, EventsManagerPath), formattedManager)
 	if err != nil {
 		return written, err
 	}
@@ -240,6 +248,10 @@ func generateEventFiles(input generationInput) (int, error) {
 
 // renderEventConfig derives imports and compiled choices from the same validated event-driver snapshot.
 func renderEventConfig(input generationInput) ([]byte, error) {
+	moduleName, err := readModuleName(input.projectDir)
+	if err != nil {
+		return nil, err
+	}
 	names := discoverEventNames(input)
 	selectedDrivers, err := uniqueEventDrivers(input)
 	if err != nil {
@@ -258,6 +270,7 @@ func renderEventConfig(input generationInput) ([]byte, error) {
 		drivers = append(drivers, spec)
 	}
 	data := eventConfigTemplateData{
+		GoModuleName:    moduleName,
 		CompiledDrivers: selectedDrivers,
 		Drivers:         drivers,
 		HasRedis:        hasRedis,
@@ -347,13 +360,15 @@ import (
 	"context"
 	"fmt"
 	"reflect"
- "strconv"
+	"strconv"
 	"runtime"
 	"sync"
 	"strings"
 	"time"
 
- goforjevents "github.com/goforj/events"
+	"{{ .GoModuleName }}/internal/inspects"
+
+	goforjevents "github.com/goforj/events"
 	eventscore "github.com/goforj/events/eventscore"
 	"github.com/goforj/env/v2"
 	"github.com/goforj/str/v2"
@@ -377,7 +392,7 @@ var compiledEventDrivers = []string{
 }
 
 var eventRootKeys = []string{
- "CONTEXT_PROPAGATION_ENABLED",
+	"CONTEXT_PROPAGATION_ENABLED",
 	"DRIVER",
 	"ADDR",
 	"REDIS_CHANNEL_PREFIX",
@@ -635,9 +650,11 @@ func buildBus(ctx context.Context, scope env.Scope) (Bus, error) {
 	if !eventDriverCompiled(driverName) {
 		return nil, fmt.Errorf("events: active driver %q is not built in; compiled choices: %s; run forj generate --events after updating EVENTS_SUPPORTED_DRIVERS", driverName, strings.Join(compiledEventDrivers, ", "))
 	}
-	options,err:=eventContextOptions(scope)
- if err!=nil {return nil,err}
- switch activeDriverForScope(scope) {
+	options, err := eventContextOptions(scope)
+	if err != nil {
+		return nil, err
+	}
+	switch activeDriverForScope(scope) {
 {{- range .Drivers }}
 	case {{ .CaseName }}:
 {{- if .NeedsContext }}
@@ -693,7 +710,7 @@ func eventContextOptions(scope env.Scope) ([]goforjevents.Option, error) {
 	if !enabled {
 		return nil, nil
 	}
-	return []goforjevents.Option{goforjevents.WithContextPropagator(messageContextPropagator{})}, nil
+	return []goforjevents.Option{goforjevents.WithContextPropagator(inspects.MessageContextPropagator{})}, nil
 }
 // eventDriverCompiled reports whether driver is selectable in this generated artifact.
 func eventDriverCompiled(driver string) bool {
@@ -1005,22 +1022,26 @@ func wrapObservedHandler(handler any, observer Observer, busName string, driver 
 	sample := sampleEventValue(eventType)
 	topic := eventTopicLabel(sample.Interface())
 	handlerName := eventHandlerLabel(fn)
-	outputs:=make([]reflect.Type,typ.NumOut())
- for index:=range outputs {outputs[index]=typ.Out(index)}
- wrappedType:=reflect.FuncOf([]reflect.Type{reflect.TypeOf((*context.Context)(nil)).Elem(),eventType},outputs,typ.IsVariadic())
- wrapped := reflect.MakeFunc(wrappedType, func(args []reflect.Value) []reflect.Value {
+	outputs := make([]reflect.Type, typ.NumOut())
+	for index := range outputs {
+		outputs[index] = typ.Out(index)
+	}
+	wrappedType := reflect.FuncOf([]reflect.Type{reflect.TypeOf((*context.Context)(nil)).Elem(), eventType}, outputs, typ.IsVariadic())
+	wrapped := reflect.MakeFunc(wrappedType, func(args []reflect.Value) []reflect.Value {
 		callCtx := context.Background()
 		if len(args) > 0 && !args[0].IsNil() {
 			if ctxArg, ok := args[0].Interface().(context.Context); ok && ctxArg != nil {
 				callCtx = ctxArg
 			}
 		}
-        callCtx,finish:=beginObservedEvent(callCtx,observer,"process",EventDeliveryEvent{Bus:eventBusLabel(busName),Topic:topic,Handler:handlerName,Driver:driver})
-        var callErr error
-        defer finishObservedEvent(finish,&callErr)
-        args[0]=reflect.ValueOf(callCtx)
- callArgs:=args
- if typ.NumIn()==1 {callArgs=args[1:]}
+		callCtx, finish := beginObservedEvent(callCtx, observer, "process", EventDeliveryEvent{Bus: eventBusLabel(busName), Topic: topic, Handler: handlerName, Driver: driver})
+		var callErr error
+		defer finishObservedEvent(finish, &callErr)
+		args[0] = reflect.ValueOf(callCtx)
+		callArgs := args
+		if typ.NumIn() == 1 {
+			callArgs = args[1:]
+		}
 		if observer != nil {
 			observer.OnEventDeliveryStart(callCtx, EventDeliveryEvent{
 				Bus:     eventBusLabel(busName),
@@ -1029,16 +1050,15 @@ func wrapObservedHandler(handler any, observer Observer, busName string, driver 
 				Driver:  driver,
 			})
 		}
-        startedAt := time.Now()
-        defer finishEventDelivery(callCtx,observer,EventDeliveryEvent{Bus:eventBusLabel(busName),Topic:topic,Handler:handlerName,Driver:driver},startedAt,&callErr)
+		startedAt := time.Now()
+		defer finishEventDelivery(callCtx, observer, EventDeliveryEvent{Bus: eventBusLabel(busName), Topic: topic, Handler: handlerName, Driver: driver}, startedAt, &callErr)
 		out := fn.Call(callArgs)
-        callErr=eventHandlerError(out)
+		callErr = eventHandlerError(out)
 
 		return out
 	})
 	return wrapped.Interface(), topic, handlerName, nil
 }
-
 // sampleEventValue creates a representative value so topic labels can be derived before delivery.
 func sampleEventValue(typ reflect.Type) reflect.Value {
 	if typ.Kind() == reflect.Pointer {
