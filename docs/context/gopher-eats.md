@@ -109,7 +109,8 @@ The dedicated **gopher eats (multi-app demo)** CI job renders this example and:
 - Builds and starts the three Go Apps with the race detector and a real NATS
   broker.
 - Checks normal, retrying, and scenic orders, SSE reconnects, all 21 courier
-  positions, and their animation intervals.
+  positions, and their animation intervals. A three-order lunch rush verifies
+  independent progress histories, trace parents, and correlated logs.
 - Collects actual SDK OTLP exports and checks HTTP, queue, retry, and event
   parent relationships across service identities, plus consumer log correlation.
 
