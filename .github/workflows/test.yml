@@ -21,6 +21,29 @@ env:
   WIRE_INSTALL_TARGET: "github.com/goforj/wire/cmd/wire@v1.3.1"
 
 jobs:
+  gopher-eats-demo:
+    name: gopher eats (multi-app demo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: set up go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: set up node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: templates/starter-kits/vue/frontend/package-lock.json
+      - name: install wire
+        run: go install "$WIRE_INSTALL_TARGET"
+      - name: verify generated Vue UI and cross-service order workflows
+        run: go test -tags=integration_eats ./internal/forj -run '^TestRenderedGopherEats$' -count=1 -v -timeout=8m
+
   vue-starter:
     name: vue starter
     runs-on: ubuntu-latest

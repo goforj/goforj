@@ -1,0 +1,133 @@
+package eats
+
+import (
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/goforj/env/v2"
+	"github.com/goforj/web"
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// Controller exposes the storefront and each service's readiness route.
+type Controller struct{ service *Service }
+
+// NewController uses the same injected service as the app's lifecycle.
+func NewController(service *Service) *Controller { return &Controller{service: service} }
+
+// Routes limits browser and order endpoints to the storefront executable.
+func (c *Controller) Routes() []web.Route {
+	routes := []web.Route{web.NewRoute(http.MethodGet, "/eats/health", func(r web.Context) error { return r.JSON(200, map[string]string{"service": runtime.CurrentApp().Name}) })}
+	if c.service.role != "app" {
+		return routes
+	}
+	return append(routes,
+		web.NewRoute(http.MethodGet, "/api/eats", func(r web.Context) error {
+			return r.JSON(200, map[string]string{"grafana_url": env.Get("EATS_GRAFANA_URL", "http://127.0.0.1:13001")})
+		}),
+		web.NewRoute(http.MethodPost, "/api/orders", c.create),
+		web.NewRoute(http.MethodGet, "/api/orders/:id/events", c.stream),
+		web.NewRoute(http.MethodGet, "/api/orders/:id", c.status),
+	)
+}
+
+// validOrder permits only the fixed menu and generated order identifiers.
+func validOrder(order Order) bool {
+	id, err := hex.DecodeString(order.ID)
+	return err == nil && len(id) == 8 && (order.Pizza == "margherita" || order.Pizza == "pepperoni" || order.Pizza == "garden")
+}
+
+// create calls the kitchen through the framework's instrumented HTTP client.
+func (c *Controller) create(r web.Context) error {
+	r.Request().Body = http.MaxBytesReader(r.ResponseWriter(), r.Request().Body, 4096)
+	var order Order
+	if err := r.Bind(&order); err != nil {
+		return r.JSON(400, map[string]string{"error": "choose a pizza from the menu"})
+	}
+	var id [8]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return err
+	}
+	order.ID, order.TraceID = hex.EncodeToString(id[:]), traceID(r.Context())
+	if !validOrder(order) {
+		return r.JSON(400, map[string]string{"error": "choose a pizza from the menu"})
+	}
+	if !c.service.reserve(order) {
+		return r.JSON(429, map[string]string{"error": "The demo has served 100 orders. Restart the storefront for a fresh shift."})
+	}
+	body, err := json.Marshal(order)
+	if err != nil {
+		return err
+	}
+	kitchen := env.Get("EATS_KITCHEN_URL", "http://127.0.0.1:"+strconv.Itoa(runtime.App("kitchen").HTTPPort))
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, strings.TrimRight(kitchen, "/")+"/internal/orders", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.service.client.Do(request)
+	if err != nil {
+		c.service.record(Progress{Order: order, Step: 99, Stage: "unavailable", Message: "The kitchen is offline. Start all three apps and try again.", Service: "storefront", At: time.Now().UTC()})
+		return r.JSON(503, map[string]string{"error": "kitchen unavailable"})
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	if response.StatusCode != http.StatusAccepted {
+		return r.JSON(503, map[string]string{"error": "kitchen could not accept the order"})
+	}
+	return r.JSON(http.StatusAccepted, order)
+}
+
+// status exposes recorded business progress for browser reloads and automated acceptance checks.
+func (c *Controller) status(r web.Context) error {
+	history, _, exists := c.service.snapshot(r.Param("id"))
+	if !exists {
+		return r.JSON(404, map[string]string{"error": "order not found"})
+	}
+	return r.JSON(200, history)
+}
+
+// stream sends snapshots on real broker updates and reconnects without losing progress.
+func (c *Controller) stream(r web.Context) error {
+	id := r.Param("id")
+	if _, _, exists := c.service.snapshot(id); !exists {
+		return r.JSON(404, map[string]string{"error": "order not found"})
+	}
+	r.SetHeader("Content-Type", "text/event-stream")
+	r.SetHeader("Cache-Control", "no-cache")
+	r.SetHeader("X-Accel-Buffering", "no")
+	writer := r.ResponseWriter()
+	controller := http.NewResponseController(writer)
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		history, wake, _ := c.service.snapshot(id)
+		body, err := json.Marshal(history)
+		if err != nil {
+			return err
+		}
+		if err := controller.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil && err != http.ErrNotSupported {
+			return err
+		}
+		if _, err := fmt.Fprintf(writer, "event: progress\ndata: %s\n\n", body); err != nil {
+			return nil
+		}
+		if err := controller.Flush(); err != nil {
+			return nil
+		}
+		select {
+		case <-r.Context().Done():
+			return nil
+		case <-wake:
+		case <-heartbeat.C:
+		}
+	}
+}

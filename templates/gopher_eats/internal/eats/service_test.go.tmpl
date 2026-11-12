@@ -1,0 +1,116 @@
+package eats
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+)
+
+// TestOvenFaultOccursOncePerOrderAndHasBoundedMemory keeps fault injection separate from queue metadata.
+func TestOvenFaultOccursOncePerOrderAndHasBoundedMemory(t *testing.T) {
+	kitchen := &Kitchen{burned: make(map[string]bool)}
+	if previous, err := kitchen.rememberOvenFault("first"); previous || err != nil {
+		t.Fatal(previous, err)
+	}
+	if previous, err := kitchen.rememberOvenFault("first"); !previous || err != nil {
+		t.Fatal(previous, err)
+	}
+	for index := 1; index < 100; index++ {
+		if _, err := kitchen.rememberOvenFault(fmt.Sprint(index)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := kitchen.rememberOvenFault("overflow"); err == nil {
+		t.Fatal("oven history grew without a bound")
+	}
+}
+
+// TestValidOrder rejects malformed identifiers and items outside the fixed menu.
+func TestValidOrder(t *testing.T) {
+	for _, test := range []struct {
+		id, pizza string
+		valid     bool
+	}{
+		{id: "0123456789abcdef", pizza: "margherita", valid: true},
+		{id: "0123456789abcdef", pizza: "pepperoni", valid: true},
+		{id: "0123456789abcdef", pizza: "garden", valid: true},
+		{id: "bad", pizza: "garden"},
+		{id: "0123", pizza: "garden"},
+		{id: "0123456789abcdef", pizza: "unknown"},
+	} {
+		if got := validOrder(Order{ID: test.id, Pizza: test.pizza}); got != test.valid {
+			t.Fatalf("%+v: %t", test, got)
+		}
+	}
+}
+
+// TestProgressHistoryIsBoundedAndReconnectable covers duplicate, unknown, and full-history event handling.
+func TestProgressHistoryIsBoundedAndReconnectable(t *testing.T) {
+	service := &Service{orders: make(map[string][]Progress), wake: make(chan struct{})}
+	order := Order{ID: "0123456789abcdef", Pizza: "garden"}
+	if !service.reserve(order) {
+		t.Fatal("first order rejected")
+	}
+	_, wake, _ := service.snapshot(order.ID)
+	service.record(Progress{Order: Order{ID: "unknown"}, Step: 1})
+	service.record(Progress{Order: order, Step: 10})
+	select {
+	case <-wake:
+	default:
+		t.Fatal("subscriber missed real progress")
+	}
+	for step := 1; step < 40; step++ {
+		service.record(Progress{Order: order, Step: step})
+	}
+	history, _, exists := service.snapshot(order.ID)
+	if !exists || len(history) != 32 {
+		t.Fatalf("history size=%d", len(history))
+	}
+	history[0].Message = "mutated"
+	copy, _, _ := service.snapshot(order.ID)
+	if copy[0].Message == "mutated" {
+		t.Fatal("snapshot mutated stored progress")
+	}
+	if _, _, exists := service.snapshot("unknown"); exists {
+		t.Fatal("unknown event created an order")
+	}
+	for index := 1; index < 100; index++ {
+		if !service.reserve(Order{ID: strings.Repeat("x", index)}) {
+			t.Fatal("capacity exhausted early")
+		}
+	}
+	if service.reserve(Order{ID: "overflow"}) {
+		t.Fatal("unbounded demo history")
+	}
+}
+
+// TestPauseHonorsCancellationAndSafePacing exercises cancellation and invalid configured durations.
+func TestPauseHonorsCancellationAndSafePacing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, duration := range []string{"1ms", "6s", "40ms"} {
+		t.Setenv("EATS_STEP_DURATION", duration)
+		if err := pause(ctx, 1); err != context.Canceled {
+			t.Fatalf("duration %s: %v", duration, err)
+		}
+	}
+	t.Setenv("EATS_STEP_DURATION", "10ms")
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := pause(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCourierTimingMatchesPublishedAnimationCadence keeps the normal and scenic routes visually synchronized.
+func TestCourierTimingMatchesPublishedAnimationCadence(t *testing.T) {
+	t.Setenv("EATS_STEP_DURATION", "1s")
+	if got := courierInterval(Order{}); got != 400*time.Millisecond {
+		t.Fatal(got)
+	}
+	if got := courierInterval(Order{Slow: true}); got != 1200*time.Millisecond {
+		t.Fatal(got)
+	}
+}

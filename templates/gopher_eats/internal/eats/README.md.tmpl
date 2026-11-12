@@ -1,0 +1,87 @@
+# Gopher Eats
+
+A pizza delivery demo built with GoForj's Vue starter kit and three independent
+Apps. Place an order, watch the kitchen prepare and bake it, then follow a gopher
+courier to your doorstep. Every tracker update comes from a real backend event.
+
+## Start your shift
+
+From the project root:
+
+```sh
+forj dev
+```
+
+The generated development loop starts the local services, builds the Vue UI and
+all three Go Apps, and runs them together. Open `http://localhost:3000`.
+Grafana is at `http://localhost:13001`, with local credentials `admin` / `admin`.
+
+Choose a pizza and place an order. **Burn the first pizza** injects one oven
+failure so the cooking job retries. **Take the scenic route** slows the courier.
+**Lunch rush** places three orders through the same kitchen worker. Use the order
+tabs to switch trackers while the others keep moving.
+
+**View trace in Grafana** opens that order's actual Tempo trace. Use the logs icon
+on a span to inspect the service's contextual logs in Loki. Early stages can
+appear before all spans have finished exporting; refresh the trace after delivery.
+
+## App boundaries
+
+| App | Default HTTP port | Responsibility |
+| --- | --- | --- |
+| `app` (storefront) | 3000 | Vue UI, order acceptance, progress history, SSE |
+| `kitchen` | 3002 | HTTP handoff, cooking queue producer and worker |
+| `delivery` | 3001 | Ready-event consumer, courier progress publication |
+
+The storefront calls the kitchen using `inspects.Manager.HTTPClient`. The kitchen
+dispatches `eats.cook` on its app-scoped NATS queue and publishes `eats.order.ready`
+when the pizza is cooked. Delivery consumes that event and broadcasts progress.
+The storefront subscribes to `eats.order.progress` and streams snapshots to the
+browser. Snapshots survive an SSE reconnect and tolerate event reordering.
+
+The browser's tracker uses business events. Trace context crosses HTTP, queue,
+and event boundaries through the normal framework instrumentation. The order's
+trace ID is used only to build the Grafana link.
+
+## Where to look
+
+- `cmd/app/frontend/src/App.vue`: reactive tracker, order selection, SSE lifecycle.
+- `cmd/app/frontend/src/eats/`: typed history model and the neighborhood scene.
+- `cmd/app/frontend/src/eats/KitchenScene.vue`: distinct received, preparing,
+  baking, retrying, and pickup scenes driven by service progress.
+- `internal/eats/controller.go`: storefront endpoints and bounded SSE writes.
+- `internal/eats/kitchen.go`: cooking, deliberate oven fault, and queue retry.
+- `internal/eats/service.go`: service-owned event subscriptions and delivery.
+- `app/`, `app/kitchen/`, `app/delivery/`: ordinary App composition and lifecycle hooks.
+
+These example files are created once. Rerendering preserves your changes.
+
+## Local configuration
+
+`EATS_KITCHEN_URL` can override the storefront's kitchen URL when deploying the
+Apps separately. `EATS_GRAFANA_URL` controls browser trace links. For local pacing,
+`EATS_STEP_DURATION` defaults to `1s` and accepts values from `10ms` to `5s`.
+The scenic route triples each delivery step.
+
+The demo uses in-memory order state and Core NATS. Orders and progress are
+disposable across restarts. A shift accepts up to 100 orders; restart the Apps for
+a fresh shift. The kitchen remembers injected oven faults separately from queue
+metadata, so the deliberate failure happens once per order during that shift.
+
+## Automated checks
+
+The framework's dedicated Gopher Eats CI job renders this example, builds the
+Vue UI, checks its committed assets, and starts race-enabled Go App binaries
+against a real NATS broker. It verifies normal delivery, a failed cooking attempt
+followed by a successful retry, SSE reconnects, cross-service trace parents, and
+correlated OTLP logs.
+
+For frontend history and Grafana-link checks:
+
+```sh
+cd cmd/app/frontend
+node --test tests/eats-model.test.mjs
+```
+
+The checks cover reordered milestones, exact Grafana links, grouped activity
+that preserves retries, and accessible Vue rendering of every kitchen stage.

@@ -31,3 +31,10 @@ Schema version 1 exposes the Recommended, Minimal, Custom, and Skip Atlas preset
 `--schema` emits JSON only and never initializes a directory. Noninteractive creation requires an explicit name, module, and destination, rejects a non-empty destination by default, and creates `.goforj.yml` exclusively. Do not offer `--allow-non-empty` in the graphical flow. A failed render leaves its partial files for diagnosis; clients must not automatically delete them or retry creation into the occupied directory.
 
 Consumers must reject unknown schema versions and input kinds. A CLI without `new --schema` needs an update, not a fallback that attempts to drive its TUI. A schema probe does not grant permission to run arbitrary flags or commands.
+
+The additive `example` field offers `gopher_eats`, a multi-App pizza delivery
+reference application with the Vue starter kit and NATS-backed queues and
+events. Pass `--example=gopher_eats` and `--demo=false` for that choice. The
+existing `--demo` flag still selects Uptime Gopher; the two examples are mutually
+exclusive. See [Gopher Eats](gopher-eats.md) for its generated composition and
+acceptance coverage.

@@ -5,6 +5,7 @@ package wire
 
 import (
 	"github.com/goforj/wire"
+	{{if eq .Render.Example "gopher_eats"}}"{{.GoModuleName}}/internal/eats"{{end}}
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	"{{.GoModuleName}}/internal/appsettings"
 {{- end }}
@@ -22,6 +23,7 @@ import (
 
 // appHttpControllerSet provides all HTTP route controllers.
 var appHttpControllerSet = wire.NewSet(
+	{{if eq .Render.Example "gopher_eats"}}eats.NewController,{{end}}
 {{- if and .Components.DemoApp .Components.HasDatabase }}
 	appsettings.NewController,
 {{- end }}

@@ -381,6 +381,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			Render: project.RenderConfig{Components: input.components},
 		}
 	}
+	if input.renderAll {
+		if err := p.prepareExample(&input); err != nil {
+			return err
+		}
+	}
 	configuredComponents := p.config.Render.Components
 	normalizeRenderComponents(&p.config.Render)
 	if err := p.config.Render.Components.ValidateRenderContract(); err != nil {
@@ -429,6 +434,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Go Module Initialization",
 			enabled: input.renderAll,
 			action:  p.createGoMod,
+		},
+		{
+			title:   "Gopher Eats Reference App",
+			enabled: input.renderAll && p.config.Render.Example == "gopher_eats",
+			action:  p.scaffoldGopherEats,
 		},
 		{
 			title:   "Default App Rendering",
@@ -791,6 +801,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			title:   "Starter Kit Rendering",
 			enabled: p.config.Render.Components.WebUI && p.config.Render.StarterKit != project.StarterKitNone && !p.config.Render.Components.DemoApp,
 			action:  p.scaffoldDefaultStarterKit,
+		},
+		{
+			title:   "Gopher Eats Vue Frontend",
+			enabled: input.renderAll && p.config.Render.Example == "gopher_eats",
+			action:  p.scaffoldGopherEatsFrontend,
 		},
 		{
 			title:   "Metrics Components Rendering",
@@ -2284,7 +2299,7 @@ func (p *ProjectRenderer) syncProjectConfigForRender(configuredComponents projec
 	if p.config == nil {
 		return nil
 	}
-	changed := false
+	changed := p.config.Render.Example != ""
 	if !p.config.Render.HasAgentGuidance() {
 		guidance, err := atlas.InferAgentGuidance(p.workspace.root)
 		if err != nil {
@@ -3323,6 +3338,9 @@ func (p *ProjectRenderer) scaffoldDemoFrontend() error {
 
 // scaffoldDefaultStarterKit centralizes scaffold default starter kit behavior so callers follow the same contract.
 func (p *ProjectRenderer) scaffoldDefaultStarterKit() error {
+	if p.config.Render.Example == "gopher_eats" {
+		return p.scaffoldAppStarterKit(project.DefaultApp())
+	}
 	return p.scaffoldStarterKitForApp(project.DefaultApp(), p.config.Render.StarterKit, true)
 }
 

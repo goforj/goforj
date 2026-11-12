@@ -37,6 +37,7 @@ Follow the [Quickstart](https://goforj.dev/getting-started/quickstart) to choose
 
 ## Explore
 
+- [Gopher Eats](docs/context/gopher-eats.md): a selectable Vue pizza demo with three Apps, realtime progress, and distributed tracing.
 - [Project structure](https://goforj.dev/getting-started/project-structure): where application code, configuration, and wiring belong.
 - [Runnable scenarios](https://goforj.dev/scenarios/): examples for routes, jobs, events, storage, and observability.
 - [Standalone libraries](https://goforj.dev/libraries/): adopt individual Go packages without the framework.

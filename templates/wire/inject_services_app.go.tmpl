@@ -5,6 +5,7 @@ package wire
 
 import (
 	"github.com/goforj/wire"
+	{{if eq .Render.Example "gopher_eats"}}"{{.GoModuleName}}/internal/eats"{{end}}
 
 	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/runtime"
@@ -20,6 +21,7 @@ import (
 
 // appSet is a wire set that provides application-level services and dependencies.
 var appSet = wire.NewSet(
+	{{if eq .Render.Example "gopher_eats"}}eats.NewService,{{if eq .App.Name "kitchen"}}eats.NewKitchen,{{end}}{{end}}
 	{{.AppPackageName}}.NewLifecycleRegistry,
 	runtime.NewTimeouts,
 {{- if and .Components.DemoApp .Components.HasDatabase }}

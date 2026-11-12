@@ -1,0 +1,200 @@
+// Package eats implements the Gopher Eats multi-app reference workflow.
+package eats
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/goforj/env/v2"
+	"go.opentelemetry.io/otel/trace"
+	"{{.GoModuleName}}/internal/events"
+	"{{.GoModuleName}}/internal/inspects"
+	"{{.GoModuleName}}/internal/logger"
+	"{{.GoModuleName}}/internal/runtime"
+)
+
+// Order carries business data through HTTP, queued work, and delivery events.
+type Order struct {
+	ID      string `json:"id"`
+	Pizza   string `json:"pizza"`
+	Burn    bool   `json:"burn"`
+	Slow    bool   `json:"slow"`
+	TraceID string `json:"trace_id"`
+}
+
+// Progress is a service-authored update, with an ordinal for out-of-order transport delivery.
+type Progress struct {
+	Order        Order     `json:"order"`
+	Step         int       `json:"step"`
+	Stage        string    `json:"stage"`
+	Message      string    `json:"message"`
+	Service      string    `json:"service"`
+	At           time.Time `json:"at"`
+	Position     int       `json:"position"`
+	TransitionMS int       `json:"transition_ms,omitempty"`
+}
+
+// Topic keeps realtime progress separate from the event that starts delivery.
+func (Progress) Topic() string { return "eats.order.progress" }
+
+// Ready hands a cooked order from the kitchen to the delivery app.
+type Ready struct {
+	Order Order `json:"order"`
+}
+
+// Topic names the cross-service delivery handoff.
+func (Ready) Topic() string { return "eats.order.ready" }
+
+// Service owns one process's subscriptions and bounded storefront history.
+type Service struct {
+	logger        *logger.AppLogger
+	bus           events.Bus
+	client        *http.Client
+	role          string
+	mu            sync.Mutex
+	orders        map[string][]Progress
+	wake          chan struct{}
+	subscriptions []events.Subscription
+}
+
+// NewService uses the framework's instrumented client and managed event bus.
+func NewService(log *logger.AppLogger, buses *events.Manager, manager *inspects.Manager) *Service {
+	return &Service{logger: log, bus: buses.Default(), client: manager.HTTPClient(&http.Client{Timeout: 5 * time.Second}), role: runtime.CurrentApp().Name, orders: make(map[string][]Progress), wake: make(chan struct{})}
+}
+
+// Start registers only the subscriptions owned by this app's lifecycle.
+func (s *Service) Start(ctx context.Context) error {
+	var subscription events.Subscription
+	var err error
+	switch s.role {
+	case "app":
+		subscription, err = s.bus.Subscribe(func(_ context.Context, progress Progress) error { s.record(progress); return nil })
+	case "delivery":
+		subscription, err = s.bus.Subscribe(s.deliver)
+	default:
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	s.subscriptions = append(s.subscriptions, subscription)
+	return nil
+}
+
+// Stop drains subscriptions before the framework closes their bus.
+func (s *Service) Stop(ctx context.Context) error {
+	var result error
+	for _, subscription := range s.subscriptions {
+		result = errors.Join(result, subscription.Close())
+	}
+	return result
+}
+
+// reserve bounds demo memory without evicting an order while its browser is tracking it.
+func (s *Service) reserve(order Order) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.orders) >= 100 {
+		return false
+	}
+	received := Progress{Order: order, Stage: "received", Message: "Order received. Let's make something delicious.", Service: "storefront", At: time.Now().UTC()}
+	s.orders[order.ID] = []Progress{received}
+	return true
+}
+
+// record accepts only known orders and deduplicates broker redeliveries by business step.
+func (s *Service) record(progress Progress) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	history, exists := s.orders[progress.Order.ID]
+	if !exists || len(history) >= 32 {
+		return
+	}
+	for _, previous := range history {
+		if previous.Step == progress.Step {
+			return
+		}
+	}
+	s.orders[progress.Order.ID] = append(history, progress)
+	close(s.wake)
+	s.wake = make(chan struct{})
+}
+
+// snapshot copies history and its notification channel under one lock to avoid missed SSE updates.
+func (s *Service) snapshot(id string) ([]Progress, <-chan struct{}, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	history, exists := s.orders[id]
+	return append([]Progress(nil), history...), s.wake, exists
+}
+
+// publish emits a real event and a contextual application log from the service doing the work.
+func (s *Service) publish(ctx context.Context, order Order, step int, stage, message string, position int) error {
+	s.logger.WithContext(ctx).Info().Str("order_id", order.ID).Str("stage", stage).Msg(message)
+	progress := Progress{Order: order, Step: step, Stage: stage, Message: message, Service: s.role, At: time.Now().UTC(), Position: position}
+	if stage == "delivering" || stage == "delivered" {
+		progress.TransitionMS = int(courierInterval(order) / time.Millisecond)
+	}
+	return s.bus.WithContext(ctx).Publish(progress)
+}
+
+// deliver broadcasts courier progress within the transported event's consumer span.
+func (s *Service) deliver(ctx context.Context, ready Ready) error {
+	for index := 0; index <= 20; index++ {
+		position := index * 5
+		stage, message := "delivering", "Your gopher is on the way."
+		if position == 100 {
+			stage, message = "delivered", "At your door. Enjoy every slice!"
+		}
+		if err := s.publish(ctx, ready.Order, 60+index, stage, message, position); err != nil {
+			return err
+		}
+		if position < 100 {
+			if err := pauseFor(ctx, courierInterval(ready.Order)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// pause keeps demo pacing cancellable and lets integration tests accelerate the same workflow.
+func pause(ctx context.Context, multiplier int) error {
+	return pauseFor(ctx, stepDuration()*time.Duration(multiplier))
+}
+
+// courierInterval keeps service updates and browser interpolation on the same clock.
+func courierInterval(order Order) time.Duration {
+	interval := stepDuration() * 2 / 5
+	if order.Slow {
+		interval *= 3
+	}
+	return interval
+}
+
+// stepDuration bounds demo pacing while allowing accelerated acceptance checks.
+func stepDuration() time.Duration {
+	duration := env.GetDuration("EATS_STEP_DURATION", "1s")
+	if duration < 10*time.Millisecond || duration > 5*time.Second {
+		duration = time.Second
+	}
+	return duration
+}
+
+// pauseFor lets shutdown interrupt an animation interval or a visible cooking stage.
+func pauseFor(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// traceID returns the actual framework span identity for the order's Grafana deep link.
+func traceID(ctx context.Context) string { return trace.SpanContextFromContext(ctx).TraceID().String() }

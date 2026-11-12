@@ -2,16 +2,18 @@ package {{.AppPackageName}}
 
 import (
 	"github.com/goforj/web"
+	{{if eq .Render.Example "gopher_eats"}}"{{.GoModuleName}}/internal/eats"{{end}}
 	{{if and .Components.Auth .Components.HasDatabase}}"{{.GoModuleName}}/internal/auth"{{end}}
 	{{if and .Components.DemoApp .Components.HasDatabase}}"{{.GoModuleName}}/internal/appsettings"{{end}}
 	"{{.GoModuleName}}/internal/hello"
 	{{if and .Components.DemoApp .Components.HasDatabase}}"{{.GoModuleName}}/internal/monitoring"{{end}}
 	{{if eq .StarterKit "templ_htmx"}}"{{.GoModuleName}}/internal/starterui"{{end}}
-	"slices"
+	{{if ne .Render.Example "gopher_eats"}}"slices"{{end}}
 )
 
 // ProvideRoutes provides route groups for the HTTP server.
 func ProvideRoutes(
+	{{if eq .Render.Example "gopher_eats"}}eatsController *eats.Controller,{{if eq .App.Name "kitchen"}}kitchen *eats.Kitchen,{{end}}{{end}}
 	{{if and .Components.Auth .Components.HasDatabase (ne .StarterKit "templ_htmx")}}authController *auth.Controller,{{end}}
 	helloController *hello.Controller,
 	{{if and .Components.DemoApp .Components.HasDatabase}}appsettingsController *appsettings.Controller,{{end}}
@@ -19,6 +21,9 @@ func ProvideRoutes(
 	{{if eq .StarterKit "templ_htmx"}}starterUIController *starterui.Controller,{{end}}
 	{{if and .Components.Auth .Components.HasDatabase}}authService *auth.Service,{{end}}
 ) []web.RouteGroup {
+	{{if eq .Render.Example "gopher_eats"}}
+	return []web.RouteGroup{web.NewRouteGroup("", eatsController.Routes()),{{if eq .App.Name "kitchen"}}web.NewRouteGroup("", kitchen.Routes()),{{end}}}
+	{{else}}
 	{{- if eq .StarterKit "templ_htmx"}}
 	pageRoutes := starterUIController.Routes()
 	{{- end}}
@@ -53,4 +58,5 @@ func ProvideRoutes(
 		web.NewRouteGroup("/api/v1", publicRoutes),
 	}
 	{{- end}}
+	{{end}}
 }

@@ -124,6 +124,9 @@ Read:
 - [Runtime Architecture](runtime-architecture.md)
 - [../designs/completed/metrics-design.md](../designs/completed/metrics-design.md)
 
+For the selectable pizza demo, realtime tracker, and cross-service tracing
+coverage, read [Gopher Eats](gopher-eats.md).
+
 Add if the issue mentions:
 
 - per-surface metrics toggles

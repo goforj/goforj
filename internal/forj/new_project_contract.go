@@ -105,6 +105,7 @@ func projectCreationSchema() NewProjectSchema {
 		{Key: "atlas-agents", Label: "Agents", Kind: "multi", Step: "Options", Required: true, Default: recommended, Options: agents, When: map[string]string{"atlas": "custom"}, Description: "Select at least one agent"},
 		{Key: "atlas-surfaces", Label: "Agent integration", Kind: "multi", Step: "Options", Required: true, Default: defaultSurfaces, Options: surfaces, When: map[string]string{"atlas": "custom"}, Description: "Select at least one integration"},
 		{Key: "demo", Label: "Demo application", Kind: "boolean", Step: "Options", Default: false, Description: "Include the framework demo, using its MySQL and frontend defaults"},
+		{Key: "example", Label: "Reference app", Kind: "select", Step: "Options", Default: "", Options: []NewProjectOption{{Value: "", Label: "None"}, {Value: "gopher_eats", Label: "Gopher Eats", Description: "Multi-app pizza delivery with realtime events and distributed tracing"}}},
 	}}
 }
 
@@ -215,8 +216,14 @@ func (c *NewProjectCmd) noninteractiveModel() (model, error) {
 			return m, fmt.Errorf("custom Atlas support requires at least one agent and one integration")
 		}
 	}
-	if c.Demo {
+	if c.Example != "" && (c.Example != "gopher_eats" || c.Demo) {
+		return m, fmt.Errorf("example must be gopher_eats and cannot be combined with --demo")
+	}
+	if c.Demo || c.Example != "" {
 		m.extrasIndex = 1
+		if c.Example != "" {
+			m.extrasIndex = 2
+		}
 		for index, item := range m.componentList.Items() {
 			component := item.(ListItem)
 			component.Selected = m.config.Render.Components.Enabled(component.Key)

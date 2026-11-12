@@ -1,0 +1,121 @@
+package eats
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"sync"
+
+	"github.com/goforj/queue"
+	"github.com/goforj/web"
+	"{{.GoModuleName}}/internal/queues"
+)
+
+// Kitchen owns the queue producer endpoint and cooking job registration in the kitchen app.
+type Kitchen struct {
+	service *Service
+	queues  *queues.Manager
+	mu      sync.Mutex
+	burned  map[string]bool
+}
+
+// NewKitchen registers cooking on the kitchen's generated worker runtime.
+func NewKitchen(service *Service, manager *queues.Manager) *Kitchen {
+	kitchen := &Kitchen{service: service, queues: manager, burned: make(map[string]bool)}
+	manager.Register("eats.cook", kitchen.cook)
+	return kitchen
+}
+
+// Routes exposes the internal order handoff through the normal GoForj HTTP server.
+func (k *Kitchen) Routes() []web.Route {
+	return []web.Route{web.NewRoute(http.MethodPost, "/internal/orders", k.accept)}
+}
+
+// accept acknowledges an order only after its cooking job has been dispatched.
+func (k *Kitchen) accept(c web.Context) error {
+	var order Order
+	if err := c.Bind(&order); err != nil || !validOrder(order) {
+		return c.JSON(400, map[string]string{"error": "invalid order"})
+	}
+	if _, err := k.queues.WithContext(c.Context()).Dispatch(queue.NewJob("eats.cook").Payload(order).Retry(1)); err != nil {
+		return c.JSON(503, map[string]string{"error": "kitchen queue unavailable"})
+	}
+	return c.NoContent(http.StatusAccepted)
+}
+
+// cook remembers the injected oven fault independently from the transport's retry envelope.
+func (k *Kitchen) cook(ctx context.Context, message queue.Message) error {
+	var order Order
+	if err := message.Bind(&order); err != nil {
+		return err
+	}
+	if !validOrder(order) {
+		return errors.New("invalid cooking order")
+	}
+	wasBurned := false
+	if order.Burn {
+		var err error
+		wasBurned, err = k.rememberOvenFault(order.ID)
+		if err != nil {
+			return err
+		}
+	}
+	base := 10
+	if wasBurned {
+		base = 30
+	}
+	if !wasBurned {
+		if err := pause(ctx, 1); err != nil {
+			return err
+		}
+	}
+	for index, stage := range []string{"preparing", "baking"} {
+		text := "Stretching the dough and adding your toppings."
+		if stage == "baking" {
+			text = "Into the oven. The good part takes a moment."
+		}
+		if base == 30 && index == 0 {
+			text = "Fresh dough, second chance. We're making it right."
+		}
+		if err := k.service.publish(ctx, order, base+index*10, stage, text, 0); err != nil {
+			return err
+		}
+		units := 3
+		if stage == "baking" {
+			units = 4
+		}
+		if err := pause(ctx, units); err != nil {
+			return err
+		}
+	}
+	if order.Burn && !wasBurned {
+		if err := k.service.publish(ctx, order, 25, "retrying", "Oops, a little too crispy. Starting a fresh pizza.", 0); err != nil {
+			return err
+		}
+		if err := pause(ctx, 2); err != nil {
+			return err
+		}
+		return errors.New("pizza burned: intentional demo failure")
+	}
+	if err := k.service.publish(ctx, order, 50, "ready", "Boxed, piping hot, and ready for pickup.", 0); err != nil {
+		return err
+	}
+	if err := pause(ctx, 2); err != nil {
+		return err
+	}
+	return k.service.bus.WithContext(ctx).Publish(Ready{Order: order})
+}
+
+// rememberOvenFault burns an order once per demo shift and bounds fault-injection memory.
+func (k *Kitchen) rememberOvenFault(id string) (bool, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.burned[id] {
+		return true, nil
+	}
+	if len(k.burned) >= 100 {
+		return false, errors.New("demo oven history full; restart the kitchen for a fresh shift")
+	}
+	k.burned[id] = true
+	return false, nil
+}
