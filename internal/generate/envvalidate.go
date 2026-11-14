@@ -63,7 +63,7 @@ func discoverPrimitiveChildNames(input generationInput, resourcePrefix string, r
 	names := map[string]struct{}{}
 	add := func(prefix string) {
 		children := exactScopedChildNames(input.environment, prefix, rootKeys)
-		if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" {
+		if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" || resourcePrefix == "SEARCH" {
 			appPrefix := strings.TrimSuffix(prefix, "_"+resourcePrefix)
 			if prefix == resourcePrefix {
 				appPrefix = ""
@@ -138,7 +138,7 @@ func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) 
 	}
 	for _, entry := range input.environment.Entries() {
 		key := entry.key
-		if (contract.Prefix == "FEATURE" || contract.Prefix == "NOTIFICATION") && appResourceEnvironmentOwner(key, appPrefixes) != "" {
+		if (contract.Prefix == "FEATURE" || contract.Prefix == "NOTIFICATION" || contract.Prefix == "SEARCH") && appResourceEnvironmentOwner(key, appPrefixes) != "" {
 			continue
 		}
 		if !strings.HasPrefix(key, contract.Prefix+"_") {
@@ -170,7 +170,7 @@ func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) 
 			driverKey = contract.Prefix + "_" + scopedKey.child + "_DRIVER"
 		}
 		driverValue := input.environment.Get(driverKey, driverFallback)
-		if (contract.Prefix == "FEATURE" || contract.Prefix == "NOTIFICATION") && appResourceEnvironmentOwner(driverKey, appPrefixes) != "" {
+		if (contract.Prefix == "FEATURE" || contract.Prefix == "NOTIFICATION" || contract.Prefix == "SEARCH") && appResourceEnvironmentOwner(driverKey, appPrefixes) != "" {
 			driverValue = driverFallback
 		}
 		driver := effectivePrimitiveDriver(driverValue, driverFallback)
@@ -234,7 +234,7 @@ func (v primitiveEnvValidator) eagerNamedDriverProblems() []string {
 	for _, child := range discoverPrimitiveChildNames(v.input, v.contract.Prefix, v.contract.RootKeys) {
 		key := v.contract.Prefix + "_" + child + "_DRIVER"
 		_, set := v.input.environment.Lookup(key)
-		if (v.contract.Prefix == "FEATURE" || v.contract.Prefix == "NOTIFICATION") && appResourceEnvironmentOwner(key, v.appPrefixes) != "" {
+		if (v.contract.Prefix == "FEATURE" || v.contract.Prefix == "NOTIFICATION" || v.contract.Prefix == "SEARCH") && appResourceEnvironmentOwner(key, v.appPrefixes) != "" {
 			set = false
 		}
 		if set {
@@ -280,7 +280,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 			}
 		}
 		appChildren := exactScopedChildNames(v.input.environment, resourcePrefix, v.contract.RootKeys)
-		if v.contract.Prefix == "FEATURE" || v.contract.Prefix == "NOTIFICATION" {
+		if v.contract.Prefix == "FEATURE" || v.contract.Prefix == "NOTIFICATION" || v.contract.Prefix == "SEARCH" {
 			appChildren = appScopedChildNames(v.input, v.contract.Prefix, appPrefix, v.contract.RootKeys)
 		}
 		for _, child := range appChildren {
@@ -289,7 +289,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 
 		for _, entry := range v.input.environment.Entries() {
 			key := entry.key
-			if (v.contract.Prefix == "FEATURE" || v.contract.Prefix == "NOTIFICATION") && appResourceEnvironmentOwner(key, v.appPrefixes) != appPrefix {
+			if (v.contract.Prefix == "FEATURE" || v.contract.Prefix == "NOTIFICATION" || v.contract.Prefix == "SEARCH") && appResourceEnvironmentOwner(key, v.appPrefixes) != appPrefix {
 				continue
 			}
 			if !strings.HasPrefix(key, resourcePrefix+"_") {
@@ -312,6 +312,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 			if scopedKey.child != "" {
 				driver = effectiveAppPrimitiveChildDriver(v.input.environment, appPrimitiveDriverScope{
 					resourcePrefix: resourcePrefix,
+					appPrefixes:    generationKnownAppEnvPrefixes(v.input),
 					contract:       v.contract,
 					rootDriver:     v.rootDriver,
 					appRootDriver:  appRootDriver,
@@ -369,7 +370,7 @@ func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope a
 	if scope.contract.Prefix == "SEARCH" {
 		driver = scope.appRootDriver
 	}
-	if value, set := environment.Lookup(baseKey); set {
+	if value, set := environment.Lookup(baseKey); set && (scope.contract.Prefix != "SEARCH" || appResourceEnvironmentOwner(baseKey, "SEARCH", scope.appPrefixes) == "") {
 		driver = effectivePrimitiveDriver(value, baseFallback)
 	}
 	if value, set := environment.Lookup(scope.resourcePrefix + "_" + child + "_DRIVER"); set {
@@ -414,14 +415,15 @@ func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defa
 			appRootDriver = effectivePrimitiveDriver(value, defaultDriver)
 		}
 		if resourcePrefix == "SEARCH" {
-			names := makeSet(exactScopedChildNames(input.environment, resourcePrefix, searchRootKeys)...)
-			for _, child := range exactScopedChildNames(input.environment, appPrefix+"_"+resourcePrefix, searchRootKeys) {
+			names := makeSet(searchScopedChildNames(input, "")...)
+			for _, child := range searchScopedChildNames(input, appPrefix) {
 				names[child] = struct{}{}
 			}
 			for _, child := range sortStrings(names) {
 				key := keyPrefix + child + "_DRIVER"
 				driver := effectiveAppPrimitiveChildDriver(input.environment, appPrimitiveDriverScope{
 					resourcePrefix: appPrefix + "_" + resourcePrefix,
+					appPrefixes:    generationKnownAppEnvPrefixes(input),
 					contract:       primitiveEnvContract{Prefix: resourcePrefix, DefaultDriver: defaultDriver, InheritRootDriver: inheritRootDriver},
 					rootDriver:     baseRootDriver, appRootDriver: appRootDriver,
 				}, child)
@@ -431,7 +433,7 @@ func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defa
 		}
 		for _, entry := range input.environment.Entries() {
 			key, value := entry.key, entry.value
-			if (resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION") && appResourceEnvironmentOwner(key, appPrefixes) != appPrefix {
+			if (resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" || resourcePrefix == "SEARCH") && appResourceEnvironmentOwner(key, appPrefixes) != appPrefix {
 				continue
 			}
 			if !strings.HasPrefix(key, keyPrefix) || !strings.HasSuffix(key, "_DRIVER") {
@@ -446,7 +448,7 @@ func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defa
 				fallback = appRootDriver
 			}
 			driver := effectivePrimitiveDriver(value, fallback)
-			if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" {
+			if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" || resourcePrefix == "SEARCH" {
 				child := ""
 				if relative != "DRIVER" {
 					child = strings.TrimSuffix(relative, "_DRIVER")

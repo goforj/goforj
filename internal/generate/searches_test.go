@@ -24,15 +24,30 @@ func TestGenerateSearchFilesValidatesBeforeWriting(t *testing.T) {
 		{"not-compiled", map[string]string{"SEARCH_DRIVER": "meilisearch", "SEARCH_SUPPORTED_DRIVERS": "bleve"}, "not enabled"},
 		{"wrong-setting", map[string]string{"SEARCH_DRIVER": "bleve", "SEARCH_CATALOG_URL": "https://example.invalid"}, "URL"},
 		{"reserved-accessor", map[string]string{"SEARCH_INDEX_PATH": "index"}, "conflicts"},
+		{"numeric-accessor", map[string]string{"SEARCH_123_PATH": "index"}, "accessor"},
+		{"normalized-collision", map[string]string{"SEARCH_FOO_BAR_PATH": "first", "SEARCH_FOO__BAR_PATH": "second"}, "conflicts"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
+			originals := map[string]string{SearchManagerPath: "original manager", SearchAccessorsPath: "original accessors"}
+			for path, body := range originals {
+				target := filepath.Join(root, path)
+				if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(target, []byte(body), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			_, err := generateSearchFiles(generationInput{projectDir: root, environment: generationEnvironment{values: test.values}})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("generation error = %v, want %q", err, test.want)
 			}
-			if _, err := os.Stat(filepath.Join(root, SearchManagerPath)); !os.IsNotExist(err) {
-				t.Fatal("invalid input published manager")
+			for path, original := range originals {
+				body, err := os.ReadFile(filepath.Join(root, path))
+				if err != nil || string(body) != original {
+					t.Fatalf("invalid input changed %s: %q (%v)", path, body, err)
+				}
 			}
 		})
 	}
@@ -125,7 +140,7 @@ func TestSearchAppRootDriverPrecedence(t *testing.T) {
 func TestGeneratedSearchManagerBehavior(t *testing.T) {
 	root := mustTempGeneratedModuleRoot(t, "forj-search-generation-*", filepath.Join("internal", "searches"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec("example.com/searchgeneration", []string{"github.com/goforj/search", "github.com/goforj/search/driver/blevesearch", "github.com/goforj/env/v2"}, nil, nil))
-	input := generationInput{projectDir: root, environment: generationEnvironment{values: map[string]string{"SEARCH_DRIVER": "bleve", "SEARCH_SUPPORTED_DRIVERS": "bleve,meilisearch", "SEARCH_CATALOG_DRIVER": "bleve", "SEARCH_ARCHIVE_DRIVER": "bleve"}}}
+	input := generationInput{projectDir: root, environment: generationEnvironment{values: map[string]string{"SEARCH_DRIVER": "bleve", "SEARCH_SUPPORTED_DRIVERS": "bleve,meilisearch", "SEARCH_CATALOG_DRIVER": "bleve", "SEARCH_ARCHIVE_DRIVER": "bleve"}}, appPrefixes: []string{"SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"}}
 	if _, err := generateSearchFiles(input); err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +175,53 @@ func TestSearchDriverManifests(t *testing.T) {
 			runFixtureGoModTidy(t, root, nil)
 			runFixtureGoTest(t, root, "./internal/searches", "TestDoesNotExist", nil)
 		})
+	}
+}
+
+// TestSearchDefaultResourceWordIndex preserves an unambiguous default index when no App owns its prefix.
+func TestSearchDefaultResourceWordIndex(t *testing.T) {
+	root := t.TempDir()
+	input := generationInput{projectDir: root, environment: generationEnvironment{values: map[string]string{"SEARCH_SEARCH_PATH": "search-index"}}}
+	if _, err := generateSearchFiles(input); err != nil {
+		t.Fatal(err)
+	}
+	if names := discoverSearchNames(input); !slices.Equal(names, []string{"search"}) {
+		t.Fatalf("default index inventory = %v", names)
+	}
+	body, err := os.ReadFile(filepath.Join(root, SearchAccessorsPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "Search() *search.Index") {
+		t.Fatalf("default index accessor missing: %s", body)
+	}
+}
+
+// TestSearchResourceWordAppOwnership excludes known App root keys from the default index inventory.
+func TestSearchResourceWordAppOwnership(t *testing.T) {
+	root := t.TempDir()
+	config := "render:\n  components: [cli, search]\napps:\n  search:\n    components: [cli, search]\n  search-worker:\n    components: [cli, search]\n  search-search:\n    components: [cli, search]\n"
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{"SEARCH_DRIVER": "bleve", "SEARCH_SEARCH_DRIVER": "bleve", "SEARCH_SEARCH_PATH": "search-root", "SEARCH_WORKER_SEARCH_DRIVER": "bleve", "SEARCH_WORKER_SEARCH_PATH": "worker-root", "SEARCH_SEARCH_SEARCH_DRIVER": "bleve", "SEARCH_SEARCH_SEARCH_PATH": "nested-root", "SEARCH_CATALOG_PATH": "catalog", "SEARCH_SEARCH_ARCHIVE_PATH": "archive"}
+	input := fixtureGenerationInput(root, values)
+	if _, err := generateSearchFiles(input); err != nil {
+		t.Fatal(err)
+	}
+	names := discoverSearchNames(input)
+	if !slices.Equal(names, []string{"archive", "catalog"}) {
+		t.Fatalf("index inventory = %v", names)
+	}
+	body, err := os.ReadFile(filepath.Join(root, SearchAccessorsPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "Search()") || strings.Contains(string(body), "WorkerSearch()") {
+		t.Fatalf("synthetic App accessor: %s", body)
+	}
+	if changed, err := generateSearchFiles(input); err != nil || changed != 0 {
+		t.Fatalf("regeneration changed %d files: %v", changed, err)
 	}
 }
 
@@ -342,4 +404,42 @@ func TestSearchManagerAppRootSelection(t *testing.T) {
  if err == nil { _ = manager.Close(); t.Fatal("remote validation failure was hidden") }
  if requests.Load() <= before { t.Fatal("runtime validation did not reach App root backend") }
 }
+// TestSearchManagerResourceWordApps keeps root App settings and exact named overrides disjoint.
+func TestSearchManagerResourceWordApps(t *testing.T) {
+ ctx := context.Background()
+ t.Setenv("SEARCH_DRIVER", "bleve")
+ t.Setenv("SEARCH_PATH", filepath.Join(t.TempDir(), "default"))
+ t.Setenv("SEARCH_SEARCH_DRIVER", "meilisearch")
+ t.Setenv("SEARCH_SEARCH_PATH", filepath.Join(t.TempDir(), "search-app"))
+ t.Setenv("SEARCH_WORKER_SEARCH_DRIVER", "bleve")
+ t.Setenv("SEARCH_WORKER_SEARCH_PATH", filepath.Join(t.TempDir(), "worker-app"))
+ t.Setenv("SEARCH_SEARCH_SEARCH_DRIVER", "bleve")
+ t.Setenv("SEARCH_SEARCH_SEARCH_PATH", filepath.Join(t.TempDir(), "nested-app"))
+ t.Setenv("SEARCH_UNRELATED_SETTING", "ignored")
+ for _, prefix := range []string{"", "SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"} {
+  if err := ProvisionForApp(ctx, prefix, nil); err != nil { t.Fatalf("%s empty provision: %v", prefix, err) }
+  manager, err := NewManagerForApp(ctx, prefix, nil)
+  if err != nil { t.Fatalf("%s empty startup: %v", prefix, err) }
+  if len(manager.Instances()) != 0 { t.Fatal("environment invented schemas") }
+  if err := manager.Close(); err != nil { t.Fatal(err) }
+ }
+ // A real default index named search keeps its global root fallback when an App owns the ambiguous key.
+ if got := namedSearchValue("", "search", "PATH", "default-index"); got != "default-index" { t.Fatalf("App root became default index path: %s", got) }
+ if got := searchDriverName("", "search"); got != "bleve" { t.Fatalf("App root became default index driver: %s", got) }
+ if got := searchDriverName("ADMIN", "search"); got != "bleve" { t.Fatalf("App root became another App index driver: %s", got) }
+ defs := map[string]search.Definition{"search": {Name: "search", Fields: []search.Field{{Name: "description", Type: search.TextField, Searchable: true}}}}
+ if err := Provision(ctx, defs); err != nil { t.Fatal(err) }
+ manager, err := NewManager(ctx, defs)
+ if err != nil { t.Fatal(err) }
+ if err := manager.Close(); err != nil { t.Fatal(err) }
+ for _, prefix := range []string{"", "SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"} {
+  key := "SEARCH_TYPO_PATH"
+  if prefix != "" { key = prefix+"_"+key }
+  t.Setenv(key, "unused")
+  if _, err := NewManagerForApp(ctx, prefix, nil); err == nil || !strings.Contains(err.Error(), "typo") { t.Fatalf("%s undeclared index accepted: %v", prefix, err) }
+  if err := ProvisionForApp(ctx, prefix, nil); err == nil || !strings.Contains(err.Error(), "typo") { t.Fatalf("%s provision accepted undeclared index: %v", prefix, err) }
+  unsetSearchDriver(t, key)
+ }
+}
+
 `
