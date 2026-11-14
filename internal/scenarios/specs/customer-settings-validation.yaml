@@ -114,6 +114,14 @@ markdown:
   - internal/settings/controller.go
   - internal/settings/policy.go
   - internal/settings/policy_test.go
+  prerequisites: Start from the prepared invoice HTTP application. Keep validation v0.2.0 staged before the network-disabled
+    task, and inspect the existing settings controller, service, and fake initial state.
+  troubleshooting: If omission and null behave identically, inspect the JSON input shape and presence rules before
+    changing update logic. Map only structured validation issues to 422 field codes; keep ordinary rule errors and
+    cancellation operational.
+  next_steps:
+  - Replace fixture state with an application-owned repository while preserving atomic patch behavior.
+  - Extend presence and field-code regression cases when adding settings.
 steps:
 - id: implement-settings-policy
   title: Share normalized application validation
