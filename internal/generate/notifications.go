@@ -5,18 +5,27 @@ import (
 	"fmt"
 	"go/format"
 	"go/token"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
 
+	"github.com/goforj/goforj/project"
 	"github.com/goforj/str/v2"
 )
 
 // notificationAccessorName keeps configured names separate from generated Go identifiers.
-type notificationAccessorName struct{ Name, EnvName, Method, Field string }
+type notificationAccessorName struct{ Name, Method string }
+
+// notificationScope records named sender ownership independently from generated method availability.
+type notificationScope struct {
+	Prefix string
+	Names  []string
+}
 
 // notificationTemplateData limits imports to the supported provider manifest.
 type notificationTemplateData struct {
+	Scopes  []notificationScope
 	Names   []notificationAccessorName
 	Drivers []string
 	Webhook bool
@@ -29,6 +38,15 @@ var notificationDriverKeys = map[string]map[string]struct{}{
 	"webhook": makeSet("WEBHOOK_URL", "WEBHOOK_FORMAT", "WEBHOOK_TIMEOUT", "WEBHOOK_BEARER_TOKEN", "WEBHOOK_ALLOW_PRIVATE"),
 }
 var notificationLocalDrivers = []string{"log"}
+
+// discoverNotificationNames exposes the build's union of typed accessors to configuration tooling.
+func discoverNotificationNames(input generationInput) []string {
+	names := discoverPrimitiveChildNames(input, "NOTIFICATION", notificationRootKeys)
+	for index := range names {
+		names[index] = strings.ToLower(names[index])
+	}
+	return names
+}
 
 // GenerateNotificationFiles captures the same environment boundary used by other resource generators.
 func GenerateNotificationFiles(projectDir string) (int, error) {
@@ -56,7 +74,7 @@ func generateNotificationFiles(input generationInput) (int, error) {
 		if _, found := reserved[method]; found || !token.IsIdentifier(method) || !token.IsExported(method) {
 			return 0, fmt.Errorf("notification: resource name %q cannot be an accessor", name)
 		}
-		data.Names = append(data.Names, notificationAccessorName{Name: strings.ToLower(name), EnvName: name, Method: method, Field: "sender" + method})
+		data.Names = append(data.Names, notificationAccessorName{Name: strings.ToLower(name), Method: method})
 		active[effectivePrimitiveDriver(input.environment.Get("NOTIFICATION_"+name+"_DRIVER", "log"), "log")] = struct{}{}
 	}
 	for _, driver := range appPrefixedActiveDrivers(input, "NOTIFICATION", "log", false) {
@@ -65,6 +83,23 @@ func generateNotificationFiles(input generationInput) (int, error) {
 	drivers, err := supportedDrivers(input.environment, "NOTIFICATION", notificationDriverKeys, sortStrings(active), notificationLocalDrivers)
 	if err != nil {
 		return 0, err
+	}
+	rootNames := exactScopedChildNames(input.environment, "NOTIFICATION", notificationRootKeys)
+	defaultEnabled := true
+	if config, err := project.LoadProjectConfigAt(input.projectDir); err == nil {
+		defaultEnabled = config.Render.Components.Notification
+	} else if !os.IsNotExist(err) {
+		return 0, fmt.Errorf("load notification App ownership: %w", err)
+	}
+	if defaultEnabled {
+		data.Scopes = append(data.Scopes, notificationScope{Names: rootNames})
+	}
+	for _, prefix := range generationAppEnvPrefixesForResource(input, "NOTIFICATION") {
+		names := makeSet(rootNames...)
+		for _, name := range exactScopedChildNames(input.environment, prefix+"_NOTIFICATION", notificationRootKeys) {
+			names[name] = struct{}{}
+		}
+		data.Scopes = append(data.Scopes, notificationScope{Prefix: prefix, Names: sortStrings(names)})
 	}
 	data.Drivers = drivers
 	for _, driver := range drivers {
@@ -126,13 +161,16 @@ var compiledNotificationDrivers = []string{
 {{range .Drivers}}    "{{.}}",
 {{end}}}
 
-// Manager owns only the transports constructed from this App's environment scope.
-// Senders are borrowed by services; they perform no hidden retries or background work.
+var notificationAppResources = map[string][]string{
+{{range .Scopes}} "{{.Prefix}}": { {{range .Names}} "{{.}}", {{end}} }, {{end}}
+}
+
+// Manager owns only transports belonging to this App's compiled resource scope.
+// Services borrow senders without hidden retries or background work.
 type Manager struct {
     defaultSender notification.Sender
-{{- range .Names }}
-    {{.Field}} notification.Sender
-{{- end }}
+    senders map[string]notification.Sender
+    names []string
     closers []io.Closer
     closeOnce sync.Once
     closeError error
@@ -141,20 +179,48 @@ type Manager struct {
 // Instance exposes a configured sender without its credentials or destination.
 type Instance struct { Name string; Sender notification.Sender; IsDefault bool }
 
-// NewManager validates every configured sender without sending network traffic.
-func NewManager() (*Manager, error) {
-    manager := &Manager{}
-    sender, closer, err := newSender(env.WithPrefix("NOTIFICATION"))
+// NewManager initializes only the default App's declared senders without network traffic.
+func NewManager() (*Manager, error) { return NewManagerForApp("") }
+
+// NewManagerForApp initializes root-declared resources and names owned by the selected App.
+func NewManagerForApp(prefix string) (*Manager, error) {
+    prefix = strings.ToUpper(strings.TrimSpace(prefix))
+    names, enabled := notificationAppResources[prefix]
+    if !enabled { return nil, fmt.Errorf("notification resources are not enabled for App prefix %q", prefix) }
+    manager := &Manager{senders: map[string]notification.Sender{}}
+    sender, closer, err := newSender(prefix, "default")
     if err != nil { return nil, err }
     manager.defaultSender = sender
     if closer != nil { manager.closers = append(manager.closers, closer) }
-{{- range .Names }}
-    sender, closer, err = newSender(env.WithPrefix("NOTIFICATION").Child("{{.EnvName}}"))
-    if err != nil { return nil, errors.Join(err, manager.Close()) }
-    manager.{{.Field}} = sender
-    if closer != nil { manager.closers = append(manager.closers, closer) }
-{{- end }}
+    for _, name := range names {
+        name = strings.ToLower(name)
+        sender, closer, err = newSender(prefix, name)
+        if err != nil { return nil, errors.Join(err, manager.Close()) }
+        manager.senders[name] = sender
+        manager.names = append(manager.names, name)
+        if closer != nil { manager.closers = append(manager.closers, closer) }
+    }
     return manager, nil
+}
+
+// notificationValue resolves existing App overlays without mutating process configuration.
+func notificationValue(prefix, name, key, fallback string) string {
+    scope := env.WithPrefix("NOTIFICATION")
+    if name != "default" { scope = scope.Child(strings.ToUpper(name)) }
+    value := scope.Get(key, fallback)
+    if prefix != "" {
+        appScope := env.WithPrefix(prefix).Child("NOTIFICATION")
+        if name != "default" { appScope = appScope.Child(strings.ToUpper(name)) }
+        value = appScope.Get(key, value)
+    }
+    return value
+}
+
+// sender fails fast if App wiring requests a typed accessor owned by another App.
+func (manager *Manager) sender(name string) notification.Sender {
+    sender, exists := manager.senders[name]
+    if !exists { panic("notification sender is not configured for this App: " + name) }
+    return sender
 }
 
 // Close releases each owned transport once, including partial initialization cleanup.
@@ -168,8 +234,9 @@ func (manager *Manager) Close() error {
 }
 
 // newSender rejects providers outside the compiled manifest before creating transports.
-func newSender(scope env.Scope) (notification.Sender, io.Closer, error) {
-    driver := strings.ToLower(strings.TrimSpace(scope.Get("DRIVER", "log")))
+func newSender(prefix, name string) (notification.Sender, io.Closer, error) {
+    value := func(key, fallback string) string { return notificationValue(prefix, name, key, fallback) }
+    driver := strings.ToLower(strings.TrimSpace(value("DRIVER", "log")))
     if driver == "" { driver = "log" }
     compiled := false
     for _, name := range compiledNotificationDrivers { if name == driver { compiled = true; break } }
@@ -179,15 +246,15 @@ func newSender(scope env.Scope) (notification.Sender, io.Closer, error) {
         return notification.New(log.New(slog.Default())), nil, nil
 {{- if .Webhook }}
     case "webhook":
-        timeout, err := time.ParseDuration(scope.Get("WEBHOOK_TIMEOUT", "5s"))
+        timeout, err := time.ParseDuration(value("WEBHOOK_TIMEOUT", "5s"))
         if err != nil || timeout <= 0 { return nil, nil, fmt.Errorf("notification: WEBHOOK_TIMEOUT must be a positive duration") }
-        allowPrivate, err := strconv.ParseBool(scope.Get("WEBHOOK_ALLOW_PRIVATE", "false"))
+        allowPrivate, err := strconv.ParseBool(value("WEBHOOK_ALLOW_PRIVATE", "false"))
         if err != nil { return nil, nil, fmt.Errorf("notification: WEBHOOK_ALLOW_PRIVATE must be a boolean") }
         transport, err := webhook.New(webhook.Config{
-            URL: strings.TrimSpace(scope.Get("WEBHOOK_URL", "")),
-            Format: webhook.Format(strings.TrimSpace(scope.Get("WEBHOOK_FORMAT", "generic"))),
+            URL: strings.TrimSpace(value("WEBHOOK_URL", "")),
+            Format: webhook.Format(strings.TrimSpace(value("WEBHOOK_FORMAT", "generic"))),
             Timeout: timeout, AllowPrivate: allowPrivate,
-            BearerToken: scope.Get("WEBHOOK_BEARER_TOKEN", ""),
+            BearerToken: value("WEBHOOK_BEARER_TOKEN", ""),
         })
         if err != nil { return nil, nil, fmt.Errorf("notification: configure webhook: %w", err) }
         return notification.New(transport), transport, nil
@@ -210,24 +277,23 @@ import (
 func (manager *Manager) Default() notification.Sender { return manager.defaultSender }
 {{range .Names}}
 // {{.Method}} returns the configured "{{.Name}}" sender.
-func (manager *Manager) {{.Method}}() notification.Sender { return manager.{{.Field}} }
+func (manager *Manager) {{.Method}}() notification.Sender { return manager.sender("{{.Name}}") }
 {{end}}
-// Named returns a configured sender, or nil when the name is absent from the build.
+// Named returns a configured sender, or nil when this App does not own the name.
 func (manager *Manager) Named(name string) notification.Sender {
-    switch strings.ToLower(strings.TrimSpace(name)) {
-    case "", "default": return manager.defaultSender
-{{- range .Names }}
-    case "{{.Name}}": return manager.{{.Field}}
-{{- end }}
-    default: return nil
-    }
+    name = strings.ToLower(strings.TrimSpace(name))
+    if name == "" || name == "default" { return manager.defaultSender }
+    return manager.senders[name]
 }
 
-// Names returns the immutable build's configured sender names in generation order.
-func (manager *Manager) Names() []string { return []string{"default",{{range .Names}}"{{.Name}}",{{end}}} }
+// Names returns this App's declared sender names in generation order.
+func (manager *Manager) Names() []string { return append([]string{"default"}, manager.names...) }
 
-// Instances returns borrowed senders for tooling without transferring transport ownership.
+// Instances returns borrowed senders belonging to this App without transferring ownership.
 func (manager *Manager) Instances() []Instance {
-    return []Instance{ {Name: "default", Sender: manager.defaultSender, IsDefault: true},{{range .Names}}{Name: "{{.Name}}", Sender: manager.{{.Field}}},{{end}} }
+    instances := []Instance{ {Name: "default", Sender: manager.defaultSender, IsDefault: true} }
+    for _, name := range manager.names { instances = append(instances, Instance{Name: name, Sender: manager.senders[name]}) }
+    return instances
 }
+
 `

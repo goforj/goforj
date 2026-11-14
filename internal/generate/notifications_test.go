@@ -200,3 +200,90 @@ func TestInvalidRuntimeConfigurationFailsBeforeSending(t *testing.T) {
     }
 }
 `
+
+// TestNotificationManagerScopesAppOnlySenders prevents undeclared resources from silently becoming local capture in another App.
+func TestNotificationManagerScopesAppOnlySenders(t *testing.T) {
+	root := mustTempGeneratedModuleRoot(t, "notification-app-scope-*", "internal/notifications")
+	writeFixtureGoMod(t, root, fixtureModuleSpec("example.com/notificationscope", []string{"github.com/goforj/env/v2", "github.com/goforj/notification"}, nil, nil))
+	config := "project_name: scoped\nmodule_name: example.com/notificationscope\nrender:\n  components: [cli,notification]\napps:\n  admin:\n    components: [cli,notification]\n"
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]string{
+		"NOTIFICATION_DRIVER": "log", "NOTIFICATION_SUPPORTED_DRIVERS": "log,webhook",
+		"NOTIFICATION_SHARED_DRIVER": "log", "ADMIN_NOTIFICATION_ALERTS_DRIVER": "webhook",
+		"ADMIN_NOTIFICATION_ALERTS_WEBHOOK_URL": "https://example.test/notify",
+	} {
+		t.Setenv(key, value)
+	}
+	if _, err := GenerateNotificationFiles(root); err != nil {
+		t.Fatal(err)
+	}
+	if written, err := GenerateNotificationFiles(root); err != nil || written != 0 {
+		t.Fatalf("scope regeneration = %d, %v", written, err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal/notifications/scope_test.go"), []byte(notificationAppScopeBehaviorTest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runFixtureGoModTidy(t, root, nil)
+	runFixtureGoTest(t, root, "./internal/notifications", "", nil)
+}
+
+// TestNotificationGenerationRejectsInvalidAppOwnership avoids publishing managers with an unknown App membership contract.
+func TestNotificationGenerationRejectsInvalidAppOwnership(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("render: ["), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GenerateNotificationFiles(root); err == nil {
+		t.Fatal("invalid App configuration accepted")
+	}
+}
+
+const notificationAppScopeBehaviorTest = `package notifications
+
+import (
+    "context"
+    "net/http"
+    "net/http/httptest"
+    "sync/atomic"
+    "testing"
+
+    "github.com/goforj/notification"
+)
+
+// TestAppOnlySenderMembership keeps App-specific destinations out of default initialization and discovery.
+func TestAppOnlySenderMembership(t *testing.T) {
+    var calls atomic.Int64
+    server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) { calls.Add(1); response.WriteHeader(http.StatusNoContent) }))
+    defer server.Close()
+    t.Setenv("NOTIFICATION_DRIVER", "log")
+    t.Setenv("NOTIFICATION_SHARED_DRIVER", "log")
+    t.Setenv("ADMIN_NOTIFICATION_ALERTS_DRIVER", "webhook")
+    t.Setenv("ADMIN_NOTIFICATION_ALERTS_WEBHOOK_URL", "://invalid-admin-only")
+    root, err := NewManager()
+    if err != nil { t.Fatalf("default initialized another App's invalid resource: %v", err) }
+    defer root.Close()
+    if len(root.Names()) != 2 || len(root.Instances()) != 2 || root.Named("alerts") != nil { t.Fatal("default advertised an admin-only sender") }
+    if root.Shared() != root.Named("shared") { t.Fatal("root-declared sender unavailable") }
+    assertOtherAppAccessorPanics(t, root)
+    if manager, err := NewManagerForApp("ADMIN"); err == nil || manager != nil { t.Fatal("owning App ignored invalid configuration") }
+    t.Setenv("ADMIN_NOTIFICATION_ALERTS_WEBHOOK_URL", server.URL)
+    t.Setenv("ADMIN_NOTIFICATION_ALERTS_WEBHOOK_ALLOW_PRIVATE", "true")
+    admin, err := NewManagerForApp(" admin ")
+    if err != nil { t.Fatal(err) }
+    defer admin.Close()
+    if len(admin.Names()) != 3 || len(admin.Instances()) != 3 || admin.Alerts() != admin.Named("alerts") { t.Fatal("admin membership lost") }
+    if err := admin.Shared().Send(context.Background(), notification.Message{Body: "shared capture"}); err != nil { t.Fatal(err) }
+    if err := admin.Alerts().Send(context.Background(), notification.Message{Body: "admin webhook"}); err != nil { t.Fatal(err) }
+    if calls.Load() != 1 { t.Fatalf("requests = %d, want only admin-specific webhook", calls.Load()) }
+    if manager, err := NewManagerForApp("unconfigured"); err == nil || manager != nil { t.Fatal("unknown App prefix initialized resources") }
+}
+
+// assertOtherAppAccessorPanics proves a wiring mistake fails before it can silently discard a notification.
+func assertOtherAppAccessorPanics(t *testing.T, manager *Manager) {
+    t.Helper()
+    defer func() { if recover() == nil { t.Error("wrong-App typed accessor did not fail fast") } }()
+    _ = manager.Alerts()
+}
+`

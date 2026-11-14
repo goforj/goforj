@@ -240,7 +240,7 @@ func provideFeatureManager() (*features.Manager, func(), error) {
 {{ if .Components.Notification }}
 // provideNotificationManager releases owned transports if later App initialization fails.
 func provideNotificationManager() (*notifications.Manager, func(), error) {
-    manager, err := notifications.NewManager()
+    manager, err := notifications.NewManagerForApp("{{.AppEnvPrefix}}")
     if err != nil { return nil, nil, err }
     return manager, func() { _ = manager.Close() }, nil
 }

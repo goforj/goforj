@@ -79,7 +79,7 @@ func TestAppScopedNotificationManager(t *testing.T) {
     t.Setenv("NOTIFICATION_WEBHOOK_URL", "")
     t.Setenv("NOTIFICATION_WEBHOOK_ALLOW_PRIVATE", "false")
     if err := cmd.ApplyAppEnvOverlay(); err != nil { t.Fatal(err) }
-    reports, err := notifications.NewManager()
+    reports, err := notifications.NewManagerForApp("REPORTS")
     if err != nil { t.Fatal(err) }
     defer reports.Close()
     message := notification.Message{Title: "Scoped alert", Body: "reports only"}
