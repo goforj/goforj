@@ -373,8 +373,6 @@ func TestLoadEnvPreservesAppResourceScopes(t *testing.T) {
 				"SEARCH_BUSINESS_KEY": "custom-base",
 				"SEARCH_CATALOG_BUSINESS_KEY": "custom-named-base",
 				"FEATURE_CHECKOUT_BUSINESS_KEY": "custom-named-base",
-                "SEARCH_BUSINESS_KEY":"custom-base",
-                "SEARCH_CATALOG_BUSINESS_KEY":"custom-named-base",
 				"NOTIFICATION_BUSINESS_KEY": "custom-base",
 				"NOTIFICATION_CHECKOUT_BUSINESS_KEY": "custom-named-base",
 				"SMTP_PASSWORD":                 "smtp-base-secret",
@@ -390,9 +388,11 @@ func TestLoadEnvPreservesAppResourceScopes(t *testing.T) {
                     values["NOTIFICATION_"+name+suffix] = "base-"+name+suffix
                 }
             }
-            for _,name := range []string{"","CATALOG_"} {
-                for _,suffix := range []string{"DRIVER","PATH","URL","API_KEY","PREFIX","SUPPORTED_DRIVERS"} { values["SEARCH_"+name+suffix] = "base-"+name+suffix }
-            }
+			for _, name := range []string{"", "CATALOG_"} {
+				for _, suffix := range []string{"DRIVER", "PATH", "URL", "API_KEY", "PREFIX", "SUPPORTED_DRIVERS"} {
+					values["SEARCH_"+name+suffix] = "base-"+name+suffix
+				}
+			}
 			var lines []string
 			for key, value := range values {
 				overlay := appValue
@@ -423,7 +423,9 @@ func TestLoadEnvPreservesAppResourceScopes(t *testing.T) {
 				}
 {{- end }}
 {{- if .ProjectComponents.Search }}
-                if key != "SEARCH_BUSINESS_KEY" && key != "SEARCH_CATALOG_BUSINESS_KEY" && strings.HasPrefix(key,"SEARCH_") { want = values[key] }
+				if key != "SEARCH_BUSINESS_KEY" && key != "SEARCH_CATALOG_BUSINESS_KEY" && strings.HasPrefix(key, "SEARCH_") {
+					want = values[key]
+				}
 {{- end }}
 				if value, ok := got[key]; !ok || value != want {
 					t.Fatalf("%s = %q (present %t), want %q", key, value, ok, want)

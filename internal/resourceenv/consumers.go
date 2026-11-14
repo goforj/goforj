@@ -371,6 +371,10 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if resource == project.ResourceFeature || resource == project.ResourceNotification {
 			driver = resolver.rawScopedDriver(scope, driverKey, definition.DefaultDriver)
 		}
+		if resource == project.ResourceSearch {
+			driver = resolver.searchScopedDriver(scope, strings.ToLower(name), definition.DefaultDriver)
+		}
+
 		drivers[strings.ToLower(name)] = str.Of(driver).Trim().ToLower().String()
 	}
 	return drivers
@@ -420,6 +424,10 @@ func resourceEndpointSuffixes(definition project.ResourceDefinition) []string {
 		add("PORT")
 	case project.ResourceCache, project.ResourceQueue, project.ResourceEvents, project.ResourceStorage:
 		add("ADDR")
+	case project.ResourceSearch:
+		add("PATH")
+		add("API_KEY")
+		add("PREFIX")
 	}
 	sort.SliceStable(suffixes, func(left, right int) bool {
 		return len(suffixes[left]) > len(suffixes[right])
@@ -429,6 +437,9 @@ func resourceEndpointSuffixes(definition project.ResourceDefinition) []string {
 
 // effectiveDriver applies App overlay semantics before falling back to the generator's empty-driver default.
 func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerScope, connection resourceConnection, fallback string) string {
+	if connection.definition.Key == project.ResourceSearch {
+		return resolver.searchScopedDriver(scope, connection.name, connection.definition.DefaultDriver)
+	}
 	key := connection.definition.EnvironmentPrefix
 	if connection.name != "" {
 		key += "_" + strings.ToUpper(connection.name)
@@ -449,6 +460,40 @@ func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerS
 		return connection.definition.DefaultDriver
 	}
 	return connection.definition.NamedDriverDefault(fallback)
+}
+
+// searchScopedDriver mirrors Search's App-root defaults followed by explicit global and App named selections.
+func (resolver resourceConsumerResolver) searchScopedDriver(scope resourceConsumerScope, name, fallback string) string {
+	normalize := func(value, inherited string) string {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			return inherited
+		}
+		return value
+	}
+	root := normalize(resolver.rawValues["SEARCH_DRIVER"], fallback)
+	appRoot := root
+	if scope.app.prefix != "" {
+		key := scope.app.prefix + "_SEARCH_DRIVER"
+		if value, set := resolver.rawValues[key]; set && project.AppResourceKeyOwner(key, resolver.appPrefixes) == scope.app.prefix {
+			appRoot = normalize(value, fallback)
+		}
+	}
+	if name == "" {
+		return appRoot
+	}
+	driver := appRoot
+	key := "SEARCH_" + strings.ToUpper(name) + "_DRIVER"
+	if value, set := resolver.rawValues[key]; set && project.AppResourceKeyOwner(key, resolver.appPrefixes) == "" {
+		driver = normalize(value, root)
+	}
+	appKey := scope.app.prefix + "_" + key
+	if scope.app.prefix != "" {
+		if value, set := resolver.rawValues[appKey]; set && project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix {
+			driver = normalize(value, appRoot)
+		}
+	}
+	return driver
 }
 
 // rawScopedDriver preserves raw empty-value inheritance for resources whose App resolvers fall back before normalization.
@@ -739,12 +784,40 @@ func (connection resourceConnection) databaseEndpointKey(appPrefix string, suffi
 
 // scopedValue reads a root or named key through one App overlay.
 func (resolver resourceConsumerResolver) scopedValue(scope resourceConsumerScope, connection resourceConnection, suffix string) string {
+	if connection.definition.Key == project.ResourceSearch {
+		return resolver.searchScopedValue(scope, connection, suffix)
+	}
 	key := connection.definition.EnvironmentPrefix
 	if connection.name != "" {
 		key += "_" + strings.ToUpper(connection.name)
 	}
 	key += "_" + strings.ToUpper(suffix)
 	value, _ := resolver.overlayValue(scope, key)
+	return strings.TrimSpace(value)
+}
+
+// searchScopedValue applies App root defaults before named overrides while preserving empty-value inheritance.
+func (resolver resourceConsumerResolver) searchScopedValue(scope resourceConsumerScope, connection resourceConnection, suffix string) string {
+	value := ""
+	apply := func(prefix, key string) {
+		if project.AppResourceKeyOwner(key, resolver.appPrefixes) == prefix {
+			if current := resolver.rawValues[key]; current != "" {
+				value = current
+			}
+		}
+	}
+	suffix = strings.ToUpper(suffix)
+	apply("", "SEARCH_"+suffix)
+	if scope.app.prefix != "" {
+		apply(scope.app.prefix, scope.app.prefix+"_SEARCH_"+suffix)
+	}
+	if connection.name != "" {
+		key := "SEARCH_" + strings.ToUpper(connection.name) + "_" + suffix
+		apply("", key)
+		if scope.app.prefix != "" {
+			apply(scope.app.prefix, scope.app.prefix+"_"+key)
+		}
+	}
 	return strings.TrimSpace(value)
 }
 

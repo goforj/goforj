@@ -182,11 +182,13 @@ func appScopedResourceOverlayKey(key string) bool {
 	}
 {{- end }}
 {{- if .ProjectComponents.Search }}
-    if scoped,ok := strings.CutPrefix(key,"SEARCH_"); ok {
-        for _,suffix := range []string{"DRIVER","PATH","URL","API_KEY","PREFIX","SUPPORTED_DRIVERS"} {
-            if scoped == suffix || strings.HasSuffix(scoped,"_"+suffix) { return true }
-        }
-    }
+	if scoped, ok := strings.CutPrefix(key, "SEARCH_"); ok {
+		for _, suffix := range []string{"DRIVER", "PATH", "URL", "API_KEY", "PREFIX", "SUPPORTED_DRIVERS"} {
+			if scoped == suffix || strings.HasSuffix(scoped, "_"+suffix) {
+				return true
+			}
+		}
+	}
 {{- end }}
 	return false
 }
