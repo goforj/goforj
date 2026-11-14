@@ -313,19 +313,19 @@ func TestManagedFeatureFileNotifications(t *testing.T) {
 // TestFeatureFileRefreshFallback keeps refreshing when a parent cannot be watched.
 func TestFeatureFileRefreshFallback(t *testing.T) {
     var loads atomic.Int64
+    path := filepath.Join(featureFixtureDirectory(t),"missing","flags.json")
     client,err := feature.Open(context.Background(),feature.SourceFunc(func(context.Context)(feature.Document,error) {
-        loads.Add(1)
+        // Publish the parent after a failed registration so the next load follows a complete recovery attempt.
+        if loads.Add(1) == 4 { if err := os.Mkdir(filepath.Dir(path),0700); err != nil { return feature.Document{},err } }
         return feature.Decode([]byte("{\"schema\":1,\"flags\":{}}"))
     }))
     if err != nil { t.Fatal(err) }
-    resource := managedEvaluator{client:client,path:filepath.Join(featureFixtureDirectory(t),"missing","flags.json"),interval:10*time.Millisecond}
+    resource := managedEvaluator{client:client,path:path,interval:10*time.Millisecond}
     if watcher := watchFeatureDirectory(resource.path); watcher != nil { _ = watcher.Close(); t.Fatal("missing parent was watched") }
     ctx,cancel := context.WithCancel(context.Background()); defer cancel()
     done := make(chan struct{})
     go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,nil) }()
-    waitFeatureCondition(t,func() bool { return loads.Load() >= 4 })
-    if err := os.Mkdir(filepath.Dir(resource.path),0700); err != nil { t.Fatal(err) }
-    time.Sleep(100*time.Millisecond)
+    waitFeatureCondition(t,func() bool { return loads.Load() >= 5 })
     recovered := loads.Load()
     time.Sleep(100*time.Millisecond)
     if loads.Load()!=recovered { t.Fatal("polling continued after watch recovery") }

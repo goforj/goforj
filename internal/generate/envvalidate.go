@@ -64,12 +64,12 @@ func discoverPrimitiveChildNames(input generationInput, resourcePrefix string, r
 	names := map[string]struct{}{}
 	add := func(prefix string) {
 		children := exactScopedChildNames(input.environment, prefix, rootKeys)
-		if resourcePrefix == "SEARCH" {
-			appPrefix := strings.TrimSuffix(prefix, "_SEARCH")
-			if prefix == "SEARCH" {
+		if resourcePrefix == "FEATURE" || resourcePrefix == "SEARCH" {
+			appPrefix := strings.TrimSuffix(prefix, "_"+resourcePrefix)
+			if prefix == resourcePrefix {
 				appPrefix = ""
 			}
-			children = searchScopedChildNames(input, appPrefix)
+			children = appScopedChildNames(input, resourcePrefix, appPrefix, rootKeys)
 		}
 		for _, name := range children {
 			name = str.Of(name).ToUpper().Trim().String()
@@ -96,8 +96,10 @@ type primitiveEnvContract struct {
 	DriverKeys            map[string]map[string]struct{}
 	ChildNames            func(environment generationEnvironment) []string
 	AllowInactiveRootKeys bool
-	InheritRootDriver     bool
-	EagerNamedResources   bool
+	// AllowInactiveNamedKeys preserves deployment settings through portable driver changes.
+	AllowInactiveNamedKeys bool
+	InheritRootDriver      bool
+	EagerNamedResources    bool
 }
 
 // primitiveEnvValidator owns the derived driver state shared by root, named, and App-prefixed validation.
@@ -134,7 +136,7 @@ func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) 
 	}
 	for _, entry := range input.environment.Entries() {
 		key := entry.key
-		if contract.Prefix == "SEARCH" && appResourceEnvironmentOwner(key, "SEARCH", generationKnownAppEnvPrefixes(input)) != "" {
+		if (contract.Prefix == "FEATURE" || contract.Prefix == "SEARCH") && appResourceEnvironmentOwner(key, contract.Prefix, generationKnownAppEnvPrefixes(input)) != "" {
 			continue
 		}
 		if !strings.HasPrefix(key, contract.Prefix+"_") {
@@ -165,7 +167,11 @@ func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) 
 		if scopedKey.child != "" {
 			driverKey = contract.Prefix + "_" + scopedKey.child + "_DRIVER"
 		}
-		driver := effectivePrimitiveDriver(input.environment.Get(driverKey, driverFallback), driverFallback)
+		driverValue := input.environment.Get(driverKey, driverFallback)
+		if (contract.Prefix == "FEATURE" || contract.Prefix == "SEARCH") && appResourceEnvironmentOwner(driverKey, contract.Prefix, generationKnownAppEnvPrefixes(input)) != "" {
+			driverValue = driverFallback
+		}
+		driver := effectivePrimitiveDriver(driverValue, driverFallback)
 		if scopedKey.child == "" {
 			driver = rootDriver
 			if !rootDriverValid {
@@ -194,7 +200,7 @@ func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) 
 		if _, ok := allowedKeys[scopedKey.rootKey]; ok {
 			continue
 		}
-		if scopedKey.child == "" && contract.AllowInactiveRootKeys {
+		if (scopedKey.child == "" && contract.AllowInactiveRootKeys) || (scopedKey.child != "" && contract.AllowInactiveNamedKeys) {
 			continue
 		}
 		problems = append(problems, fmt.Sprintf("%s is not supported for %s driver %q", key, strings.ToLower(contract.Prefix), driver))
@@ -224,7 +230,11 @@ func (v primitiveEnvValidator) eagerNamedDriverProblems() []string {
 	problems := []string{}
 	for _, child := range discoverPrimitiveChildNames(v.input, v.contract.Prefix, v.contract.RootKeys) {
 		key := v.contract.Prefix + "_" + child + "_DRIVER"
-		if _, set := v.input.environment.Lookup(key); set {
+		_, set := v.input.environment.Lookup(key)
+		if (v.contract.Prefix == "FEATURE" || v.contract.Prefix == "SEARCH") && appResourceEnvironmentOwner(key, v.contract.Prefix, generationKnownAppEnvPrefixes(v.input)) != "" {
+			set = false
+		}
+		if set {
 			continue
 		}
 		fallback := v.contract.DefaultDriver
@@ -254,8 +264,8 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 		if value, set := v.input.environment.Lookup(resourcePrefix + "_DRIVER"); set {
 			appRootDriver = effectivePrimitiveDriver(value, v.contract.DefaultDriver)
 		}
-		if v.contract.Prefix == "FEATURE" {
-			appRootDriver = effectiveFeatureOverlayDriver(v.input.environment, resourcePrefix, "", v.contract.DefaultDriver)
+		if v.contract.Prefix == "FEATURE" || v.contract.Prefix == "NOTIFICATION" {
+			appRootDriver = effectiveRawOverlayDriver(v.input.environment, v.contract.Prefix, resourcePrefix, "", v.contract.DefaultDriver, generationKnownAppEnvPrefixes(v.input))
 		}
 		knownChildren := map[string]struct{}{}
 		for _, child := range v.baseChildren {
@@ -264,17 +274,17 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 				knownChildren[child] = struct{}{}
 			}
 		}
-		children := exactScopedChildNames(v.input.environment, resourcePrefix, v.contract.RootKeys)
-		if v.contract.Prefix == "SEARCH" {
-			children = searchScopedChildNames(v.input, appPrefix)
+		appChildren := exactScopedChildNames(v.input.environment, resourcePrefix, v.contract.RootKeys)
+		if v.contract.Prefix == "FEATURE" || v.contract.Prefix == "SEARCH" {
+			appChildren = appScopedChildNames(v.input, v.contract.Prefix, appPrefix, v.contract.RootKeys)
 		}
-		for _, child := range children {
+		for _, child := range appChildren {
 			knownChildren[child] = struct{}{}
 		}
 
 		for _, entry := range v.input.environment.Entries() {
 			key := entry.key
-			if v.contract.Prefix == "SEARCH" && appResourceEnvironmentOwner(key, "SEARCH", generationKnownAppEnvPrefixes(v.input)) != appPrefix {
+			if (v.contract.Prefix == "FEATURE" || v.contract.Prefix == "SEARCH") && appResourceEnvironmentOwner(key, v.contract.Prefix, generationKnownAppEnvPrefixes(v.input)) != appPrefix {
 				continue
 			}
 			if !strings.HasPrefix(key, resourcePrefix+"_") {
@@ -325,7 +335,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 			if _, allowed := allowedKeys[scopedKey.rootKey]; allowed {
 				continue
 			}
-			if scopedKey.child == "" && v.contract.AllowInactiveRootKeys {
+			if (scopedKey.child == "" && v.contract.AllowInactiveRootKeys) || (scopedKey.child != "" && v.contract.AllowInactiveNamedKeys) {
 				continue
 			}
 			problems = append(problems, fmt.Sprintf("%s is not supported for %s driver %q", key, strings.ToLower(v.contract.Prefix), driver))
@@ -337,8 +347,8 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 // effectiveAppPrimitiveChildDriver mirrors runtime overlay precedence for one App-scoped named resource.
 // Search applies App root defaults before named overrides because it has no default index; legacy resource families retain their established fallback.
 func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope appPrimitiveDriverScope, child string) string {
-	if scope.contract.Prefix == "FEATURE" {
-		return effectiveFeatureOverlayDriver(environment, scope.resourcePrefix, child, scope.contract.DefaultDriver)
+	if scope.contract.Prefix == "FEATURE" || scope.contract.Prefix == "NOTIFICATION" {
+		return effectiveRawOverlayDriver(environment, scope.contract.Prefix, scope.resourcePrefix, child, scope.contract.DefaultDriver, scope.appPrefixes)
 	}
 	baseFallback := scope.contract.DefaultDriver
 	appFallback := scope.contract.DefaultDriver
@@ -360,15 +370,22 @@ func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope a
 	return driver
 }
 
-// effectiveFeatureOverlayDriver preserves raw fallback values until Feature has resolved both environment scopes.
-// Feature uses App Get(key, baseValue), so empty overrides inherit the base resource while whitespace selects the default driver.
-func effectiveFeatureOverlayDriver(environment generationEnvironment, resourcePrefix, child, defaultDriver string) string {
+// effectiveRawOverlayDriver mirrors Feature and Notification App Get(key, baseValue) lookups.
+// Empty overrides inherit the raw base value while whitespace selects the default driver.
+func effectiveRawOverlayDriver(environment generationEnvironment, basePrefix, resourcePrefix, child, defaultDriver string, appPrefixes []string) string {
 	suffix := "_DRIVER"
 	if child != "" {
 		suffix = "_" + child + suffix
 	}
-	base := environment.Get("FEATURE"+suffix, defaultDriver)
-	return effectivePrimitiveDriver(environment.Get(resourcePrefix+suffix, base), defaultDriver)
+	base := defaultDriver
+	if appResourceEnvironmentOwner(basePrefix+suffix, basePrefix, appPrefixes) == "" {
+		base = environment.Get(basePrefix+suffix, defaultDriver)
+	}
+	appPrefix := strings.TrimSuffix(resourcePrefix, "_"+basePrefix)
+	if appResourceEnvironmentOwner(resourcePrefix+suffix, basePrefix, appPrefixes) == appPrefix {
+		base = environment.Get(resourcePrefix+suffix, base)
+	}
+	return effectivePrimitiveDriver(base, defaultDriver)
 }
 
 // appPrefixedActiveDrivers resolves root and additional-app overlays with the same blank-driver fallbacks used at runtime.
@@ -405,7 +422,7 @@ func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defa
 		}
 		for _, entry := range input.environment.Entries() {
 			key, value := entry.key, entry.value
-			if resourcePrefix == "SEARCH" && appResourceEnvironmentOwner(key, "SEARCH", generationKnownAppEnvPrefixes(input)) != appPrefix {
+			if (resourcePrefix == "FEATURE" || resourcePrefix == "SEARCH") && appResourceEnvironmentOwner(key, resourcePrefix, generationKnownAppEnvPrefixes(input)) != appPrefix {
 				continue
 			}
 			if !strings.HasPrefix(key, keyPrefix) || !strings.HasSuffix(key, "_DRIVER") {
@@ -420,12 +437,12 @@ func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defa
 				fallback = appRootDriver
 			}
 			driver := effectivePrimitiveDriver(value, fallback)
-			if resourcePrefix == "FEATURE" {
+			if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" {
 				child := ""
 				if relative != "DRIVER" {
 					child = strings.TrimSuffix(relative, "_DRIVER")
 				}
-				driver = effectiveFeatureOverlayDriver(input.environment, strings.TrimSuffix(keyPrefix, "_"), child, defaultDriver)
+				driver = effectiveRawOverlayDriver(input.environment, resourcePrefix, strings.TrimSuffix(keyPrefix, "_"), child, defaultDriver, generationKnownAppEnvPrefixes(input))
 			}
 			identity := key + "\x00" + driver
 			if _, exists := seen[identity]; exists {

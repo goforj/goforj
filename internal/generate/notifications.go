@@ -61,7 +61,7 @@ func generateNotificationFiles(input generationInput) (int, error) {
 		ChildNames: func(environment generationEnvironment) []string {
 			return exactScopedChildNames(environment, "NOTIFICATION", notificationRootKeys)
 		},
-		AllowInactiveRootKeys: true, EagerNamedResources: true,
+		AllowInactiveRootKeys: true, AllowInactiveNamedKeys: true, EagerNamedResources: true,
 	}); err != nil {
 		return 0, err
 	}
