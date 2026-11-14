@@ -412,6 +412,7 @@ func prepareInvoiceHTTPVerifierFixture(t *testing.T) invoiceHTTPVerifierFixture 
 
 // majorSurfaceVerifierCase binds one promoted contract to its executable golden Project and a targeted semantic defect.
 type majorSurfaceVerifierCase struct {
+	requiredQuality      []string
 	evaluation           string
 	scenario             string
 	path                 string
@@ -1051,6 +1052,11 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 	if result.FrameworkOutcome.Status != eval.EndpointPassed {
 		t.Fatalf("golden outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
 	}
+	for _, id := range test.requiredQuality {
+		if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
+			t.Fatalf("golden quality check %q did not pass: %#v", id, result.Checks)
+		}
+	}
 	if len(test.alternates) > 0 {
 		originals := applyEvaluationAlternates(t, projectRoot, test.alternates)
 		alternateChanges := evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)
@@ -1519,4 +1525,25 @@ func evaluationCheckHasStatus(checks []eval.EndpointResult, id string, status ev
 		}
 	}
 	return false
+}
+
+// TestPatchCustomerSettingsVerifierCalibration proves the new contract rejects compiling presence loss independently from historic write validation.
+func TestPatchCustomerSettingsVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		requiredQuality: []string{"settings-library-path", "settings-library-runtime"},
+		evaluation:      "patch-customer-settings",
+		scenario:        "customer-settings-validation",
+		path:            "internal/settings/policy.go",
+		old:             "service.ValidatePatch(ctx, input)",
+		mutant:          "service.ValidatePatch(context.Background(), input)",
+		wantFailed:      "settings-library-path",
+		wantCompile:     true,
+		behavior: &evaluationBehaviorMutation{
+			path:        "internal/settings/policy.go",
+			old:         "if value, ok := input.Enabled.Get(); ok {",
+			mutant:      "if value, ok := input.Enabled.Get(); ok && value {",
+			wantFailed:  "settings-validation-behavior",
+			wantCompile: true,
+		},
+	})
 }
