@@ -4,7 +4,9 @@
 
 Enable the optional `feature` component in the owning App and run `forj generate --feature` after declaring evaluator resources in `.env`. The native memory and file drivers are always compiled, following the framework baseline-driver convention. `FEATURE_SUPPORTED_DRIVERS=memory,file` records their build capability; `FEATURE_DRIVER` selects the active native source at runtime. Vendor SDK adapters are outside this first integration.
 
-The default memory source captures `FEATURE_DOCUMENT` at startup, using an empty document when omitted. File sources require `FEATURE_PATH` and load synchronously before startup. Set `FEATURE_REFRESH_INTERVAL` (at least `10ms`, default `30s`) and `FEATURE_INITIALIZATION_TIMEOUT` (positive, default `5s`). The App lifecycle starts refresh and cancels and joins workers on shutdown. Invalid refresh retains valid decisions and keeps readiness usable. `Instances()` exposes the last refresh error and freshness timestamps; startup still fails when no valid initial configuration can be loaded.
+The default memory source starts empty without an inline definition in the generated environment. For normal flag definitions, set `FEATURE_DRIVER=file` and configure `FEATURE_PATH` to point to a definition file. File sources load synchronously before startup. `FEATURE_DOCUMENT` remains an optional startup override for memory sources in tests or small fixtures.
+
+Set `FEATURE_REFRESH_INTERVAL` (at least `10ms`, default `30s`) and `FEATURE_INITIALIZATION_TIMEOUT` (positive, default `5s`). The App lifecycle starts refresh and cancels and joins workers on shutdown. Invalid refresh retains valid decisions and keeps readiness usable. `Instances()` exposes the last refresh error and freshness timestamps; startup still fails when no valid initial configuration can be loaded.
 
 A named evaluator uses `FEATURE_CHECKOUT_DRIVER=file` and `FEATURE_CHECKOUT_PATH=storage/flags/checkout.json`. Regenerate to add `Manager.Checkout()`.
 
