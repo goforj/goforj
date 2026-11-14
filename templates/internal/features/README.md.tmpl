@@ -6,7 +6,7 @@ Enable the optional `feature` component in the owning App and run `forj generate
 
 The default memory source starts empty without an inline definition in the generated environment. For normal flag definitions, set `FEATURE_DRIVER=file` and configure `FEATURE_PATH` to point to a definition file. File sources load synchronously before startup. `FEATURE_DOCUMENT` remains an optional startup override for memory sources in tests or small fixtures.
 
-Set `FEATURE_REFRESH_INTERVAL` (at least `10ms`, default `30s`) and `FEATURE_INITIALIZATION_TIMEOUT` (positive, default `5s`). The App lifecycle starts refresh and cancels and joins workers on shutdown. Invalid refresh retains valid decisions and keeps readiness usable. `Instances()` exposes the last refresh error and freshness timestamps; startup still fails when no valid initial configuration can be loaded.
+Set `FEATURE_REFRESH_INTERVAL` (at least `10ms`, default `30s`) and `FEATURE_INITIALIZATION_TIMEOUT` (positive, default `5s`). The App lifecycle watches each file source's parent directory, debounces changes for 50ms, and refreshes after edits or atomic replacements. The interval remains a periodic safety refresh for missed notifications or filesystems without watch support; failed watches are retried on that interval. Memory sources start no background workers. Shutdown cancels and joins file workers. Invalid refresh retains valid decisions and keeps readiness usable. `Instances()` exposes the last refresh error and freshness timestamps; startup still fails when no valid initial configuration can be loaded.
 
 A named evaluator uses `FEATURE_CHECKOUT_DRIVER=file` and `FEATURE_CHECKOUT_PATH=storage/flags/checkout.json`. Regenerate to add `Manager.Checkout()`.
 
