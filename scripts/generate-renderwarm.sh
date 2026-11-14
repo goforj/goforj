@@ -248,6 +248,7 @@ done < "$go_files_file"
   # Feature managers are generated from Go source templates outside the .tmpl inventory.
   echo "github.com/goforj/feature"
   echo "github.com/fsnotify/fsnotify"
+  echo "golang.org/x/text/unicode/norm"
   # Scheduler's module graph otherwise seeds the older driver used only by its examples.
   echo "github.com/goforj/cache/driver/rediscache"
   # Web's index package remains on str v1 while rendered templates use str/v2.
