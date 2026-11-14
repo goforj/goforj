@@ -328,6 +328,7 @@ func readModuleName(projectDir string) (string, error) {
 
 // renderQueueConfig keeps local worker implementations in every generated build.
 func renderQueueConfig(input generationInput) ([]byte, error) {
+	input = legacyResourceGenerationInput(input, "QUEUE")
 	names := discoverQueueNames(input)
 	moduleName, err := readModuleName(input.projectDir)
 	if err != nil {

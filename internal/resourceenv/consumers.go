@@ -18,6 +18,7 @@ type resourceConsumerResolver struct {
 	values                map[string]string
 	rawValues             map[string]string
 	appPrefixes           []string
+	featureAppPrefixes    map[string]bool
 	plan                  project.ResourcePlan
 	projectComponents     project.Components
 	projectDatabaseDriver string
@@ -95,8 +96,14 @@ func newResourceConsumerResolver(source []byte, plan project.ResourcePlan, proje
 // resolve keeps applicability App-local while retaining project-wide service placement.
 func (resolver resourceConsumerResolver) resolve(defaultComponents project.Components, appNames []string, appComponents map[string]project.Components) ([]project.EffectiveResourceConsumer, error) {
 	appPrefixes := resourceAppPrefixes(resolver.values, appNames)
+	resolver.featureAppPrefixes = map[string]bool{}
 	for _, app := range appPrefixes {
 		resolver.appPrefixes = append(resolver.appPrefixes, app.prefix)
+		components, ok := appComponents[app.name]
+		if !ok {
+			components = defaultComponents
+		}
+		resolver.featureAppPrefixes[app.prefix] = components.Feature
 	}
 	consumers := []project.EffectiveResourceConsumer{}
 	seen := map[string]bool{}
@@ -317,7 +324,7 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if named.Resource != resource {
 			continue
 		}
-		if project.AppResourceKeyOwner(named.EnvironmentKey, resolver.appPrefixes) != "" {
+		if (resource == project.ResourceFeature && project.AppResourceKeyOwner(named.EnvironmentKey, resolver.appPrefixes) != "") || resolver.enabledFeatureAppOwns(named.EnvironmentKey) {
 			continue
 		}
 		fallback := named.Active
@@ -334,7 +341,7 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 	}
 	for key := range resolver.values {
 		owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
-		if owner != "" && owner != scope.app.prefix {
+		if (resource == project.ResourceFeature && owner != "" && owner != scope.app.prefix) || (resource != project.ResourceFeature && resolver.enabledFeatureAppOwns(key)) {
 			continue
 		}
 		baseKey := key
@@ -748,22 +755,29 @@ func (resolver resourceConsumerResolver) scopedValue(scope resourceConsumerScope
 	return strings.TrimSpace(value)
 }
 
-// overlayValue applies the generated runtime's App-prefixed override precedence.
+// overlayValue applies runtime overlay precedence, retaining resource-first lookup for legacy managers.
 func (resolver resourceConsumerResolver) overlayValue(scope resourceConsumerScope, key string) (string, bool) {
 	key = str.Of(key).Trim().ToUpper().String()
+	appAware := strings.HasPrefix(key, "FEATURE_")
 	if scope.app.prefix != "" {
 		appKey := scope.app.prefix + "_" + key
-		if project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix {
+		if (appAware && project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix) || (!appAware && !resolver.enabledFeatureAppOwns(appKey)) {
 			if value, ok := resolver.values[appKey]; ok {
 				return value, true
 			}
 		}
 	}
-	if project.AppResourceKeyOwner(key, resolver.appPrefixes) != "" {
+	if (appAware && project.AppResourceKeyOwner(key, resolver.appPrefixes) != "") || (!appAware && resolver.enabledFeatureAppOwns(key)) {
 		return "", false
 	}
 	value, ok := resolver.values[key]
 	return value, ok
+}
+
+// enabledFeatureAppOwns protects active Feature overlays while retaining legacy interpretation for disabled Apps.
+func (resolver resourceConsumerResolver) enabledFeatureAppOwns(key string) bool {
+	owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
+	return owner != "" && resolver.featureAppPrefixes[owner] && strings.HasPrefix(key, owner+"_FEATURE_")
 }
 
 // consumerName formats the stable identity shared with the pure service planner.

@@ -242,6 +242,7 @@ func generateMailFiles(input generationInput) (int, error) {
 
 // renderMailConfig keeps the local log implementation in every generated build.
 func renderMailConfig(input generationInput) ([]byte, error) {
+	input = legacyResourceGenerationInput(input, "MAIL")
 	names := discoverMailNames(input)
 	driverSet := map[string]struct{}{}
 	defaultDriver := effectivePrimitiveDriver(input.environment.Get("MAIL_DRIVER", "log"), "log")

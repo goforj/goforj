@@ -327,6 +327,7 @@ func renderEventAccessors(input generationInput) ([]byte, error) {
 
 // uniqueEventDrivers resolves the complete event build contract without allowing active App overlays to be omitted.
 func uniqueEventDrivers(input generationInput) ([]string, error) {
+	input = legacyResourceGenerationInput(input, "EVENTS")
 	seen := map[string]struct{}{}
 	driver := effectivePrimitiveDriver(input.environment.Get("EVENTS_DRIVER", "inproc"), "inproc")
 	seen[driver] = struct{}{}
