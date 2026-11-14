@@ -75,7 +75,7 @@ func TestNotificationOverlayRejectsInvalidDrivers(t *testing.T) {
 // TestGeneratedNotificationOverlayRuntime checks raw fallback and compiled guards against the released env SDK.
 func TestGeneratedNotificationOverlayRuntime(t *testing.T) {
 	root := t.TempDir()
-	input := fixtureGenerationInput(root, map[string]string{"NOTIFICATION_SUPPORTED_DRIVERS": "log,webhook"})
+	input := fixtureGenerationInput(root, map[string]string{"NOTIFICATION_SUPPORTED_DRIVERS": "log,webhook", "BILLING_NOTIFICATION_DRIVER": ""})
 	if _, err := generateNotificationFiles(input); err != nil {
 		t.Fatal(err)
 	}
