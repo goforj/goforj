@@ -75,3 +75,30 @@ func AppResourceEnvironmentOwner(key string, knownAppPrefixes []string, componen
 	}
 	return owner, managed
 }
+
+// legacyResourceGenerationInput excludes settings consumed by enabled App-aware managers from legacy resource interpretation.
+func legacyResourceGenerationInput(input generationInput, resourcePrefix string) generationInput {
+	if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" || resourcePrefix == "SEARCH" {
+		return input
+	}
+	if _, err := project.LoadProjectConfigAt(input.projectDir); err != nil {
+		return input
+	}
+	enabledFeature := makeSet(generationAppEnvPrefixesForResource(input, "FEATURE")...)
+	enabledNotification := makeSet(generationAppEnvPrefixesForResource(input, "NOTIFICATION")...)
+	enabledSearch := makeSet(generationAppEnvPrefixesForResource(input, "SEARCH")...)
+	prefixes := generationKnownAppEnvPrefixes(input)
+	values := make(map[string]string, len(input.environment.values))
+	for _, entry := range input.environment.Entries() {
+		owner := appResourceEnvironmentOwner(entry.key, prefixes)
+		_, feature := enabledFeature[owner]
+		_, notification := enabledNotification[owner]
+		_, search := enabledSearch[owner]
+		if owner != "" && ((feature && strings.HasPrefix(entry.key, owner+"_FEATURE_")) || (notification && strings.HasPrefix(entry.key, owner+"_NOTIFICATION_")) || (search && strings.HasPrefix(entry.key, owner+"_SEARCH_"))) {
+			continue
+		}
+		values[entry.key] = entry.value
+	}
+	input.environment = generationEnvironment{values: values}
+	return input
+}

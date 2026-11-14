@@ -116,7 +116,7 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 			}
 		}
 	}
-	names := generate.ResourceNames(root, scoped)
+	names := generate.ResourceNamesInScope(scoped)
 	for _, definition := range project.ResourceCatalog() {
 		for _, named := range definition.NamedResources {
 			if named.RequiredComponent != "" && !project.ProjectComponents(config).Enabled(named.RequiredComponent) {

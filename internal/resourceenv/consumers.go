@@ -18,6 +18,7 @@ type resourceConsumerResolver struct {
 	values                map[string]string
 	rawValues             map[string]string
 	appPrefixes           []string
+	appResourceComponents map[string]project.Components
 	plan                  project.ResourcePlan
 	projectComponents     project.Components
 	projectDatabaseDriver string
@@ -95,8 +96,14 @@ func newResourceConsumerResolver(source []byte, plan project.ResourcePlan, proje
 // resolve keeps applicability App-local while retaining project-wide service placement.
 func (resolver resourceConsumerResolver) resolve(defaultComponents project.Components, appNames []string, appComponents map[string]project.Components) ([]project.EffectiveResourceConsumer, error) {
 	appPrefixes := resourceAppPrefixes(resolver.values, appNames)
+	resolver.appResourceComponents = map[string]project.Components{}
 	for _, app := range appPrefixes {
 		resolver.appPrefixes = append(resolver.appPrefixes, app.prefix)
+		components, ok := appComponents[app.name]
+		if !ok {
+			components = defaultComponents
+		}
+		resolver.appResourceComponents[app.prefix] = components
 	}
 	consumers := []project.EffectiveResourceConsumer{}
 	seen := map[string]bool{}
@@ -317,7 +324,7 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if named.Resource != resource {
 			continue
 		}
-		if project.AppResourceKeyOwner(named.EnvironmentKey, resolver.appPrefixes) != "" {
+		if ((resource == project.ResourceFeature || resource == project.ResourceNotification || resource == project.ResourceSearch) && project.AppResourceKeyOwner(named.EnvironmentKey, resolver.appPrefixes) != "") || resolver.enabledAppResourceOwns(named.EnvironmentKey) {
 			continue
 		}
 		fallback := named.Active
@@ -334,7 +341,8 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 	}
 	for key := range resolver.values {
 		owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
-		if owner != "" && owner != scope.app.prefix {
+		appAware := resource == project.ResourceFeature || resource == project.ResourceNotification || resource == project.ResourceSearch
+		if (appAware && owner != "" && owner != scope.app.prefix) || (!appAware && resolver.enabledAppResourceOwns(key)) {
 			continue
 		}
 		baseKey := key
@@ -821,22 +829,30 @@ func (resolver resourceConsumerResolver) searchScopedValue(scope resourceConsume
 	return strings.TrimSpace(value)
 }
 
-// overlayValue applies the generated runtime's App-prefixed override precedence.
+// overlayValue applies runtime overlay precedence, retaining resource-first lookup for legacy managers.
 func (resolver resourceConsumerResolver) overlayValue(scope resourceConsumerScope, key string) (string, bool) {
 	key = str.Of(key).Trim().ToUpper().String()
+	appAware := strings.HasPrefix(key, "FEATURE_") || strings.HasPrefix(key, "NOTIFICATION_") || strings.HasPrefix(key, "SEARCH_")
 	if scope.app.prefix != "" {
 		appKey := scope.app.prefix + "_" + key
-		if project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix {
+		if (appAware && project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix) || (!appAware && !resolver.enabledAppResourceOwns(appKey)) {
 			if value, ok := resolver.values[appKey]; ok {
 				return value, true
 			}
 		}
 	}
-	if project.AppResourceKeyOwner(key, resolver.appPrefixes) != "" {
+	if (appAware && project.AppResourceKeyOwner(key, resolver.appPrefixes) != "") || (!appAware && resolver.enabledAppResourceOwns(key)) {
 		return "", false
 	}
 	value, ok := resolver.values[key]
 	return value, ok
+}
+
+// enabledAppResourceOwns protects active App-aware overlays while retaining legacy interpretation for disabled Apps.
+func (resolver resourceConsumerResolver) enabledAppResourceOwns(key string) bool {
+	owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
+	components := resolver.appResourceComponents[owner]
+	return owner != "" && ((components.Feature && strings.HasPrefix(key, owner+"_FEATURE_")) || (components.Notification && strings.HasPrefix(key, owner+"_NOTIFICATION_")) || (components.Search && strings.HasPrefix(key, owner+"_SEARCH_")))
 }
 
 // consumerName formats the stable identity shared with the pure service planner.
