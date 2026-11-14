@@ -404,6 +404,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.validateFeatureRenderTransition(projectComponents); err != nil {
 		return err
 	}
+	if err := p.validateNotificationRenderTransition(projectComponents); err != nil {
+		return err
+	}
 	if err := p.validateStorageRenderTransition(projectComponents); err != nil {
 		return err
 	}
@@ -1297,6 +1300,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
+	if err := p.validateNotificationRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
 	if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
@@ -1323,6 +1329,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 			return err
 		}
 		if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
+		if err := p.validateNotificationRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
@@ -1579,6 +1588,7 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 	}{
 		{name: "Events", removed: before.Events && !after.Events, residues: projectEventsResiduePaths()},
 		{name: "Feature", removed: before.Feature && !after.Feature, residues: []string{filepath.Join("internal", "features")}},
+		{name: "Notifications", removed: before.Notification && !after.Notification, residues: []string{filepath.Join("internal", "notifications")}},
 		{name: "Storage", removed: before.Storage && !after.Storage, residues: projectStorageResiduePaths()},
 	}
 	for _, check := range checks {
@@ -1614,6 +1624,16 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 	if before.Cache && !after.Cache {
 		if err := p.validateCacheRenderTransition(after, app); err != nil {
 			return fmt.Errorf("cannot remove App %q because it is the last App using Cache: %w", app.Name, err)
+		}
+	}
+	if before.Notification && !after.Notification {
+		path := filepath.Join(projectlayout.WireDir(".", app), "app.go")
+		exists, err := p.notificationAccessorExists(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Notifications while %s exposes the generated Notifications API; automatic Notifications removal is not supported", app.Name, path)
 		}
 	}
 	return nil
