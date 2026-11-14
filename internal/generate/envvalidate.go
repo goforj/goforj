@@ -46,6 +46,7 @@ func generationEnvironmentResources() []generationEnvironmentResource {
 		{prefix: "DB", rootKeys: dbRootKeys},
 		{prefix: "EVENTS", rootKeys: eventRootKeys},
 		{prefix: "MAIL", rootKeys: mailRootKeys},
+		{prefix: "NOTIFICATION", rootKeys: notificationRootKeys},
 		{prefix: "QUEUE", rootKeys: queueRootKeys},
 		{prefix: "STORAGE", rootKeys: storageRootKeys},
 	}
@@ -613,6 +614,8 @@ func generationComponentsSupportResource(components project.Components, resource
 		return components.HasDatabase()
 	case "EVENTS":
 		return components.Events
+	case "NOTIFICATION":
+		return components.Notification
 	case "MAIL":
 		return components.Mail
 	case "QUEUE":

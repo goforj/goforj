@@ -109,3 +109,25 @@ func TestPipelineGenerationIgnoresStaleJobsDirectoriesWhenComponentDisabled(t *t
 		}
 	}
 }
+
+// TestPipelineGenerationIgnoresStaleNotificationDirectoryWhenComponentDisabled verifies builds select Notification from config rather than filesystem or environment residue.
+func TestPipelineGenerationIgnoresStaleNotificationDirectoryWhenComponentDisabled(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "notifications"), 0o755); err != nil {
+		t.Fatalf("create stale Notification directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("project_name: Test\nmodule_name: example.test/app\nrender:\n  components: [cli]\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("NOTIFICATION_DRIVER=unknown\nNOTIFICATION_SUPPORTED_DRIVERS=unknown\n"), 0o644); err != nil {
+		t.Fatalf("write stale Notification environment: %v", err)
+	}
+
+	pipeline := NewPipeline(logger.NewSilentLogger(), nil)
+	if _, err := pipeline.generateProjectFiles(root); err != nil {
+		t.Fatalf("generate project files: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "internal", "notifications", "manager_gen.go")); !os.IsNotExist(err) {
+		t.Fatalf("Notification-disabled build generated stale Notification package: %v", err)
+	}
+}
