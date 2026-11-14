@@ -9,6 +9,9 @@ import (
 	"{{.GoModuleName}}/internal/runtime"
 	"github.com/goforj/wire"
 
+{{- if .Components.Feature }}
+	"{{.GoModuleName}}/internal/features"
+{{- end }}
 {{- if .Components.Cache }}
 	"{{.GoModuleName}}/internal/caches"
 {{- end }}
@@ -40,6 +43,9 @@ import (
 )
 
 var managerSet = wire.NewSet(
+{{- if .Components.Feature }}
+	provideFeatureManager,
+{{- end }}
 {{- if .Components.Metrics }}
 	metrics.NewManager,
 {{- else if .ProjectComponents.Metrics }}
@@ -219,6 +225,15 @@ func provideAppLogger(timeouts *runtime.Timeouts) (*logger.AppLogger, func(), er
 // provideNotificationManager releases owned transports if later App initialization fails.
 func provideNotificationManager() (*notifications.Manager, func(), error) {
     manager, err := notifications.NewManager()
+    if err != nil { return nil, nil, err }
+    return manager, func() { _ = manager.Close() }, nil
+}
+{{- end }}
+
+{{ if .Components.Feature }}
+// provideFeatureManager binds evaluator resources to this App's startup configuration.
+func provideFeatureManager() (*features.Manager, func(), error) {
+    manager, err := features.NewManagerForApp("{{.AppEnvPrefix}}")
     if err != nil { return nil, nil, err }
     return manager, func() { _ = manager.Close() }, nil
 }

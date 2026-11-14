@@ -8,6 +8,7 @@ import (
 
 // pinnedModuleVersions records validated framework releases and ecosystem security minimums for rendered projects.
 var pinnedModuleVersions = map[string]string{
+	"github.com/goforj/feature":                                       "v0.1.0",
 	"go.opentelemetry.io/otel/log":                                    "v1.47.0",
 	"go.opentelemetry.io/otel/sdk/log":                                "v1.47.0",
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp":     "v0.23.0",
@@ -244,6 +245,9 @@ func SyncCoreLibraries(components project.Components) []string {
 	modules := append([]string(nil), rendererSyncModules...)
 	if components.WebAPI || components.WebUI {
 		modules = append(modules, webRendererSyncModules...)
+	}
+	if components.Feature {
+		modules = append(modules, "github.com/goforj/feature")
 	}
 	if components.Cache {
 		modules = append(modules, cacheRendererSyncModules...)

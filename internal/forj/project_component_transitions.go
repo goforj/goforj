@@ -661,3 +661,37 @@ func (p *ProjectRenderer) notificationAccessorExists(path string) (bool, error) 
 	}
 	return false, nil
 }
+
+// validateFeatureRenderTransition rejects removal before generated accessors can strand App-owned providers.
+func (p *ProjectRenderer) validateFeatureRenderTransition(components project.Components) error {
+	if !components.Feature {
+		path := filepath.Join("internal", "features")
+		exists, err := p.workspace.renderPathExists(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot disable Feature while %s exists; automatic Feature removal is not supported", path)
+		}
+	}
+	for _, app := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
+		if appRenderComponents(p.config, app).Feature {
+			continue
+		}
+		path := filepath.Join(projectlayout.WireDir(".", app), "app.go")
+		file, exists, err := p.workspace.parsedRenderGoFile(path)
+		if err != nil {
+			return fmt.Errorf("parse Feature transition path %s: %w", path, err)
+		}
+		if !exists {
+			continue
+		}
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if ok && function.Recv != nil && function.Name.Name == "Features" {
+				return fmt.Errorf("cannot disable Feature for App %q while %s exposes the generated Features API; automatic Feature removal is not supported", app.Name, path)
+			}
+		}
+	}
+	return nil
+}

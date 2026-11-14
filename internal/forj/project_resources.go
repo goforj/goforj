@@ -30,6 +30,9 @@ func normalizeQueueDriver(value string) string {
 
 // resourceRenderValues is the template-facing projection of a validated transient resource plan.
 type resourceRenderValues struct {
+	FeatureDriver                  string
+	FeatureSupportedDrivers        string
+	FeatureAvailableDrivers        string
 	DatabaseDriver                 string
 	DatabaseSupportedDrivers       string
 	DatabaseAvailableDrivers       string
@@ -388,6 +391,7 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 		*available = availableDrivers[key]
 	}
 	set(project.ResourceDatabase, &values.DatabaseDriver, &values.DatabaseSupportedDrivers, &values.DatabaseAvailableDrivers)
+	set(project.ResourceFeature, &values.FeatureDriver, &values.FeatureSupportedDrivers, &values.FeatureAvailableDrivers)
 	set(project.ResourceCache, &values.CacheDriver, &values.CacheSupportedDrivers, &values.CacheAvailableDrivers)
 	set(project.ResourceQueue, &values.QueueDriver, &values.QueueSupportedDrivers, &values.QueueAvailableDrivers)
 	set(project.ResourceEvents, &values.EventsDriver, &values.EventsSupportedDrivers, &values.EventsAvailableDrivers)
@@ -519,6 +523,7 @@ func activeDevelopmentServiceProfiles(servicePlan project.ServicePlan, component
 // DriverEnvironmentPlaceholders renders only opt-in driver hints selected by the effective build contract.
 func (v resourceRenderValues) DriverEnvironmentPlaceholders() string {
 	selections := map[project.ResourceKey]project.DriverSelection{
+		project.ResourceFeature:      {Active: v.FeatureDriver, Supported: splitDriverList(v.FeatureSupportedDrivers)},
 		project.ResourceDatabase:     {Active: v.DatabaseDriver, Supported: splitDriverList(v.DatabaseSupportedDrivers)},
 		project.ResourceCache:        {Active: v.CacheDriver, Supported: splitDriverList(v.CacheSupportedDrivers)},
 		project.ResourceQueue:        {Active: v.QueueDriver, Supported: splitDriverList(v.QueueSupportedDrivers)},

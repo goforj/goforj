@@ -82,6 +82,7 @@ func generatedModuleRequirements(projectDir string, selection GenerationSelectio
 		selected bool
 		name     string
 	}{
+		{selection.Feature, "features"},
 		{selection.Storage, "storages"},
 		{selection.Cache, "caches"},
 		{selection.Mail, "mail"},
