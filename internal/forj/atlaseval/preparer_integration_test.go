@@ -1537,7 +1537,7 @@ func TestCatalogSearchVerifierCalibration(t *testing.T) {
 		},
 		alternates: []evaluationFileMutation{
 			{path: "internal/catalog/service.go", old: "struct{ index *search.Index }", replacement: "struct{ projection *search.Index }"},
-			{path: "internal/catalog/service.go", old: "{index: index}", replacement: "{projection: index}"},
+			{path: "internal/catalog/service.go", old: "{index: manager.Catalog()}", replacement: "{projection: manager.Catalog()}"},
 			{path: "internal/catalog/service.go", old: "service.index", replacement: "service.projection"},
 		},
 	})
