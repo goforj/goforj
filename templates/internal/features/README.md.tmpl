@@ -6,7 +6,11 @@ Enable the optional `feature` component in the owning App and run `forj generate
 
 The default memory source captures `FEATURE_DOCUMENT` at startup, using an empty document when omitted. File sources require `FEATURE_PATH` and load synchronously before startup. Set `FEATURE_REFRESH_INTERVAL` (at least `10ms`, default `30s`) and `FEATURE_INITIALIZATION_TIMEOUT` (positive, default `5s`). The App lifecycle starts refresh and cancels and joins workers on shutdown. Invalid refresh retains valid decisions and keeps readiness usable. `Instances()` exposes the last refresh error and freshness timestamps; startup still fails when no valid initial configuration can be loaded.
 
-A named evaluator uses `FEATURE_CHECKOUT_DRIVER=file` and `FEATURE_CHECKOUT_PATH=/etc/app/checkout.json`. Regenerate to add `Manager.Checkout()`. Named Apps use their existing environment overlay, for example `BILLING_FEATURE_CHECKOUT_PATH`. Resources identify evaluator configuration, not individual flag names. A name declared only for Billing is not initialized by another App. Accessing an undeclared App resource fails fast.
+A named evaluator uses `FEATURE_CHECKOUT_DRIVER=file` and `FEATURE_CHECKOUT_PATH=storage/flags/checkout.json`. Regenerate to add `Manager.Checkout()`.
+
+Create `storage/flags/checkout.json` before starting the App. This relative path assumes the process runs from the Project root; relative paths resolve from the process working directory. A deployment can configure an absolute path for a mounted definition file.
+
+Named Apps use their existing environment overlay, for example `BILLING_FEATURE_CHECKOUT_PATH`. Resources identify evaluator configuration, not individual flag names. A name declared only for Billing is not initialized by another App. Accessing an undeclared App resource fails fast.
 
 Inject `*features.Manager` into an application service through the owning App's service Wire set. Capture one request snapshot before targeting:
 
