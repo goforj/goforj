@@ -20,6 +20,7 @@ require (
 	github.com/goforj/env/v2 v2.6.1
 	github.com/goforj/events v0.2.2
 	github.com/goforj/events/eventscore v0.2.2
+	github.com/goforj/feature v0.1.0
 	github.com/goforj/httpx v1.1.0
 	github.com/goforj/mail v0.3.1
 	github.com/goforj/metrics v0.2.0

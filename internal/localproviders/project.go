@@ -158,8 +158,11 @@ func managedKey(config *project.Config, key string) bool {
 
 // rootResourceKey recognizes settings that the default App can consume even when their names also match a configured App prefix.
 func rootResourceKey(key string) bool {
-	for _, prefix := range []string{"DB_", "CACHE_", "QUEUE_", "EVENTS_", "STORAGE_", "MAIL_", "REDIS_"} {
-		if strings.HasPrefix(key, prefix) {
+	if strings.HasPrefix(key, "REDIS_") {
+		return true
+	}
+	for _, definition := range project.ResourceCatalog() {
+		if strings.HasPrefix(key, definition.EnvironmentPrefix+"_") {
 			return true
 		}
 	}

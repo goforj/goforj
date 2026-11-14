@@ -30,7 +30,7 @@ type appPrimitiveDriverScope struct {
 }
 
 // generationDriverResourcePrefixes bounds App-prefix inference to resources whose overlays generated apps consume.
-var generationDriverResourcePrefixes = []string{"CACHE", "DB", "EVENTS", "MAIL", "QUEUE", "STORAGE"}
+var generationDriverResourcePrefixes = []string{"FEATURE", "CACHE", "DB", "EVENTS", "MAIL", "QUEUE", "STORAGE"}
 
 // generationEnvironmentResource pairs an App-overlay marker with the keys that provide trustworthy prefix evidence.
 type generationEnvironmentResource struct {
@@ -41,6 +41,7 @@ type generationEnvironmentResource struct {
 // generationEnvironmentResources keeps App-prefix inference aligned with every generated primitive contract.
 func generationEnvironmentResources() []generationEnvironmentResource {
 	return []generationEnvironmentResource{
+		{prefix: "FEATURE", rootKeys: featureRootKeys},
 		{prefix: "CACHE", rootKeys: cacheRootKeys},
 		{prefix: "DB", rootKeys: dbRootKeys},
 		{prefix: "EVENTS", rootKeys: eventRootKeys},
@@ -517,6 +518,8 @@ func generationAppEnvPrefixesForResource(input generationInput, resourcePrefix s
 // generationComponentsSupportResource maps generated resource prefixes to their owning App component.
 func generationComponentsSupportResource(components project.Components, resourcePrefix string) bool {
 	switch resourcePrefix {
+	case "FEATURE":
+		return components.Feature
 	case "CACHE":
 		return components.Cache
 	case "DB":

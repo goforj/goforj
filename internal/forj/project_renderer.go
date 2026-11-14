@@ -188,6 +188,7 @@ type templateRenderConfig struct {
 	HelpFormatterFunc           string
 	HelpCommandFunc             string
 	App                         project.App
+	AppEnvPrefix                string
 	AppPackageName              string
 	AppImportPath               string
 	WireImportPath              string
@@ -396,6 +397,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return fmt.Errorf("project component envelope: %w", err)
 	}
 	if err := p.validateEventsRenderTransition(projectComponents); err != nil {
+		return err
+	}
+	if err := p.validateFeatureRenderTransition(projectComponents); err != nil {
 		return err
 	}
 	if err := p.validateStorageRenderTransition(projectComponents); err != nil {
@@ -667,6 +671,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/event.tmpl",
 				"internal/makecmd/subscriber.tmpl",
 			},
+		},
+		{
+			title:     "Feature Components Rendering",
+			enabled:   projectComponents.Feature,
+			templates: []string{"internal/features/README.md.tmpl"},
 		},
 		{
 			title:   "Storage Components Rendering",
@@ -1276,6 +1285,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateEventsRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
+	if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
 	if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
@@ -1296,6 +1308,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 			return err
 		}
 		if err := p.validateEventsRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
+		if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
@@ -1483,6 +1498,7 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 		residues []string
 	}{
 		{name: "Events", removed: before.Events && !after.Events, residues: projectEventsResiduePaths()},
+		{name: "Feature", removed: before.Feature && !after.Feature, residues: []string{filepath.Join("internal", "features")}},
 		{name: "Storage", removed: before.Storage && !after.Storage, residues: projectStorageResiduePaths()},
 	}
 	for _, check := range checks {
@@ -3876,6 +3892,7 @@ func (w projectRenderWorkspace) templateDataForApp(config *project.Config, app p
 		HelpFormatterFunc:           helpFormatterFunc(helpFormat),
 		HelpCommandFunc:             helpCommandFunc(helpFormat),
 		App:                         app,
+		AppEnvPrefix:                project.AppEnvironmentPrefix(app.Name),
 		AppPackageName:              project.AppPackageName(app.Name),
 		AppImportPath:               appImportPath,
 		WireImportPath:              wireImportPath,

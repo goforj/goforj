@@ -239,6 +239,7 @@ type Config = ProjectConfig
 
 // Components represents the components of the project.
 type Components struct {
+	Feature          bool `yaml:"feature" json:"feature,omitempty"`
 	CLI              bool `yaml:"cli" json:"cli"`
 	DemoApp          bool `yaml:"demo_app" json:"demo_app"`
 	Mail             bool `yaml:"mail" json:"mail"`
@@ -293,6 +294,8 @@ func (c Components) Enabled(key ComponentKey) bool {
 		return c.DatabaseSQLite
 	case ComponentScheduler:
 		return c.Scheduler
+	case ComponentFeature:
+		return c.Feature
 	case ComponentCache:
 		return c.Cache
 	case ComponentEvents:
@@ -339,6 +342,8 @@ func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
 		c.DatabaseSQLite = enabled
 	case ComponentScheduler:
 		c.Scheduler = enabled
+	case ComponentFeature:
+		c.Feature = enabled
 	case ComponentCache:
 		c.Cache = enabled
 	case ComponentEvents:

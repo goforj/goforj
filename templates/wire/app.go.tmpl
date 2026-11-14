@@ -23,6 +23,9 @@ import (
 
 	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/runtime"
+{{- if .Components.Feature }}
+	"{{.GoModuleName}}/internal/features"
+{{- end }}
 {{- if .Components.Cache }}
 	"{{.GoModuleName}}/internal/caches"
 {{- end }}
@@ -52,6 +55,9 @@ import (
 
 // App is the root App resource
 type App struct {
+{{- if .Components.Feature }}
+	features *features.Manager
+{{- end }}
 	rootCmd *{{.AppPackageName}}.RootCmd
 	logger  *logger.AppLogger
 {{- if .Components.Cache }}
@@ -355,6 +361,9 @@ func NewApplication(
 	rootCmd *{{.AppPackageName}}.RootCmd,
 	appTimeouts *runtime.Timeouts,
 	lifecycleRegistry *{{.AppPackageName}}.LifecycleRegistry,
+{{- if .Components.Feature }}
+	featureManager *features.Manager,
+{{- end }}
 {{- if .Components.Cache }}
 	cacheManager *caches.Manager,
 {{- end }}
@@ -391,9 +400,16 @@ func NewApplication(
 {{- if .Components.Events }}
 	registerEventBusLifecycle(lifecycleManager, appLogger, eventsManager)
 {{- end }}
+{{- if .Components.Feature }}
+    lifecycleManager.On(runtime.Startup, func(ctx context.Context) error { return featureManager.Start(ctx) })
+    lifecycleManager.On(runtime.Shutdown, func(context.Context) error { return featureManager.Close() })
+{{- end }}
 	lifecycleRegistry.Register(lifecycleManager)
 
 	return App{
+{{- if .Components.Feature }}
+		features: featureManager,
+{{- end }}
 		rootCmd: rootCmd,
 		logger:  appLogger,
 		{{- if .Components.HasDatabase }}
@@ -567,3 +583,8 @@ func timeoutWithinParent(parent context.Context, timeout time.Duration) time.Dur
 func (a *App) appShutdownTimeout() time.Duration {
 	return a.appTimeouts.ShutdownTimeout()
 }
+
+{{ if .Components.Feature }}
+// Features returns this App's configured evaluator resources without capturing request state.
+func (a *App) Features() *features.Manager { return a.features }
+{{- end }}
