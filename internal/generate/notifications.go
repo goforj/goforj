@@ -74,6 +74,7 @@ func generateNotificationFiles(input generationInput) (int, error) {
 		if _, found := reserved[method]; found || !token.IsIdentifier(method) || !token.IsExported(method) {
 			return 0, fmt.Errorf("notification: resource name %q cannot be an accessor", name)
 		}
+		reserved[method] = struct{}{}
 		data.Names = append(data.Names, notificationAccessorName{Name: strings.ToLower(name), Method: method})
 		active[effectivePrimitiveDriver(input.environment.Get("NOTIFICATION_"+name+"_DRIVER", "log"), "log")] = struct{}{}
 	}
@@ -246,12 +247,14 @@ func newSender(prefix, name string) (notification.Sender, io.Closer, error) {
         return notification.New(log.New(slog.Default())), nil, nil
 {{- if .Webhook }}
     case "webhook":
+        endpoint := strings.TrimSpace(value("WEBHOOK_URL", ""))
+        if endpoint == "" { return nil, nil, errors.New("notification: webhook requires WEBHOOK_URL") }
         timeout, err := time.ParseDuration(value("WEBHOOK_TIMEOUT", "5s"))
         if err != nil || timeout <= 0 { return nil, nil, fmt.Errorf("notification: WEBHOOK_TIMEOUT must be a positive duration") }
         allowPrivate, err := strconv.ParseBool(value("WEBHOOK_ALLOW_PRIVATE", "false"))
         if err != nil { return nil, nil, fmt.Errorf("notification: WEBHOOK_ALLOW_PRIVATE must be a boolean") }
         transport, err := webhook.New(webhook.Config{
-            URL: strings.TrimSpace(value("WEBHOOK_URL", "")),
+            URL: endpoint,
             Format: webhook.Format(strings.TrimSpace(value("WEBHOOK_FORMAT", "generic"))),
             Timeout: timeout, AllowPrivate: allowPrivate,
             BearerToken: value("WEBHOOK_BEARER_TOKEN", ""),
