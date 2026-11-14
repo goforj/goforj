@@ -51,35 +51,35 @@ prepare:
         content: |
           // Package checkout owns request-consistent checkout presentation decisions.
           package checkout
-          
+
           import (
               "context"
               "fmt"
-          
+
               "example.com/invoiceeval/internal/features"
               "github.com/goforj/feature"
           )
-          
+
           // Service borrows the configured Checkout evaluator from App-owned resources.
           type Service struct { flags *feature.Features }
-          
+
           // NewService resolves the generated evaluator accessor once without owning its source lifecycle.
           func NewService(manager *features.Manager) *Service { return &Service{flags: manager.Checkout()} }
-          
+
           // Request retains one tenant's captured configuration for related decisions.
           type Request struct { flags *feature.Scope }
-          
+
           // Begin captures the complete revision before any request decisions.
           func (service *Service) Begin(ctx context.Context, tenant string) (*Request, error) {
               if tenant == "" { return nil, fmt.Errorf("tenant is required") }
               return &Request{flags: service.flags.For(feature.Target{Key: tenant})}, nil
           }
-          
+
           // Checkout applies the conservative fallback when checkout configuration is missing.
           func (request *Request) Checkout(ctx context.Context) bool {
               return false
           }
-          
+
           // Receipt uses the same captured revision as the checkout decision.
           func (request *Request) Receipt(ctx context.Context) bool {
               return false
@@ -96,24 +96,24 @@ steps:
       content: |
         // Package checkout owns request-consistent checkout presentation decisions.
         package checkout
-        
+
         import (
             "context"
             "fmt"
-        
+
             "example.com/invoiceeval/internal/features"
             "github.com/goforj/feature"
         )
-        
+
         // Service borrows the configured Checkout evaluator from App-owned resources.
         type Service struct { flags *feature.Features }
-        
+
         // NewService resolves the generated evaluator accessor once without owning its source lifecycle.
         func NewService(manager *features.Manager) *Service { return &Service{flags: manager.Checkout()} }
-        
+
         // Request retains one tenant's captured configuration for related decisions.
         type Request struct { flags *feature.Scope }
-        
+
         // Begin captures the complete revision before any request decisions.
         func (service *Service) Begin(ctx context.Context, tenant string) (*Request, error) {
             if tenant == "" { return nil, fmt.Errorf("tenant is required") }
@@ -121,12 +121,12 @@ steps:
             if err != nil { return nil, err }
             return &Request{flags: snapshot.For(feature.Target{Key: tenant})}, nil
         }
-        
+
         // Checkout applies the conservative fallback when checkout configuration is missing.
         func (request *Request) Checkout(ctx context.Context) bool {
             return request.flags.Evaluate(ctx, "checkout-v2", false).Value
         }
-        
+
         // Receipt uses the same captured revision as the checkout decision.
         func (request *Request) Receipt(ctx context.Context) bool {
             return request.flags.Evaluate(ctx, "receipt-v2", false).Value
@@ -139,15 +139,15 @@ steps:
       content: |
         // Package checkout owns request-consistent checkout presentation decisions.
         package checkout
-        
+
         import (
             "context"
             "testing"
-        
+
             "example.com/invoiceeval/internal/features"
             "github.com/goforj/feature"
         )
-        
+
         // TestMissingFlags checks conservative decisions and tenant validation through the generated resource.
         func TestMissingFlags(t *testing.T) {
             manager, err := features.NewManager()
@@ -159,13 +159,13 @@ steps:
             if err != nil { t.Fatal(err) }
             if request.Checkout(context.Background()) || request.Receipt(context.Background()) { t.Fatal("missing flag did not fall back") }
         }
-        
+
         // unsupportedEvaluator represents an evaluator that cannot freeze definitions.
         type unsupportedEvaluator struct{}
-        
+
         // Resolve supplies the portable evaluator contract without snapshot capability.
         func (unsupportedEvaluator) Resolve(context.Context, string, bool, feature.Target) feature.Decision { return feature.Decision{Value: true} }
-        
+
         // TestUnsupportedSnapshot requires callers to handle unavailable snapshot capability.
         func TestUnsupportedSnapshot(t *testing.T) {
             service := &Service{flags: feature.New(unsupportedEvaluator{})}
