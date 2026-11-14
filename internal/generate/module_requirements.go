@@ -85,6 +85,7 @@ func generatedModuleRequirements(projectDir string, selection GenerationSelectio
 		{selection.Storage, "storages"},
 		{selection.Cache, "caches"},
 		{selection.Mail, "mail"},
+		{selection.Notification, "notifications"},
 		{selection.Queue, "queues"},
 		{selection.Events, "events"},
 		{selection.Queue || selection.Events, "inspects"},

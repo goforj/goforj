@@ -23,7 +23,7 @@ func TestLocalProvidersRenderedComposition(t *testing.T) {
 	if err := writeConventionalAppMarker(root, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	components := project.Components{CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true, Metrics: true, Observability: true, Grafana: true, Docker: true, DatabaseMySQL: true, Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true}
+	components := project.Components{CLI: true, DemoApp: true, Mail: true, Notification: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true, Metrics: true, Observability: true, Grafana: true, Docker: true, DatabaseMySQL: true, Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true}
 	modCache, buildCache := testkit.GoCachePaths()
 	testkit.RenderProjectWithForj(t, root, testkit.RenderProjectRequest{EnvOverrides: map[string]string{"GOMODCACHE": modCache, "GOCACHE": buildCache, "GOWORK": "off"}, Config: project.Config{
 		ProjectName: "Local Providers", GoModuleName: "example.com/localproviders", Render: project.RenderConfig{Components: components},

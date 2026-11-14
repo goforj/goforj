@@ -883,6 +883,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				return p.writeTemplates(templates)
 			},
 		},
+		{title: "Notification Components Rendering", enabled: projectComponents.Notification, templates: []string{"internal/notifications/README.md.tmpl"}},
 		{
 			title:   "Mail Components Rendering",
 			enabled: projectComponents.Mail,

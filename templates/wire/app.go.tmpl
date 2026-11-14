@@ -45,6 +45,9 @@ import (
 {{- if .Components.Storage }}
 	"{{.GoModuleName}}/internal/storages"
 {{- end }}
+{{- if .Components.Notification }}
+	"{{.GoModuleName}}/internal/notifications"
+{{- end }}
 {{- if .Components.Mail }}
 	"{{.GoModuleName}}/internal/mail"
 {{- end }}
@@ -66,6 +69,9 @@ type App struct {
 	inspects *inspects.Manager
 	{{- if .Components.Metrics }}
 	metrics *metrics.Manager
+	{{- end }}
+	{{- if .Components.Notification }}
+	notifications *notifications.Manager
 	{{- end }}
 	{{- if .Components.Mail }}
 	mail *mail.Manager
@@ -111,6 +117,10 @@ func (a *App) Storage() *storages.Manager {
 }
 {{- end }}
 
+{{- if .Components.Notification }}
+// Notifications returns the configured synchronous sender manager of this App.
+func (a *App) Notifications() *notifications.Manager { return a.notifications }
+{{- end }}
 {{- if .Components.Mail }}
 // Mail returns the mail manager of the application.
 func (a *App) Mail() *mail.Manager {
@@ -369,6 +379,9 @@ func NewApplication(
 	{{- if .Components.Metrics }}
 	metricsManager *metrics.Manager,
 	{{- end }}
+	{{- if .Components.Notification }}
+	notificationManager *notifications.Manager,
+	{{- end }}
 	{{- if .Components.Mail }}
 	mailManager *mail.Manager,
 	{{- end }}
@@ -391,6 +404,9 @@ func NewApplication(
 {{- if .Components.Events }}
 	registerEventBusLifecycle(lifecycleManager, appLogger, eventsManager)
 {{- end }}
+{{- if .Components.Notification }}
+    lifecycleManager.On(runtime.Shutdown, func(ctx context.Context) error { return notificationManager.Close() })
+{{- end }}
 	lifecycleRegistry.Register(lifecycleManager)
 
 	return App{
@@ -411,6 +427,9 @@ func NewApplication(
 		inspects: inspectManager,
 		{{- if .Components.Metrics }}
 		metrics: metricsManager,
+		{{- end }}
+		{{- if .Components.Notification }}
+		notifications: notificationManager,
 		{{- end }}
 		{{- if .Components.Mail }}
 		mail: mailManager,

@@ -21,6 +21,7 @@ type moduleTidyRunner func(projectDir string) error
 
 // GenerationSelection names the project-owned surfaces that should be regenerated.
 type GenerationSelection struct {
+	Notification  bool
 	Storage       bool
 	Cache         bool
 	Mail          bool
@@ -41,6 +42,7 @@ type GenerationResult struct {
 // GenerationSelectionFromComponents translates durable component intent into generator participation.
 func GenerationSelectionFromComponents(components project.Components) GenerationSelection {
 	return GenerationSelection{
+		Notification:  components.Notification,
 		Storage:       components.Storage,
 		Cache:         components.Cache,
 		Mail:          components.Mail,
@@ -53,7 +55,7 @@ func GenerationSelectionFromComponents(components project.Components) Generation
 
 // any reports whether the caller selected at least one generated surface explicitly.
 func (s GenerationSelection) any() bool {
-	return s.Storage || s.Cache || s.Mail || s.Queue || s.Events || s.Database || s.Observability
+	return s.Notification || s.Storage || s.Cache || s.Mail || s.Queue || s.Events || s.Database || s.Observability
 }
 
 // generationTask keeps ordering, file accounting, and dependency behavior in one inventory.
@@ -77,6 +79,7 @@ type generationRun struct {
 type Cmd struct {
 	Storage       bool `help:"Generate storage code"`
 	Cache         bool `help:"Generate cache code"`
+	Notification  bool `help:"Generate notification code"`
 	Mail          bool `help:"Generate mail code"`
 	Queue         bool `help:"Generate queue code"`
 	Events        bool `help:"Generate events code"`
@@ -225,6 +228,7 @@ func generationEnvironmentExample(projectDir string) ([]byte, error) {
 // generationSelection returns the command-line flags as one named selection value.
 func (c Cmd) generationSelection() GenerationSelection {
 	return GenerationSelection{
+		Notification:  c.Notification,
 		Storage:       c.Storage,
 		Cache:         c.Cache,
 		Mail:          c.Mail,
@@ -255,6 +259,7 @@ func legacyCommandGenerationSelection(projectDir string) (GenerationSelection, e
 		paths    []string
 	}{
 		{selected: &selection.Cache, paths: []string{filepath.Join("internal", "caches")}},
+		{selected: &selection.Notification, paths: []string{filepath.Join("internal", "notifications")}},
 		{selected: &selection.Mail, paths: []string{filepath.Join("internal", "mail")}},
 		{selected: &selection.Queue, paths: []string{filepath.Join("internal", "jobs"), filepath.Join("internal", "queues")}},
 		{selected: &selection.Database, paths: []string{filepath.Join("internal", "database")}},
@@ -293,6 +298,7 @@ func generationTasksFor(selection GenerationSelection) []generationTask {
 	return []generationTask{
 		{selected: selection.Storage, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Storage: the Storage component is disabled in .goforj.yml", generate: generateStorageFiles},
 		{selected: selection.Cache, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Cache: the Cache component is disabled in .goforj.yml", generate: generateCacheFiles},
+		{selected: selection.Notification, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Notifications: the Notifications component is disabled in .goforj.yml", generate: generateNotificationFiles},
 		{selected: selection.Mail, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Mail: the Mail component is disabled in .goforj.yml", generate: generateMailFiles},
 		{selected: selection.Queue, generatedFiles: queueFiles, updatesDependencies: true, disabledRequestError: "cannot generate Queue: the Background Jobs component is disabled; enable it in .goforj.yml", generate: generateQueueFiles},
 		{selected: selection.Events, generatedFiles: eventFiles, updatesDependencies: true, disabledRequestError: "cannot generate Events: the Events component is disabled in .goforj.yml", generate: generateEventFiles},

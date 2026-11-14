@@ -19,6 +19,7 @@ func TestResourceCatalogMatchesGeneratorInventories(t *testing.T) {
 		{resource: project.ResourceEvents, inventory: eventDriverKeys},
 		{resource: project.ResourceStorage, inventory: storageDriverKeys},
 		{resource: project.ResourceMail, inventory: mailDriverKeys},
+		{resource: project.ResourceNotification, inventory: notificationDriverKeys},
 	}
 	for _, test := range tests {
 		t.Run(string(test.resource), func(t *testing.T) {

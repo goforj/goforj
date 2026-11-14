@@ -23,6 +23,7 @@ require (
 	github.com/goforj/httpx v1.1.0
 	github.com/goforj/mail v0.3.1
 	github.com/goforj/metrics v0.2.0
+	github.com/goforj/notification v0.1.0
 	github.com/goforj/null/v6 v6.0.2
 	github.com/goforj/queue v0.2.2
 	github.com/goforj/scheduler/v2 v2.1.4

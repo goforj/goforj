@@ -51,6 +51,9 @@ type resourceRenderValues struct {
 	StorageAvailableDrivers        string
 	StoragePublicDriver            string
 	StorageFaviconsDriver          string
+	NotificationDriver             string
+	NotificationSupportedDrivers   string
+	NotificationAvailableDrivers   string
 	MailDriver                     string
 	MailSupportedDrivers           string
 	MailAvailableDrivers           string
@@ -389,6 +392,7 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 	set(project.ResourceQueue, &values.QueueDriver, &values.QueueSupportedDrivers, &values.QueueAvailableDrivers)
 	set(project.ResourceEvents, &values.EventsDriver, &values.EventsSupportedDrivers, &values.EventsAvailableDrivers)
 	set(project.ResourceStorage, &values.StorageDriver, &values.StorageSupportedDrivers, &values.StorageAvailableDrivers)
+	set(project.ResourceNotification, &values.NotificationDriver, &values.NotificationSupportedDrivers, &values.NotificationAvailableDrivers)
 	set(project.ResourceMail, &values.MailDriver, &values.MailSupportedDrivers, &values.MailAvailableDrivers)
 	values.DatabaseMySQL = values.DatabaseDriver == "mysql"
 	values.DatabasePostgres = values.DatabaseDriver == "postgres"
@@ -515,12 +519,13 @@ func activeDevelopmentServiceProfiles(servicePlan project.ServicePlan, component
 // DriverEnvironmentPlaceholders renders only opt-in driver hints selected by the effective build contract.
 func (v resourceRenderValues) DriverEnvironmentPlaceholders() string {
 	selections := map[project.ResourceKey]project.DriverSelection{
-		project.ResourceDatabase: {Active: v.DatabaseDriver, Supported: splitDriverList(v.DatabaseSupportedDrivers)},
-		project.ResourceCache:    {Active: v.CacheDriver, Supported: splitDriverList(v.CacheSupportedDrivers)},
-		project.ResourceQueue:    {Active: v.QueueDriver, Supported: splitDriverList(v.QueueSupportedDrivers)},
-		project.ResourceEvents:   {Active: v.EventsDriver, Supported: splitDriverList(v.EventsSupportedDrivers)},
-		project.ResourceStorage:  {Active: v.StorageDriver, Supported: splitDriverList(v.StorageSupportedDrivers)},
-		project.ResourceMail:     {Active: v.MailDriver, Supported: splitDriverList(v.MailSupportedDrivers)},
+		project.ResourceDatabase:     {Active: v.DatabaseDriver, Supported: splitDriverList(v.DatabaseSupportedDrivers)},
+		project.ResourceCache:        {Active: v.CacheDriver, Supported: splitDriverList(v.CacheSupportedDrivers)},
+		project.ResourceQueue:        {Active: v.QueueDriver, Supported: splitDriverList(v.QueueSupportedDrivers)},
+		project.ResourceEvents:       {Active: v.EventsDriver, Supported: splitDriverList(v.EventsSupportedDrivers)},
+		project.ResourceStorage:      {Active: v.StorageDriver, Supported: splitDriverList(v.StorageSupportedDrivers)},
+		project.ResourceNotification: {Active: v.NotificationDriver, Supported: splitDriverList(v.NotificationSupportedDrivers)},
+		project.ResourceMail:         {Active: v.MailDriver, Supported: splitDriverList(v.MailSupportedDrivers)},
 	}
 	return renderDriverEnvironmentPlaceholders(selections)
 }

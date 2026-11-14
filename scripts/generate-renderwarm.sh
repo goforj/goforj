@@ -148,6 +148,7 @@ override_version_for_module() {
     go.opentelemetry.io/otel/log|go.opentelemetry.io/otel/sdk/log|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc|go.opentelemetry.io/otel/sdk) echo "v1.47.0" ;;
     go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp|go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc) echo "v0.23.0" ;;
     github.com/charmbracelet/x/cellbuf) echo "v0.0.15" ;;
+    github.com/goforj/notification) echo "v0.1.0" ;;
     github.com/goforj/cache) echo "v0.4.0" ;;
     github.com/goforj/cache/cachecore) echo "v0.4.3" ;;
     github.com/goforj/cache/driver/rediscache) echo "v0.4.3" ;;
@@ -245,6 +246,10 @@ done < "$go_files_file"
     | grep -E '^(charm\.land|github\.com|go\.opentelemetry\.io|golang\.org/x|gorm\.io|gopkg\.in)/[A-Za-z0-9._/~+-]+(/[A-Za-z0-9._/~+-]+)*$' \
     | grep -Ev '^github\.com/goforj/goforj(/|$)'
   # Scheduler's module graph otherwise seeds the older driver used only by its examples.
+  # Notification managers are generated from Go source templates rather than embedded .tmpl files.
+  echo "github.com/goforj/notification"
+  echo "github.com/goforj/notification/driver/log"
+  echo "github.com/goforj/notification/driver/webhook"
   echo "github.com/goforj/cache/driver/rediscache"
   # Web's index package remains on str v1 while rendered templates use str/v2.
   echo "github.com/goforj/str"

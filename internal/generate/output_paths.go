@@ -1,6 +1,10 @@
 package generate
 
 const (
+	// NotificationManagerPath identifies configured synchronous senders.
+	NotificationManagerPath = "internal/notifications/manager_gen.go"
+	// NotificationAccessorsPath identifies generated named sender accessors.
+	NotificationAccessorsPath = "internal/notifications/accessors_gen.go"
 	// CacheManagerPath identifies the manager source owned by cache generation.
 	CacheManagerPath = "internal/caches/manager_gen.go"
 	// CacheAccessorsPath identifies accessors derived from application cache declarations.
@@ -41,6 +45,7 @@ func OutputPaths(selection GenerationSelection) []string {
 		{selection.Storage, []string{StorageManagerPath, StorageAccessorsPath}},
 		{selection.Events, []string{EventsManagerPath, EventsAccessorsPath}},
 		{selection.Queue || selection.Events, []string{MessageContextPropagatorPath}},
+		{selection.Notification, []string{NotificationManagerPath, NotificationAccessorsPath}},
 		{selection.Mail, []string{MailManagerPath, MailAccessorsPath}},
 		{selection.Database, []string{DatabaseConnectionsPath}},
 		{selection.Observability, []string{ObservabilityTargetsPath}},

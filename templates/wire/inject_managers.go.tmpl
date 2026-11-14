@@ -19,6 +19,9 @@ import (
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
 {{- end }}
+{{- if .Components.Notification }}
+	"{{.GoModuleName}}/internal/notifications"
+{{- end }}
 {{- if .Components.Mail }}
 	"{{.GoModuleName}}/internal/mail"
 {{- end }}
@@ -53,6 +56,9 @@ var managerSet = wire.NewSet(
 	provideStorageManager,
 {{- else if .ProjectComponents.Storage }}
 	provideDisabledStorageManager,
+{{- end }}
+{{- if .Components.Notification }}
+	provideNotificationManager,
 {{- end }}
 {{- if .Components.Mail }}
 	provideMailManager,
@@ -208,3 +214,12 @@ func provideAppLogger(timeouts *runtime.Timeouts) (*logger.AppLogger, func(), er
 	}
 	return appLogger, cleanup, nil
 }
+
+{{ if .Components.Notification }}
+// provideNotificationManager releases owned transports if later App initialization fails.
+func provideNotificationManager() (*notifications.Manager, func(), error) {
+    manager, err := notifications.NewManager()
+    if err != nil { return nil, nil, err }
+    return manager, func() { _ = manager.Close() }, nil
+}
+{{- end }}

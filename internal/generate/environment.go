@@ -15,6 +15,7 @@ var generationEnvironmentPrefixes = []string{
 	"DB_",
 	"EVENTS_",
 	"MAIL_",
+	"NOTIFICATION_",
 	"METRICS_",
 	"OBSERVABILITY_",
 	"QUEUE_",

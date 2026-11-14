@@ -8,6 +8,8 @@ const (
 	ComponentCLI ComponentKey = "cli"
 	// ComponentDemoApp enables the generated demo application surface.
 	ComponentDemoApp ComponentKey = "demo_app"
+	// ComponentNotification enables synchronous application notifications.
+	ComponentNotification ComponentKey = "notification"
 	// ComponentMail enables outbound mail wiring.
 	ComponentMail ComponentKey = "mail"
 	// ComponentAuth enables user, session, and auth route scaffolding.
@@ -58,6 +60,7 @@ type ComponentDefinition struct {
 var componentCatalog = []ComponentDefinition{
 	{Key: ComponentCLI, Label: "CLI", Description: "Add commands to run and manage your app", DefaultSelected: true},
 	{Key: ComponentDocker, Label: "Docker", Description: "Run databases and tools locally", DefaultSelected: true},
+	{Key: ComponentNotification, Label: "Notifications", Description: "Send synchronous messages through configured channels"},
 	{Key: ComponentMail, Label: "Mail", Description: "Send email from your app", DefaultSelected: true},
 	{Key: ComponentAuth, Label: "Auth", Description: "User sign up, login, and sessions", DefaultSelected: true, Requires: []ComponentKey{ComponentMail, ComponentWebAPI, ComponentCache}},
 	{Key: ComponentOAuth, Label: "OAuth", Description: "Sign in with external providers", DefaultSelected: true, Requires: []ComponentKey{ComponentAuth}, Parent: ComponentAuth},
