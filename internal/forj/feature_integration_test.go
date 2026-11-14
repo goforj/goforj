@@ -45,6 +45,17 @@ func TestRenderedFeatureResourceComposition(t *testing.T) {
 		components.Feature = true
 		config := project.Config{ProjectName: "Feature Composition", GoModuleName: "example.com/featurecomposition", Render: project.RenderConfig{Components: components}, Apps: map[string]project.AppConfig{"billing": {Components: project.Components{CLI: true, WebAPI: true, Feature: true}}}}
 		testkit.RenderProjectWithForj(t, root, testkit.RenderProjectRequest{Config: config})
+		for _, path := range []string{".env", ".env.example"} {
+			body, err := os.ReadFile(filepath.Join(root, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"FEATURE_REFRESH_INTERVAL=", "FEATURE_CHECKOUT_REFRESH_INTERVAL="} {
+				if strings.Contains(string(body), key) {
+					t.Fatalf("fallback tuning leaked into %s", path)
+				}
+			}
+		}
 		setRenderedEnvValue(t, root, "FEATURE_CHECKOUT_DRIVER", "memory")
 		setRenderedEnvValue(t, root, "FEATURE_CHECKOUT_DOCUMENT", `'{"schema":1,"flags":{"checkout-v2":{"default":true}}}'`)
 		setRenderedEnvValue(t, root, "BILLING_FEATURE_BILLING_ONLY_DRIVER", "memory")

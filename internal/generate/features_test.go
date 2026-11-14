@@ -237,8 +237,8 @@ func TestManagedFeatureFileNotifications(t *testing.T) {
     path := configureFeatureFixture(t)
     t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
-    if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
     initial := manager.Instances()[1].Status.LastSuccess
+    if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
     waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
     if err := os.WriteFile(path,[]byte("invalid"),0600); err != nil { t.Fatal(err) }
     waitFeatureCondition(t,func() bool { return errors.Is(manager.Instances()[1].Status.LastError,feature.ErrInvalidDocument) })
@@ -272,13 +272,20 @@ func TestFeatureFileRefreshFallback(t *testing.T) {
     done := make(chan struct{})
     go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,nil) }()
     waitFeatureCondition(t,func() bool { return loads.Load() >= 4 })
+    if err := os.Mkdir(filepath.Dir(resource.path),0700); err != nil { t.Fatal(err) }
+    time.Sleep(100*time.Millisecond)
+    recovered := loads.Load()
+    time.Sleep(100*time.Millisecond)
+    if loads.Load()!=recovered { t.Fatal("polling continued after watch recovery") }
+    writeFeatureDefinition(t,resource.path,true)
+    waitFeatureCondition(t,func() bool { return loads.Load()>recovered })
     cancel()
     select { case <-done: case <-time.After(time.Second): t.Fatal("fallback worker did not stop") }
 }
 
 // TestFeatureFileWatcherFailure reconciles after notification failure and channel closure.
 func TestFeatureFileWatcherFailure(t *testing.T) {
-    for _, mode := range []string{"error","closed"} { t.Run(mode,func(t *testing.T) {
+    for _, mode := range []string{"error","closed","overflow"} { t.Run(mode,func(t *testing.T) {
         path := configureFeatureFixture(t)
         manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
         resource := manager.resources[1]
@@ -286,13 +293,22 @@ func TestFeatureFileWatcherFailure(t *testing.T) {
         watcher := watchFeatureDirectory(path)
         if watcher == nil { t.Fatal("cannot watch test directory") }
         // Own the injected error channel so the backend cannot close it concurrently with a test send.
-        if mode == "error" { watcher.Errors = make(chan error,1); watcher.Errors <- fsnotify.ErrEventOverflow }
+        if mode == "error" || mode == "overflow" {
+            watcher.Errors = make(chan error,1)
+            if mode == "overflow" { resource.interval = time.Hour; watcher.Errors <- fsnotify.ErrEventOverflow } else { watcher.Errors <- errors.New("watch unavailable") }
+        }
         ctx,cancel := context.WithCancel(context.Background()); defer cancel()
         done := make(chan struct{})
+        initial := manager.Instances()[1].Status.LastSuccess
         go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,watcher) }()
         if mode == "closed" { _ = watcher.Close() }
+        waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
         writeFeatureDefinition(t,path,false)
         waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+        if mode == "overflow" {
+            writeFeatureDefinition(t,path,true)
+            waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+        }
         cancel()
         select { case <-done: case <-time.After(time.Second): t.Fatal("recovered worker did not stop") }
     }) }
@@ -302,18 +318,19 @@ func TestFeatureFileWatcherFailure(t *testing.T) {
 func TestManagedFeatureMountedSymlink(t *testing.T) {
     path := configureFeatureFixture(t)
     parent := filepath.Dir(path)
-    for _, version := range []string{"one","two"} {
-        if err := os.Mkdir(filepath.Join(parent,version),0700); err != nil { t.Fatal(err) }
-        writeFeatureDefinition(t,filepath.Join(parent,version,"flags.json"),version=="one")
-    }
+    if err := os.Mkdir(filepath.Join(parent,"one"),0700); err != nil { t.Fatal(err) }
+    writeFeatureDefinition(t,filepath.Join(parent,"one","flags.json"),true)
     if err := os.Symlink("one",filepath.Join(parent,"..data")); err != nil { t.Skipf("symlinks unavailable: %v",err) }
     if err := os.Remove(path); err != nil { t.Fatal(err) }
     if err := os.Symlink(filepath.Join("..data","flags.json"),path); err != nil { t.Fatal(err) }
     t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
-    if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
     initial := manager.Instances()[1].Status.LastSuccess
+    if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
     waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
+    // Projected mounts publish a new revision directory before replacing their data symlink.
+    if err := os.Mkdir(filepath.Join(parent,"two"),0700); err != nil { t.Fatal(err) }
+    writeFeatureDefinition(t,filepath.Join(parent,"two","flags.json"),false)
     if err := os.Symlink("two",filepath.Join(parent,"..next")); err != nil { t.Fatal(err) }
     if err := os.Rename(filepath.Join(parent,"..next"),filepath.Join(parent,"..data")); err != nil { t.Fatal(err) }
     waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
@@ -335,7 +352,7 @@ func TestManagedFeatureParentReplacement(t *testing.T) {
     waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") })
 }
 
-// TestFeatureNotificationDebounce coalesces event bursts and ignores unrelated writes and metadata noise.
+// TestFeatureNotificationDebounce avoids polling healthy watches and coalesces events while ignoring metadata noise.
 func TestFeatureNotificationDebounce(t *testing.T) {
     var loads atomic.Int64
     client,err := feature.Open(context.Background(),feature.SourceFunc(func(context.Context)(feature.Document,error) {
@@ -351,7 +368,7 @@ func TestFeatureNotificationDebounce(t *testing.T) {
     watcher.Events = events
     ctx,cancel := context.WithCancel(context.Background()); defer cancel()
     done := make(chan struct{})
-    go func(){ defer close(done); runFeatureFileRefresh(ctx,managedEvaluator{client:client,path:path,interval:time.Hour},watcher) }()
+    go func(){ defer close(done); runFeatureFileRefresh(ctx,managedEvaluator{client:client,path:path,interval:10*time.Millisecond},watcher) }()
     defer func(){ cancel(); <-done }()
     waitFeatureCondition(t,func() bool { return loads.Load()==2 })
     events <- fsnotify.Event{Name:path,Op:fsnotify.Chmod}
