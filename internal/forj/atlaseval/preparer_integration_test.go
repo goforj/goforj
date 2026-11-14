@@ -1665,3 +1665,24 @@ func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
 		})
 	}
 }
+
+// TestEncryptPartnerPayloadsVerifierCalibration proves authenticated storage and old-key reads survive compiling semantic defects.
+func TestEncryptPartnerPayloadsVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		requiredQuality: []string{"payload-crypt-api"},
+		evaluation:      "encrypt-partner-payloads",
+		scenario:        "partner-payload-rotation",
+		path:            "internal/partnerpayloads/service.go",
+		old:             "return service.repository.Put(ctx, id, ciphertext)",
+		mutant:          "return service.repository.Put(ctx, id, payload+ciphertext[:0])",
+		wantFailed:      "payload-encryption-behavior",
+		wantCompile:     true,
+		behavior: &evaluationBehaviorMutation{
+			path:        "internal/partnerpayloads/cipher.go",
+			old:         "cipher, err := crypt.NewFromEnv()",
+			mutant:      "cipher, err := func() (*crypt.Cipher, error) { key, err := crypt.GetAppKey(); if err != nil { return nil, err }; return crypt.New(key) }()",
+			wantFailed:  "payload-encryption-behavior",
+			wantCompile: true,
+		},
+	})
+}

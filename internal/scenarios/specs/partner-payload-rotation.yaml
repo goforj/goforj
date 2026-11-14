@@ -1,0 +1,292 @@
+schema_version: 2
+id: partner-payload-rotation
+title: Partner Payload Encryption Rotation
+description: Protect stored payloads with authentication while retaining old-key reads.
+depends_on:
+- invoice-domain
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+prepare:
+  steps:
+  - id: prepare-payload-repository
+    title: Establish opaque fixture persistence
+    write:
+      path: internal/partnerpayloads/repository.go
+      language: go
+      content: |
+        // Package partnerpayloads protects partner records independently from transport concerns.
+        package partnerpayloads
+
+        import (
+         "context"
+         "errors"
+         "sync"
+        )
+
+        // ErrNotFound identifies a missing payload without exposing record contents.
+        var ErrNotFound = errors.New("partner payload not found")
+
+        // Repository persists opaque strings through the caller's cancellation boundary.
+        type Repository interface {
+         // Put replaces the opaque value associated with an identifier.
+         Put(context.Context,string,string) error
+         // Get retrieves an opaque value associated with an identifier.
+         Get(context.Context,string) (string,error)
+        }
+
+        // memoryRepository provides deterministic fixture persistence without an external service.
+        type memoryRepository struct { mu sync.Mutex; values map[string]string }
+
+        // NewRepository supplies the application-owned repository interface to Wire.
+        func NewRepository() Repository { return &memoryRepository{values:map[string]string{}} }
+
+        // Put protects concurrent fixture writes while honoring caller cancellation.
+        func (repository *memoryRepository) Put(ctx context.Context,id,value string) error {
+         if err := ctx.Err(); err != nil { return err }
+         repository.mu.Lock(); defer repository.mu.Unlock()
+         repository.values[id] = value
+         return nil
+        }
+
+        // Get preserves not-found and cancellation errors without synthesizing payload contents.
+        func (repository *memoryRepository) Get(ctx context.Context,id string) (string,error) {
+         if err := ctx.Err(); err != nil { return "",err }
+         repository.mu.Lock(); defer repository.mu.Unlock()
+         value,ok := repository.values[id]
+         if !ok { return "",ErrNotFound }
+         return value,nil
+        }
+  - id: prepare-payload-service
+    title: Establish the plaintext service seam
+    write:
+      path: internal/partnerpayloads/service.go
+      language: go
+      content: |
+        // Package partnerpayloads protects partner records independently from transport concerns.
+        package partnerpayloads
+
+        import "context"
+
+        // PayloadCipher is the application's authenticated encryption boundary.
+        type PayloadCipher interface {
+         // Encrypt returns an opaque authenticated payload for storage.
+         Encrypt(string) (string,error)
+         // Decrypt returns plaintext only after authentication succeeds.
+         Decrypt(string) (string,error)
+        }
+
+        // Service combines persistence and one immutable startup cipher.
+        type Service struct { repository Repository; cipher PayloadCipher }
+
+        // NewService exposes both required collaborators to App composition.
+        func NewService(repository Repository,cipher PayloadCipher) *Service { return &Service{repository:repository,cipher:cipher} }
+
+        // Save retains the prepared plaintext behavior that the target task replaces.
+        func (service *Service) Save(ctx context.Context,id,payload string) error { return service.repository.Put(ctx,id,payload) }
+
+        // Load retains the prepared repository boundary before authenticated reads are implemented.
+        func (service *Service) Load(ctx context.Context,id string) (string,error) { return service.repository.Get(ctx,id) }
+  - id: prepare-cipher-provider
+    title: Reserve the application cipher provider
+    write:
+      path: internal/partnerpayloads/cipher.go
+      language: go
+      content: |
+        // Package partnerpayloads protects partner records independently from transport concerns.
+        package partnerpayloads
+
+        import "errors"
+
+        // NewCipher reserves the injected encryption provider before the target implementation.
+        func NewCipher() (PayloadCipher,error) { return nil,errors.New("payload encryption not implemented") }
+  - id: prepare-legacy-vector
+    title: Provide a fake-key compatibility record
+    write:
+      path: internal/partnerpayloads/testdata/legacy.json
+      language: json
+      content: |
+        {
+          "key": "base64:ERERERERERERERERERERERERERERERERERERERERERE=",
+          "plaintext": "legacy partner payload",
+          "ciphertext": "eyJpdiI6InhGZFhFbVNCaElPdWZrN1QrZ0o4d2c9PSIsInZhbHVlIjoiNVg2cFFsSVdkb2lnVk1JN1JVNWdoekNBdTlCa1hRUzF4MFFRTW5YdTFrRT0iLCJtYWMiOiJjZWM0NjcxY2IyZDA3NGExMThhZmM2ZGVmNzkzZDliZTc1MmRkM2RjM2FmNjg5N2NhYWE2NmQwOTA5MTdlNGZhIiwidGFnIjoiIn0="
+        }
+  checks:
+  - command:
+    - forj
+    - build
+  - command:
+    - go
+    - get
+    - github.com/goforj/crypt@v1.2.0
+  - command:
+    - go
+    - mod
+    - download
+  - command:
+    - go
+    - test
+    - ./...
+markdown:
+  intro: Encrypt partner payloads before storage while preserving authenticated old-key reads during rotation.
+  before: The prepared service stores plaintext; a fake-key compatibility vector describes the established encrypted
+    envelope.
+  after: Only authenticated plaintext is returned, previous keys remain read-only fallbacks, and new writes use
+    the current key.
+  files:
+  - internal/partnerpayloads/service.go
+  - internal/partnerpayloads/cipher.go
+  - internal/partnerpayloads/service_test.go
+  - app/lifecycle.go
+  - app/wire/inject_services_app.go
+  prerequisites: Start from the prepared invoice-domain application with crypt v1.2.0. Inspect the fake-key compatibility
+    vector before changing payload handling; its sample keys are only for local tests.
+  troubleshooting: If old records stop decrypting, inspect the configured previous-key list and the existing payload
+    envelope. Authentication failures must return no plaintext. A malformed current or previous key must fail the
+    provider without printing key material.
+  next_steps:
+  - Use the encrypted service behind an application transport boundary without exposing payloads in diagnostics.
+  - Plan and verify a separate stored-data rewrite before retiring previous keys.
+steps:
+- id: implement-payload-cipher
+  title: Freeze the authenticated current and previous keys
+  write:
+    path: internal/partnerpayloads/cipher.go
+    language: go
+    content: |
+      // Package partnerpayloads protects partner records independently from transport concerns.
+      package partnerpayloads
+
+      import "github.com/goforj/crypt"
+
+      // NewCipher freezes the current and previous key set before the App becomes ready.
+      func NewCipher() (PayloadCipher,error) {
+       cipher,err := crypt.NewFromEnv()
+       if err != nil { return nil,err }
+       return cipher,nil
+      }
+- id: implement-payload-encryption
+  title: Authenticate the service storage boundary
+  write:
+    path: internal/partnerpayloads/service.go
+    language: go
+    content: |
+      // Package partnerpayloads protects partner records independently from transport concerns.
+      package partnerpayloads
+
+      import "context"
+
+      // PayloadCipher is the application's authenticated encryption boundary.
+      type PayloadCipher interface {
+       // Encrypt returns an opaque authenticated payload for storage.
+       Encrypt(string) (string,error)
+       // Decrypt returns plaintext only after authentication succeeds.
+       Decrypt(string) (string,error)
+      }
+
+      // Service combines persistence and one immutable startup cipher.
+      type Service struct { repository Repository; cipher PayloadCipher }
+
+      // NewService exposes both required collaborators to App composition.
+      func NewService(repository Repository,cipher PayloadCipher) *Service { return &Service{repository:repository,cipher:cipher} }
+
+      // Save encrypts before persistence so a failed cipher cannot write plaintext.
+      func (service *Service) Save(ctx context.Context,id,payload string) error {
+       if err := ctx.Err(); err != nil { return err }
+       ciphertext,err := service.cipher.Encrypt(payload)
+       if err != nil { return err }
+       return service.repository.Put(ctx,id,ciphertext)
+      }
+
+      // Load preserves operational error identity and never returns unauthenticated plaintext.
+      func (service *Service) Load(ctx context.Context,id string) (string,error) {
+       if err := ctx.Err(); err != nil { return "",err }
+       ciphertext,err := service.repository.Get(ctx,id)
+       if err != nil { return "",err }
+       payload,err := service.cipher.Decrypt(ciphertext)
+       if err != nil { return "",err }
+       return payload,nil
+      }
+- id: import-payload-providers
+  title: Import the encrypted service providers
+  replace:
+    path: app/wire/inject_services_app.go
+    language: go
+    old: "\t\"example.com/invoiceeval/internal/runtime\"\n"
+    new: "\t\"example.com/invoiceeval/internal/runtime\"\n\t\"example.com/invoiceeval/internal/partnerpayloads\"\
+      \n"
+- id: register-payload-providers
+  title: Compose persistence and one startup cipher
+  replace:
+    path: app/wire/inject_services_app.go
+    language: go
+    old: "\tapp.NewLifecycleRegistry,\n"
+    new: "\tpartnerpayloads.NewRepository,\n\tpartnerpayloads.NewCipher,\n\tpartnerpayloads.NewService,\n\tapp.NewLifecycleRegistry,\n"
+- id: root-payload-service
+  title: Require valid key configuration before readiness
+  write:
+    path: app/lifecycle.go
+    language: go
+    content: |
+      // Package app owns application composition and lifecycle hooks.
+      package app
+
+      import (
+       "context"
+       "example.com/invoiceeval/internal/partnerpayloads"
+       "example.com/invoiceeval/internal/runtime"
+      )
+
+      // LifecycleRegistry roots the encrypted payload service in the App's startup graph.
+      type LifecycleRegistry struct { payloads *partnerpayloads.Service }
+
+      // NewLifecycleRegistry requires the configured cipher before readiness can succeed.
+      func NewLifecycleRegistry(service *partnerpayloads.Service) *LifecycleRegistry { return &LifecycleRegistry{payloads:service} }
+
+      // Register preserves the App's cancellable readiness boundary.
+      func (registry *LifecycleRegistry) Register(lifecycle *runtime.Lifecycle) { lifecycle.On(runtime.BeforeStartup,registry.BeforeStartup) }
+
+      // BeforeStartup observes the caller's cancellation after validated graph composition.
+      func (registry *LifecycleRegistry) BeforeStartup(ctx context.Context) error { return ctx.Err() }
+- id: test-encrypted-payloads
+  title: Check encrypted storage and round trips
+  write:
+    path: internal/partnerpayloads/service_test.go
+    language: go
+    content: |
+      // Package partnerpayloads protects partner records independently from transport concerns.
+      package partnerpayloads
+
+      import (
+       "context"
+       "encoding/base64"
+       "strings"
+       "testing"
+      )
+
+      // TestServiceStoresEncryptedPayload proves plaintext stays outside the repository's opaque value.
+      func TestServiceStoresEncryptedPayload(t *testing.T) {
+       t.Setenv("APP_KEY","base64:"+base64.StdEncoding.EncodeToString([]byte(strings.Repeat("f",32))))
+       t.Setenv("APP_PREVIOUS_KEYS","")
+       cipher,err := NewCipher(); if err != nil { t.Fatal(err) }
+       repository := NewRepository()
+       service := NewService(repository,cipher)
+       if err := service.Save(context.Background(),"payload-1","fixture plaintext"); err != nil { t.Fatal(err) }
+       stored,err := repository.Get(context.Background(),"payload-1"); if err != nil { t.Fatal(err) }
+       if stored == "fixture plaintext" { t.Fatal("plaintext persisted") }
+       value,err := service.Load(context.Background(),"payload-1")
+       if err != nil || value != "fixture plaintext" { t.Fatalf("round trip failed: %v",err) }
+      }
+checks:
+- command:
+  - forj
+  - build
+- command:
+  - go
+  - test
+  - ./...
+- command:
+  - forj
+  - route:list
