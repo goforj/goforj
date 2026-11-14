@@ -133,7 +133,7 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 	return names
 }
 
-// resourceKey gives Feature keys their known App owner while preserving participation-based legacy resource scopes.
+// resourceKey gives App-aware resource keys their known owner while preserving participation-based legacy scopes.
 func resourceKey(config *project.Config, key string) string {
 	if owner, _ := managedAppResourceOwner(config, key); owner != "" {
 		return strings.TrimPrefix(key, owner+"_")
@@ -178,12 +178,13 @@ func managedAppResourceOwner(config *project.Config, key string) (string, bool) 
 		}
 	}
 	owner := project.AppResourceKeyOwner(key, prefixes)
-	if owner == "" || !strings.HasPrefix(strings.TrimPrefix(key, owner+"_"), "FEATURE_") {
+	relative := strings.TrimPrefix(key, owner+"_")
+	if owner == "" || !(strings.HasPrefix(relative, "FEATURE_") || strings.HasPrefix(relative, "NOTIFICATION_")) {
 		return "", false
 	}
 	for name, app := range config.Apps {
 		if project.AppEnvironmentPrefix(name) == owner {
-			return owner, project.NormalizeConfiguredAppComponents(config, app.Components).Feature
+			return owner, resourceAppliesTo(relative, project.NormalizeConfiguredAppComponents(config, app.Components))
 		}
 	}
 	return "", false
