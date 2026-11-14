@@ -92,7 +92,7 @@ func TestGeneratedFeatureManagerExercisesNativeLifecycle(t *testing.T) {
 	if !strings.Contains(string(accessors), "BillingOnly()") || strings.Contains(string(accessors), "Unrelated()") {
 		t.Fatalf("App ownership: %s", accessors)
 	}
-	writeFixtureGoMod(t, root, fixtureGoModSpec{module: "example.com/featurefixtures", required: []string{"github.com/goforj/feature", "github.com/goforj/env/v2", "github.com/fsnotify/fsnotify"}})
+	writeFixtureGoMod(t, root, fixtureGoModSpec{module: "example.com/featurefixtures", required: []string{"github.com/goforj/feature", "github.com/goforj/env/v2", "github.com/fsnotify/fsnotify", "golang.org/x/text"}})
 	if err := os.WriteFile(filepath.Join(root, "internal/features/manager_test.go"), []byte(featureManagerRuntimeTests), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +108,7 @@ import (
     "os"
     "path/filepath"
     "runtime"
+    "strings"
     "sync"
     "sync/atomic"
     "testing"
@@ -403,6 +404,208 @@ func TestManagedFeatureParentReplacement(t *testing.T) {
     waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") })
 }
 
+// TestFeatureWatchRegistrationOrder keeps ancestor controls active throughout descendant registration.
+func TestFeatureWatchRegistrationOrder(t *testing.T) {
+    path := configureFeatureFixture(t)
+    ancestor := filepath.Join(filepath.Dir(path),"revision")
+    parent := filepath.Join(ancestor,"nested")
+    if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
+    path = filepath.Join(parent,"flags.json")
+    writeFeatureDefinition(t,path,true)
+    t.Setenv("FEATURE_CHECKOUT_PATH",path)
+    manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
+    directories,_,err := featureWatchTopology(path); if err != nil { t.Fatal(err) }
+    for index,directory := range directories {
+        if index == 0 { continue }
+        previous := directories[index-1]
+        if featureWatchDepth(previous) > featureWatchDepth(directory) || (featureWatchDepth(previous) == featureWatchDepth(directory) && previous >= directory) { t.Fatal("directory controls are not ordered from ancestors to descendants") }
+    }
+    registered := map[string]bool{}
+    replaced := false
+    watcher := registerFeatureDirectory(path,func(backend *fsnotify.Watcher,directory string) error {
+        if directory != filepath.Dir(directory) && !registered[filepath.Dir(directory)] { t.Fatalf("parent control missing before %s",directory) }
+        if err := backend.Add(directory); err != nil { return err }
+        registered[directory] = true
+        if directory == parent {
+            replaced = true
+            if err := os.Rename(ancestor,ancestor+".old"); err != nil { t.Fatal(err) }
+            if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
+            writeFeatureDefinition(t,path,true)
+        }
+        return nil
+    })
+    if !replaced { t.Fatal("registration did not exercise ancestor replacement") }
+    resource := manager.resources[1]; resource.interval = 20*time.Millisecond
+    if watcher != nil { resource.interval = time.Hour }
+    ctx,cancel := context.WithCancel(context.Background())
+    done := make(chan struct{})
+    initial := manager.Instances()[1].Status.LastSuccess
+    go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,watcher) }()
+    defer func(){ cancel(); <-done }()
+    waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
+    for _,enabled := range []bool{false,true} {
+        writeFeatureDefinition(t,path,enabled)
+        waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") == enabled })
+    }
+}
+
+// TestManagedFeatureAncestorReplacement rebinds unchanged watch paths after any ancestor is replaced.
+func TestManagedFeatureAncestorReplacement(t *testing.T) {
+    configureFeatureFixture(t)
+    base := featureFixtureDirectory(t)
+    ancestor := filepath.Join(base,"revision")
+    parent := filepath.Join(ancestor,"nested")
+    if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
+    path := filepath.Join(parent,"flags.json")
+    writeFeatureDefinition(t,path,true)
+    t.Setenv("FEATURE_CHECKOUT_PATH",path)
+    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
+    manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
+    initial := manager.Instances()[1].Status.LastSuccess
+    if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
+    waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
+    for _, directory := range []string{ancestor,parent} {
+        if err := os.Rename(directory,directory+".old"); err != nil { t.Fatal(err) }
+        if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
+        writeFeatureDefinition(t,path,false)
+        waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+        writeFeatureDefinition(t,path,true)
+        waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+    }
+}
+
+// TestManagedFeaturePathCase follows native lookup semantics for files and replaceable ancestors.
+func TestManagedFeaturePathCase(t *testing.T) {
+    for _, mode := range []string{"file","ancestor"} { t.Run(mode,func(t *testing.T) {
+        configureFeatureFixture(t)
+        ancestor := filepath.Join(featureFixtureDirectory(t),"revision")
+        parent := filepath.Join(ancestor,"nested")
+        if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
+        path := filepath.Join(parent,"flags.json")
+        writeFeatureDefinition(t,path,true)
+        configured := filepath.Join(parent,"FLAGS.JSON")
+        if mode == "ancestor" { configured = filepath.Join(filepath.Dir(ancestor),"REVISION","NESTED","FLAGS.JSON") }
+        if _,err := os.Stat(configured); err != nil { t.Skip("case-sensitive filesystem") }
+        t.Setenv("FEATURE_CHECKOUT_PATH",configured)
+        t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
+        manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
+        initial := manager.Instances()[1].Status.LastSuccess
+        if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
+        waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
+        writeFeatureDefinition(t,path,false)
+        waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+        if err := os.Rename(ancestor,ancestor+".old"); err != nil { t.Fatal(err) }
+        if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
+        writeFeatureDefinition(t,path,true)
+        waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+        writeFeatureDefinition(t,path,false)
+        waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+        if err := os.Remove(path); err != nil { t.Fatal(err) }
+        waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError != nil })
+        writeFeatureDefinition(t,path,true)
+        waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError == nil && manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+    }) }
+}
+
+// TestManagedFeatureUnicodeSpelling retains notifications for native normalization-equivalent file and ancestor names.
+func TestManagedFeatureUnicodeSpelling(t *testing.T) {
+    for _,mode := range []string{"file","ancestor"} { t.Run(mode,func(t *testing.T) {
+        configureFeatureFixture(t)
+        base := featureFixtureDirectory(t)
+        parent := filepath.Join(base,"caf\u00e9")
+        if err := os.Mkdir(parent,0700); err != nil { t.Fatal(err) }
+        path := filepath.Join(parent,"caf\u00e9.json")
+        writeFeatureDefinition(t,path,true)
+        configured := filepath.Join(parent,"cafe\u0301.json")
+        if mode == "ancestor" { configured = filepath.Join(base,"cafe\u0301","cafe\u0301.json") }
+        if _,err := os.Stat(configured); err != nil { t.Skip("normalization-sensitive filesystem") }
+        // An unrelated hardlink must not supply the canonical spelling of a replaceable entry.
+        if err := os.Link(path,filepath.Join(parent,"aaa-unrelated.json")); err != nil { t.Fatal(err) }
+        watcher := watchFeatureDirectory(configured)
+        if watcher == nil { t.Fatal("native Unicode spelling disabled notification refresh") }
+        _ = watcher.Close()
+        t.Setenv("FEATURE_CHECKOUT_PATH",configured)
+        t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
+        manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
+        initial := manager.Instances()[1].Status.LastSuccess
+        if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
+        waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
+        replacement := filepath.Join(parent,"replacement.json")
+        writeFeatureDefinition(t,replacement,false)
+        if err := os.Rename(replacement,path); err != nil { t.Fatal(err) }
+        waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+        if err := os.Remove(path); err != nil { t.Fatal(err) }
+        waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError != nil })
+        writeFeatureDefinition(t,path,true)
+        waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError == nil && manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+    }) }
+}
+
+// TestFeatureNormalizationDistinctPaths preserves separate normalization variants on filesystems that distinguish them.
+func TestFeatureNormalizationDistinctPaths(t *testing.T) {
+    configureFeatureFixture(t)
+    parent := featureFixtureDirectory(t)
+    path,other := filepath.Join(parent,"caf\u00e9.json"),filepath.Join(parent,"cafe\u0301.json")
+    if !featureWatchEquivalent(path,other) { t.Fatal("Unicode normalization candidates were not recognized") }
+    writeFeatureDefinition(t,path,true)
+    if _,err := os.Stat(other); err == nil { t.Skip("normalization-insensitive filesystem") }
+    writeFeatureDefinition(t,other,false)
+    _,controls,err := featureWatchTopology(path); if err != nil { t.Fatal(err) }
+    if !controls[path] { t.Fatal("configured source missing from topology") }
+    if _,ok := controls[other]; ok { t.Fatal("distinct normalization entry became a source control") }
+    watcher := &featureWatcher{controls:controls}
+    if _,relevant := watcher.featureWatchEvent(other); relevant { t.Fatal("distinct normalization event matched the source") }
+}
+
+// TestFeatureCaseDistinctPaths avoids confusing separate files on case-sensitive filesystems.
+func TestFeatureCaseDistinctPaths(t *testing.T) {
+    path := configureFeatureFixture(t)
+    other := filepath.Join(filepath.Dir(path),strings.ToUpper(filepath.Base(path)))
+    if _,err := os.Stat(other); err == nil { t.Skip("case-insensitive filesystem") }
+    writeFeatureDefinition(t,other,false)
+    directories,controls,err := featureWatchTopology(path); if err != nil { t.Fatal(err) }
+    if len(directories) == 0 || !controls[path] { t.Fatal("configured source missing from topology") }
+    if _,ok := controls[other]; ok { t.Fatal("distinct case-sensitive entry became a source control") }
+    watcher := &featureWatcher{controls:controls}
+    if _,relevant := watcher.featureWatchEvent(other); relevant { t.Fatal("distinct case-sensitive event matched the source") }
+    actual,err := os.Lstat(path); if err != nil { t.Fatal(err) }
+    canonical,err := featureWatchComponent(filepath.Dir(path),filepath.Base(path),actual)
+    if err != nil || canonical != path { t.Fatalf("canonical source = %q, error = %v",canonical,err) }
+}
+
+// TestManagedFeaturePermissionRecovery retries failed sources when file or ancestor access is restored.
+func TestManagedFeaturePermissionRecovery(t *testing.T) {
+    if runtime.GOOS == "windows" { t.Skip("POSIX permission semantics required") }
+    for _, mode := range []string{"file","parent","ancestor"} { t.Run(mode,func(t *testing.T) {
+        configureFeatureFixture(t)
+        ancestor := filepath.Join(featureFixtureDirectory(t),"revision")
+        parent := filepath.Join(ancestor,"nested")
+        if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
+        path := filepath.Join(parent,"flags.json")
+        writeFeatureDefinition(t,path,true)
+        t.Setenv("FEATURE_CHECKOUT_PATH",path)
+        t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
+        manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
+        initial := manager.Instances()[1].Status.LastSuccess
+        if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
+        waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
+        file,err := os.OpenFile(path,os.O_WRONLY,0600); if err != nil { t.Fatal(err) }; defer file.Close()
+        blocked, restored := path,os.FileMode(0600)
+        if mode == "parent" { blocked,restored = parent,0700 }
+        if mode == "ancestor" { blocked,restored = ancestor,0700 }
+        defer os.Chmod(blocked,restored)
+        if err := os.Chmod(blocked,0200); err != nil { t.Fatal(err) }
+        if probe,err := os.Open(path); err == nil { _ = probe.Close(); t.Skip("process bypasses filesystem permissions") }
+        if _,err := file.Write([]byte("{\"schema\":1,\"flags\":{\"checkout-v2\":{\"default\":false}}}")); err != nil { t.Fatal(err) }
+        if err := file.Sync(); err != nil { t.Fatal(err) }
+        waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError != nil })
+        if err := os.Chmod(blocked,restored); err != nil { t.Fatal(err) }
+        waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError == nil && !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+        writeFeatureDefinition(t,path,true)
+        waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+    }) }
+}
+
 // TestFeatureNotificationDebounce avoids polling healthy watches and coalesces events while ignoring metadata noise.
 func TestFeatureNotificationDebounce(t *testing.T) {
     var loads atomic.Int64
@@ -415,7 +618,7 @@ func TestFeatureNotificationDebounce(t *testing.T) {
     watcher := watchFeatureDirectory(path)
     if watcher == nil { t.Fatal("cannot watch test directory") }
     // Own the event channel to exercise platform-independent debounce behavior without backend noise.
-    events := make(chan fsnotify.Event,32)
+    events := make(chan fsnotify.Event,128)
     watcher.Events = events
     ctx,cancel := context.WithCancel(context.Background()); defer cancel()
     done := make(chan struct{})
@@ -424,6 +627,11 @@ func TestFeatureNotificationDebounce(t *testing.T) {
     waitFeatureCondition(t,func() bool { return loads.Load()==2 })
     events <- fsnotify.Event{Name:path,Op:fsnotify.Chmod}
     events <- fsnotify.Event{Name:path+".other",Op:fsnotify.Write}
+    for directory := filepath.Dir(path); ; directory = filepath.Dir(directory) {
+        events <- fsnotify.Event{Name:filepath.Join(directory,"unrelated"),Op:fsnotify.Create|fsnotify.Remove}
+        events <- fsnotify.Event{Name:directory,Op:fsnotify.Write|fsnotify.Chmod}
+        if directory == filepath.Dir(directory) { break }
+    }
     time.Sleep(100*time.Millisecond)
     if loads.Load()!=2 { t.Fatal("unrelated events caused a refresh") }
     for range 20 { events <- fsnotify.Event{Name:path,Op:fsnotify.Write} }
@@ -456,10 +664,11 @@ func TestFeatureNotificationChurn(t *testing.T) {
 
 // TestFeatureSymlinkTargets rebinds repeated parent swaps and follows direct external and nested targets.
 func TestFeatureSymlinkTargets(t *testing.T) {
-    for _, mode := range []string{"parent", "direct", "nested"} { t.Run(mode, func(t *testing.T) {
+    for _, mode := range []string{"parent", "direct", "nested", "same-directory", "relative-parent"} { t.Run(mode, func(t *testing.T) {
         path := configureFeatureFixture(t)
         parent := filepath.Dir(path)
         targets := []string{filepath.Join(featureFixtureDirectory(t),"flags.json"), filepath.Join(featureFixtureDirectory(t),"flags.json"), filepath.Join(featureFixtureDirectory(t),"flags.json")}
+        if mode == "same-directory" { targets = []string{filepath.Join(parent,"one.json"),filepath.Join(parent,"two.json"),filepath.Join(parent,"three.json")} }
         for _, target := range targets { writeFeatureDefinition(t,target,true) }
         if err := os.Remove(path); err != nil { t.Fatal(err) }
         control := path
@@ -471,6 +680,9 @@ func TestFeatureSymlinkTargets(t *testing.T) {
         } else if mode == "nested" {
             control = filepath.Join(featureFixtureDirectory(t),"intermediate")
             if err := os.Symlink(control,path); err != nil { t.Skipf("symlinks unavailable: %v",err) }
+        }
+        if mode == "relative-parent" {
+            relative,err := filepath.Rel(filepath.Dir(control),linkTarget); if err != nil { t.Fatal(err) }; linkTarget = relative
         }
         if err := os.Symlink(linkTarget,control); err != nil { t.Skipf("symlinks unavailable: %v",err) }
         t.Setenv("FEATURE_CHECKOUT_PATH",path)
@@ -488,6 +700,9 @@ func TestFeatureSymlinkTargets(t *testing.T) {
             writeFeatureDefinition(t,target,enabled)
             destination := target
             if mode == "parent" { destination = filepath.Dir(target) }
+            if mode == "relative-parent" {
+                relative,err := filepath.Rel(filepath.Dir(control),destination); if err != nil { t.Fatal(err) }; destination = relative
+            }
             if err := os.Symlink(destination,control+".next"); err != nil { t.Fatal(err) }
             if err := os.Rename(control+".next",control); err != nil { t.Fatal(err) }
             waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") == enabled })

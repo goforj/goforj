@@ -1,6 +1,7 @@
 package forj
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -85,5 +86,41 @@ func TestFeatureMakeAppRefreshesOwnership(t *testing.T) {
 				t.Fatal("provider and ownership disagree")
 			}
 		})
+	}
+}
+
+// TestFeatureRemoveAppRefreshesOwnership removes stale App identity and accessors while retaining remaining resources.
+func TestFeatureRemoveAppRefreshesOwnership(t *testing.T) {
+	usePrimitiveRendererRoot(t)
+	app := project.DefaultNamedApp("billing")
+	config := &project.Config{ProjectName: "Feature Removal", GoModuleName: "example.com/removal", Render: project.RenderConfig{Components: project.Components{CLI: true, Feature: true}}, Apps: map[string]project.AppConfig{"billing": {Components: project.Components{CLI: true, Feature: true}}}}
+	if err := writeProjectConfig(".goforj.yml", config); err != nil {
+		t.Fatal(err)
+	}
+	writePrimitiveRendererFile(t, app.Entrypoint, "package main\n")
+	writePrimitiveRendererFile(t, ".env", "FEATURE_DRIVER=memory\nFEATURE_SHARED_DRIVER=memory\nBILLING_FEATURE_ONLY_DRIVER=memory\n")
+	if _, err := generate.GenerateProjectFiles(".", generate.GenerationSelection{Feature: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readPrimitiveRendererFile(t, generate.FeatureManagerPath), `"BILLING":`) || !strings.Contains(readPrimitiveRendererFile(t, generate.FeatureAccessorsPath), "Only()") {
+		t.Fatal("fixture missing App-owned feature resources")
+	}
+	result, err := unitProjectRenderer(t).RemoveApp(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(result.Updated, generate.FeatureManagerPath) || !slices.Contains(result.Updated, generate.FeatureAccessorsPath) {
+		t.Fatal("removed feature ownership not reported")
+	}
+	manager := readPrimitiveRendererFile(t, generate.FeatureManagerPath)
+	accessors := readPrimitiveRendererFile(t, generate.FeatureAccessorsPath)
+	if strings.Contains(manager, `"BILLING":`) || strings.Contains(accessors, "Only()") {
+		t.Fatal("removed App retained feature ownership")
+	}
+	if !strings.Contains(accessors, "Shared()") || !strings.Contains(manager, `"":`) {
+		t.Fatal("remaining feature resources were removed")
+	}
+	if regenerated, err := generate.GenerateProjectFiles(".", generate.GenerationSelection{Feature: true}); err != nil || regenerated.ChangedFiles != 0 {
+		t.Fatalf("removal left regeneration drift: %#v %v", regenerated, err)
 	}
 }

@@ -240,6 +240,9 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 		if value, set := v.input.environment.Lookup(resourcePrefix + "_DRIVER"); set {
 			appRootDriver = effectivePrimitiveDriver(value, v.contract.DefaultDriver)
 		}
+		if v.contract.Prefix == "FEATURE" {
+			appRootDriver = effectiveFeatureOverlayDriver(v.input.environment, resourcePrefix, "", v.contract.DefaultDriver)
+		}
 		knownChildren := map[string]struct{}{}
 		for _, child := range v.baseChildren {
 			child = str.Of(child).ToUpper().Trim().String()
@@ -311,6 +314,9 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 
 // effectiveAppPrimitiveChildDriver mirrors runtime overlay precedence for one App-scoped named resource.
 func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope appPrimitiveDriverScope, child string) string {
+	if scope.contract.Prefix == "FEATURE" {
+		return effectiveFeatureOverlayDriver(environment, scope.resourcePrefix, child, scope.contract.DefaultDriver)
+	}
 	baseFallback := scope.contract.DefaultDriver
 	appFallback := scope.contract.DefaultDriver
 	if scope.contract.InheritRootDriver {
@@ -326,6 +332,17 @@ func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope a
 		driver = effectivePrimitiveDriver(value, appFallback)
 	}
 	return driver
+}
+
+// effectiveFeatureOverlayDriver preserves raw fallback values until Feature has resolved both environment scopes.
+// Feature uses App Get(key, baseValue), so empty overrides inherit the base resource while whitespace selects the default driver.
+func effectiveFeatureOverlayDriver(environment generationEnvironment, resourcePrefix, child, defaultDriver string) string {
+	suffix := "_DRIVER"
+	if child != "" {
+		suffix = "_" + child + suffix
+	}
+	base := environment.Get("FEATURE"+suffix, defaultDriver)
+	return effectivePrimitiveDriver(environment.Get(resourcePrefix+suffix, base), defaultDriver)
 }
 
 // appPrefixedActiveDrivers resolves root and additional-app overlays with the same blank-driver fallbacks used at runtime.
@@ -357,6 +374,13 @@ func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defa
 				fallback = appRootDriver
 			}
 			driver := effectivePrimitiveDriver(value, fallback)
+			if resourcePrefix == "FEATURE" {
+				child := ""
+				if relative != "DRIVER" {
+					child = strings.TrimSuffix(relative, "_DRIVER")
+				}
+				driver = effectiveFeatureOverlayDriver(input.environment, strings.TrimSuffix(keyPrefix, "_"), child, defaultDriver)
+			}
 			identity := key + "\x00" + driver
 			if _, exists := seen[identity]; exists {
 				continue

@@ -38,6 +38,7 @@ func TestRenderedFeatureResourceComposition(t *testing.T) {
 	t.Run("new App ownership", func(t *testing.T) {
 		root := t.TempDir()
 		testkit.RenderProjectWithForj(t, root, testkit.RenderProjectRequest{Config: project.Config{ProjectName: "Feature Apps", GoModuleName: "example.com/featureapps", Render: project.RenderConfig{Components: project.Components{CLI: true, Feature: true}}}})
+		setRenderedEnvValue(t, root, "REPORTING_FEATURE_ONLY_DRIVER", "memory")
 		runFeatureRenderCommand(t, root, "make:app", "reporting", "--components", "cli,feature")
 		// A plain Go test must initialize the new App before another framework build can repair its ownership map.
 		runtimeTest := `package features
@@ -65,6 +66,39 @@ func TestCreatedAppFeatureOwnership(t *testing.T) {
 		if output, err := initialize.CombinedOutput(); err != nil {
 			t.Fatalf("initialize make:app feature resources: %v\n%s", err, output)
 		}
+		runFeatureRenderCommand(t, root, "make:app", "reporting", "--remove")
+		if err := os.Remove(filepath.Join(root, "internal/features/created_app_test.go")); err != nil {
+			t.Fatal(err)
+		}
+		removedTest := `package features
+
+import "testing"
+
+// TestRemovedAppFeatureOwnership rejects removed App identity while the default App remains usable.
+func TestRemovedAppFeatureOwnership(t *testing.T) {
+    if manager,err := NewManagerForApp("REPORTING"); err == nil { _ = manager.Close(); t.Fatal("removed App still owns feature resources") }
+    manager,err := NewManager()
+    if err != nil { t.Fatal(err) }
+    defer manager.Close()
+}
+`
+		if err := os.WriteFile(filepath.Join(root, "internal/features/removed_app_test.go"), []byte(removedTest), 0600); err != nil {
+			t.Fatal(err)
+		}
+		accessors, err := os.ReadFile(filepath.Join(root, "internal/features/accessors_gen.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(accessors), "Only()") {
+			t.Fatal("removed App accessor retained")
+		}
+		initialize = exec.Command("go", "test", "./internal/features", "-run", "^TestRemovedAppFeatureOwnership$", "-count=1")
+		initialize.Dir = root
+		initialize.Env = testkit.IntegrationGoProcessEnv(t, map[string]string{"GOWORK": "off"})
+		if output, err := initialize.CombinedOutput(); err != nil {
+			t.Fatalf("initialize after App removal: %v\n%s", err, output)
+		}
+
 	})
 	t.Run("complete composition", func(t *testing.T) {
 		root := t.TempDir()
