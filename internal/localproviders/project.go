@@ -135,7 +135,7 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 	return names
 }
 
-// resourceKey gives Feature keys their known App owner while preserving participation-based legacy resource scopes.
+// resourceKey gives App-aware resource keys their known owner while preserving participation-based legacy scopes.
 func resourceKey(config *project.Config, key string) string {
 	if owner, _ := managedAppResourceOwner(config, key); owner != "" {
 		return strings.TrimPrefix(key, owner+"_")
@@ -186,7 +186,7 @@ func knownAppResourceOwner(config *project.Config, key string) string {
 func managedAppResourceOwner(config *project.Config, key string) (string, bool) {
 	owner := knownAppResourceOwner(config, key)
 	base := strings.TrimPrefix(key, owner+"_")
-	if owner == "" || (!strings.HasPrefix(base, "FEATURE_") && !strings.HasPrefix(key, "FEATURE_")) {
+	if owner == "" || (!strings.HasPrefix(base, "FEATURE_") && !strings.HasPrefix(key, "FEATURE_") && !strings.HasPrefix(base, "NOTIFICATION_") && !strings.HasPrefix(key, "NOTIFICATION_")) {
 		return "", false
 	}
 	for name, app := range config.Apps {
@@ -194,7 +194,7 @@ func managedAppResourceOwner(config *project.Config, key string) (string, bool) 
 			continue
 		}
 		enabled := resourceAppliesTo(base, project.NormalizeConfiguredAppComponents(config, app.Components))
-		if !enabled && !strings.HasPrefix(key, "FEATURE_") && resourceAppliesTo(key, project.ProjectComponents(config)) {
+		if !enabled && !strings.HasPrefix(key, "FEATURE_") && !strings.HasPrefix(key, "NOTIFICATION_") && resourceAppliesTo(key, project.ProjectComponents(config)) {
 			return "", false
 		}
 		return owner, enabled
@@ -237,7 +237,7 @@ func rootResourceKey(config *project.Config, key string) bool {
 		return true
 	}
 	for _, definition := range project.ResourceCatalog() {
-		if definition.Key == project.ResourceFeature && !definition.AppliesTo(project.ProjectComponents(config)) {
+		if (definition.Key == project.ResourceFeature || definition.Key == project.ResourceNotification) && !definition.AppliesTo(project.ProjectComponents(config)) {
 			continue
 		}
 		if strings.HasPrefix(key, definition.EnvironmentPrefix+"_") {
