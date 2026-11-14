@@ -1368,11 +1368,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	}
 	if appConfigChanged && !projectCapabilitiesChanged && p.projectRenderComponents().Feature {
 		// Feature ownership changes even when adding an App leaves the project capability union unchanged.
-		result, err := generate.GenerateProjectFiles(p.workspace.path(), generate.GenerationSelection{Feature: true})
-		if err != nil {
-			return p.workspace.logicalError(fmt.Errorf("generate App feature resources: %w", err))
+		if err := p.runGenerateFeatures(); err != nil {
+			return err
 		}
-		p.lines = append(p.lines, renderCountsLine("forj generate --feature", result.TotalFiles, 0, "files"))
 	}
 	if err := p.writeTemplates([]string{
 		"internal/cmd/launch.go.tmpl",
@@ -1485,6 +1483,12 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	}
 	if err := p.publishPendingResourceEnvironment(); err != nil {
 		return result, err
+	}
+	if afterProjectComponents.Feature {
+		if err := p.runGenerateFeatures(); err != nil {
+			return result, err
+		}
+		result.Updated = append(result.Updated, generate.FeatureManagerPath, generate.FeatureAccessorsPath)
 	}
 	if err := p.writeTemplates([]string{
 		"internal/runtime/apps.go.tmpl",
@@ -3362,6 +3366,16 @@ func (p *ProjectRenderer) runGenerateAll() error {
 		return p.workspace.logicalError(err)
 	}
 	p.lines = append(p.lines, renderCountsLine("forj generate", result.TotalFiles, 0, "files"))
+	return nil
+}
+
+// runGenerateFeatures reconciles App ownership for creation and removal without regenerating unrelated resources.
+func (p *ProjectRenderer) runGenerateFeatures() error {
+	result, err := generate.GenerateProjectFiles(p.workspace.path(), generate.GenerationSelection{Feature: true})
+	if err != nil {
+		return p.workspace.logicalError(fmt.Errorf("generate feature resources: %w", err))
+	}
+	p.lines = append(p.lines, renderCountsLine("forj generate --feature", result.TotalFiles, 0, "files"))
 	return nil
 }
 
