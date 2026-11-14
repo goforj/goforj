@@ -1,27 +1,38 @@
 schema_version: 2
 id: catalog-search-domain
-title: Catalog Search Projection Boundary
-description: Prepare independently pinned lexical search modules and a rebuildable product projection.
+title: Catalog Search Resource Boundary
+description: Prepare an App-owned catalog schema and generated named search resource.
 app:
   module_name: example.com/invoiceeval
   doc_module_name: your/module
   components:
     web_api: true
+    search: true
 markdown:
   intro: |
     The database remains durable truth; this local index projects already committed products.
   before: |
     the App has no catalog projection.
   after: |
-    the App has an explicit index schema and local composition boundary, ready for application behavior.
+    the App owns a catalog schema, provisioned Bleve backend, and generated Catalog accessor.
+  prerequisites: |
+    Use a GoForj version with the optional Search component. The owning App declares schemas in Go and configures backend locations through Search environment settings. The prepared fixture pins the search root and embedded Bleve module independently at v0.1.1.
+  common_mistakes:
+    - Do not open backend drivers in catalog services or treat the index as the durable product database.
+    - Do not initialize the App graph before explicitly provisioning its first index schema.
+    - Do not report accepted writes as visible without checking the receipt outcome.
+  troubleshooting: |
+    An index-not-found startup error means the schema needs explicit provisioning. Stop the Bleve owner before provisioning the same path. Schema drift requires an application-owned rebuild into a new path or service prefix; changing environment variables must not silently recreate existing data. A configured index without an App definition is a composition error.
+  next_steps:
+    - Backfill the projection from committed database records and retain an explicit update and recovery policy.
+    - Add App-owned facets and escaped highlight rendering when the product requires them.
   files:
     - internal/catalog/product.go
+    - app/search.go
+    - internal/searches/accessors_gen.go
 steps:
-  - id: pin-search-modules
-    title: Pin root and embedded backend independently
-    command: [go, get, github.com/goforj/search@v0.1.1, github.com/goforj/search/driver/blevesearch@v0.1.1]
   - id: add-catalog-projection
-    title: Define the product projection and local index
+    title: Define the product projection
     write:
       path: internal/catalog/product.go
       language: go
@@ -29,11 +40,7 @@ steps:
         // Package catalog owns the rebuildable product search projection.
         package catalog
 
-        import (
-                "context"
-                "github.com/goforj/search"
-                "github.com/goforj/search/driver/blevesearch"
-        )
+        import "github.com/goforj/search"
 
         // Product is a projection of a durable catalog record, not its persistence model.
         type Product struct {
@@ -50,25 +57,61 @@ steps:
                         {Name: "id", Type: search.KeywordField, Required: true, Sortable: true},
                 }, DefaultSearchable: []search.FieldName{"description"}}
         }
+  - id: import-catalog-definition
+    title: Import the App-owned schema
+    replace:
+      path: app/search.go
+      language: go
+      old: 'import "github.com/goforj/search"'
+      new: 'import ("github.com/goforj/search"; "example.com/invoiceeval/internal/catalog")'
+  - id: declare-catalog-schema
+    title: Bind the logical catalog name to its explicit schema
+    replace:
+      path: app/search.go
+      language: go
+      old: 'return map[string]search.Definition{}'
+      new: 'return map[string]search.Definition{"catalog": catalog.Definition()}'
+  - id: configure-catalog-backend
+    title: Configure the physical index independently from its schema
+    append:
+      path: .env
+      content: |
+        SEARCH_CATALOG_PATH=_data/search/catalog
+  - id: generate-catalog-accessor
+    title: Generate the declared named search accessor
+    command: [forj, generate, --search]
+  - id: add-search-bootstrap
+    title: Add explicit provisioning without initializing the App graph
+    write:
+      path: cmd/search-provision/main.go
+      language: go
+      content: |
+        // Package main provisions the App's explicitly declared search projection.
+        package main
 
-        // OpenIndex provisions a disposable embedded projection for the local App.
-        func OpenIndex() (*search.Index, func(), error) {
-                ctx := context.Background()
-                driver, err := blevesearch.Open(ctx, blevesearch.Config{Memory: true})
-                if err != nil {
-                        return nil, nil, err
+        import (
+                "context"
+                "example.com/invoiceeval/app"
+                "example.com/invoiceeval/internal/searches"
+                "github.com/goforj/env/v2"
+                "log"
+                "time"
+        )
+
+        // main provisions before App initialization can require existing index schemas.
+        func main() {
+                if err := env.Load(); err != nil {
+                        log.Fatal(err)
                 }
-                if err := driver.CreateIndex(ctx, Definition()); err != nil {
-                        _ = driver.Close()
-                        return nil, nil, err
+                ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+                defer cancel()
+                if err := searches.Provision(ctx, app.SearchDefinitions()); err != nil {
+                        log.Fatal(err)
                 }
-                index, err := search.NewIndex(driver, Definition())
-                if err != nil {
-                        _ = driver.Close()
-                        return nil, nil, err
-                }
-                return index, func() { _ = driver.Close() }, nil
         }
+  - id: provision-catalog
+    title: Provision the declared schema before runtime validation
+    command: [go, run, ./cmd/search-provision]
 checks:
   - command: [go, test, ./internal/catalog]
   - command: [forj, build]

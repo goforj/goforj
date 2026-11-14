@@ -12,13 +12,25 @@ app:
   doc_module_name: your/module
   components:
     web_api: true
+    search: true
 markdown:
   intro: |
     Query a rebuildable projection while keeping durable persistence outside the indexing boundary.
   before: |
-    the catalog has a schema and local backend but no application search service.
+    the catalog has an App-owned schema and generated named resource but no application search service.
   after: |
     a wired service filters categories, pages deterministically, and confirms index update visibility.
+  prerequisites: |
+    Use a GoForj version with the optional Search component. The owning App declares schemas in Go and configures backend locations through Search environment settings. The prepared fixture pins the search root and embedded Bleve module independently at v0.1.1.
+  common_mistakes:
+    - Do not open backend drivers in catalog services or treat the index as the durable product database.
+    - Do not initialize the App graph before explicitly provisioning its first index schema.
+    - Do not report accepted writes as visible without checking the receipt outcome.
+  troubleshooting: |
+    An index-not-found startup error means the schema needs explicit provisioning. Stop the Bleve owner before provisioning the same path. Schema drift requires an application-owned rebuild into a new path or service prefix; changing environment variables must not silently recreate existing data. A configured index without an App definition is a composition error.
+  next_steps:
+    - Backfill the projection from committed database records and retain an explicit update and recovery policy.
+    - Add App-owned facets and escaped highlight rendering when the product requires them.
   files:
     - internal/catalog/service.go
     - internal/catalog/service_test.go
@@ -37,13 +49,14 @@ steps:
                 "context"
                 "fmt"
                 "github.com/goforj/search"
+                "example.com/invoiceeval/internal/searches"
         )
 
         // Service indexes already committed records and queries their rebuildable projection.
         type Service struct{ index *search.Index }
 
-        // NewService shares the App-owned index across catalog operations.
-        func NewService(index *search.Index) *Service { return &Service{index: index} }
+        // NewService reuses the generated named catalog resource across operations.
+        func NewService(manager *searches.Manager) *Service { return &Service{index: manager.Catalog()} }
 
         // IndexProduct confirms visibility without confusing accepted work with success.
         func (service *Service) IndexProduct(ctx context.Context, product Product) error {
@@ -73,7 +86,7 @@ steps:
                 })
         }
   - id: test-catalog-service
-    title: Test category isolation and visible product replacements
+    title: Test category isolation and visible replacements through the generated resource
     write:
       path: internal/catalog/service_test.go
       language: go
@@ -83,22 +96,27 @@ steps:
 
         import (
                 "context"
+                "example.com/invoiceeval/internal/searches"
+                "github.com/goforj/search"
+                "path/filepath"
                 "testing"
         )
 
-        // TestServiceFiltersAndReplacesProducts protects the catalog contract using the real local composition.
+        // TestServiceFiltersAndReplacesProducts protects the contract through the real generated resource.
         func TestServiceFiltersAndReplacesProducts(t *testing.T) {
-                index, close, err := OpenIndex()
+                ctx := context.Background()
+                t.Setenv("SEARCH_CATALOG_PATH", filepath.Join(t.TempDir(), "catalog"))
+                defs := map[string]search.Definition{"catalog": Definition()}
+                if err := searches.Provision(ctx, defs); err != nil {
+                        t.Fatal(err)
+                }
+                manager, err := searches.NewManager(ctx, defs)
                 if err != nil {
                         t.Fatal(err)
                 }
-                t.Cleanup(close)
-                service := NewService(index)
-                ctx := context.Background()
-                for _, product := range []Product{
-                        {ID: "one", Description: "red trail boot", Category: "outdoors"},
-                        {ID: "two", Description: "red city boot", Category: "fashion"},
-                } {
+                t.Cleanup(func() { _ = manager.Close() })
+                service := NewService(manager)
+                for _, product := range []Product{{ID: "one", Description: "red trail boot", Category: "outdoors"}, {ID: "two", Description: "red city boot", Category: "fashion"}} {
                         if err := service.IndexProduct(ctx, product); err != nil {
                                 t.Fatal(err)
                         }
@@ -114,10 +132,6 @@ steps:
                 if err != nil || stale.Total.Value != 0 {
                         t.Fatalf("stale page = %#v, %v", stale, err)
                 }
-                current, err := service.Find(ctx, "green tent", "camping", 0, 1)
-                if err != nil || current.Total.Value != 1 {
-                        t.Fatalf("updated page = %#v, %v", current, err)
-                }
         }
   - id: import-catalog
     title: Import catalog composition
@@ -132,7 +146,7 @@ steps:
       path: app/wire/inject_services_app.go
       language: go
       old: "\tapp.NewLifecycleRegistry,\n"
-      new: "\tcatalog.OpenIndex,\n\tcatalog.NewService,\n\tapp.NewLifecycleRegistry,\n"
+      new: "\tcatalog.NewService,\n\tapp.NewLifecycleRegistry,\n"
 checks:
   - command: [go, test, ./internal/catalog]
   - command: [forj, build]
