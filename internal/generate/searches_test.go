@@ -416,6 +416,11 @@ func TestSearchManagerResourceWordApps(t *testing.T) {
  t.Setenv("SEARCH_SEARCH_SEARCH_DRIVER", "bleve")
  t.Setenv("SEARCH_SEARCH_SEARCH_PATH", filepath.Join(t.TempDir(), "nested-app"))
  t.Setenv("SEARCH_UNRELATED_SETTING", "ignored")
+ t.Setenv("SEARCH_CACHE_DRIVER", "redis")
+ t.Setenv("SEARCH_NOTIFICATION_DRIVER", "log")
+ t.Setenv("SEARCH_FEATURE_DRIVER", "file")
+ t.Setenv("SEARCH_WORKER_CACHE_DRIVER", "redis")
+ t.Setenv("SEARCH_SEARCH_NOTIFICATION_DRIVER", "log")
  for _, prefix := range []string{"", "SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"} {
   if err := ProvisionForApp(ctx, prefix, nil); err != nil { t.Fatalf("%s empty provision: %v", prefix, err) }
   manager, err := NewManagerForApp(ctx, prefix, nil)
@@ -426,6 +431,8 @@ func TestSearchManagerResourceWordApps(t *testing.T) {
  // A real default index named search keeps its global root fallback when an App owns the ambiguous key.
  if got := namedSearchValue("", "search", "PATH", "default-index"); got != "default-index" { t.Fatalf("App root became default index path: %s", got) }
  if got := searchDriverName("", "search"); got != "bleve" { t.Fatalf("App root became default index driver: %s", got) }
+ if got := searchDriverName("", "cache"); got != "bleve" { t.Fatalf("another App family became a Search driver: %s", got) }
+ if got := searchDriverName("", "notification"); got != "bleve" { t.Fatalf("App Notification settings became a Search driver: %s", got) }
  if got := searchDriverName("ADMIN", "search"); got != "bleve" { t.Fatalf("App root became another App index driver: %s", got) }
  defs := map[string]search.Definition{"search": {Name: "search", Fields: []search.Field{{Name: "description", Type: search.TextField, Searchable: true}}}}
  if err := Provision(ctx, defs); err != nil { t.Fatal(err) }

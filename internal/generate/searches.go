@@ -22,10 +22,11 @@ var searchDriverKeys = map[string]map[string]struct{}{
 
 // searchTemplateData keeps the generated import inventory and named accessors consistent.
 type searchTemplateData struct {
-	Bleve       bool
-	Meilisearch bool
-	Names       []storageAccessorName
-	AppPrefixes []string
+	Bleve            bool
+	Meilisearch      bool
+	Names            []storageAccessorName
+	AppPrefixes      []string
+	ResourcePrefixes []string
 }
 
 // GenerateSearchFiles generates portable search composition from the current environment contract.
@@ -56,7 +57,7 @@ func generateSearchFiles(input generationInput) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	data := searchTemplateData{AppPrefixes: generationKnownAppEnvPrefixes(input)}
+	data := searchTemplateData{AppPrefixes: generationKnownAppEnvPrefixes(input), ResourcePrefixes: generationResourceEnvPrefixes()}
 	for _, driver := range drivers {
 		data.Bleve = data.Bleve || driver == "bleve"
 		data.Meilisearch = data.Meilisearch || driver == "meilisearch"
@@ -144,6 +145,12 @@ import (
  {{if .Bleve}}"github.com/goforj/search/driver/blevesearch"{{end}}
  {{if .Meilisearch}}"github.com/goforj/search/driver/meilisearch"{{end}}
 )
+
+// searchAppPrefixes fixes App ownership when this composition is generated.
+var searchAppPrefixes = []string{ {{range .AppPrefixes}}{{printf "%q" .}},{{end}} }
+
+// searchResourcePrefixes keeps ownership aligned with the framework resource catalog.
+var searchResourcePrefixes = []string{ {{range .ResourcePrefixes}}{{printf "%q" .}},{{end}} }
 
 // indexBackend keeps schema operations outside the portable request-path handle.
 type indexBackend interface {
@@ -238,11 +245,19 @@ func openBackend(ctx context.Context, name, driver, prefix string) (indexBackend
 // searchEnvironmentOwner assigns ambiguous keys to the longest compiled App prefix.
 func searchEnvironmentOwner(key, requestedPrefix string) string {
  owner := ""
- for _, prefix := range []string{ {{range .AppPrefixes}}{{printf "%q" .}},{{end}} } {
-  if strings.HasPrefix(key, prefix+"_SEARCH_") && len(prefix) > len(owner) { owner = prefix }
+ for _, prefix := range searchAppPrefixes {
+  if len(prefix)>len(owner) && searchAppResourceKey(key,prefix) { owner=prefix }
  }
- if strings.HasPrefix(key, requestedPrefix+"_SEARCH_") && len(requestedPrefix) > len(owner) { owner = requestedPrefix }
+ if len(requestedPrefix)>len(owner) && searchAppResourceKey(key,requestedPrefix) { owner=requestedPrefix }
  return owner
+}
+
+// searchAppResourceKey recognizes resource settings beneath an explicitly known App prefix.
+func searchAppResourceKey(key,prefix string) bool {
+ for _,resourcePrefix:=range searchResourcePrefixes {
+  if strings.HasPrefix(key,prefix+"_"+resourcePrefix+"_"){return true}
+ }
+ return false
 }
 
 // lookupSearchEnvironment prevents another App's root settings from becoming named index overrides.
