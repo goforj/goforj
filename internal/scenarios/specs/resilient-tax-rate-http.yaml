@@ -1,0 +1,233 @@
+schema_version: 2
+id: resilient-tax-rate-http
+title: Resilient Tax Rate HTTP Client
+description: Bound transient GET retries without changing the prepared client API or dependency.
+depends_on: [tax-rate-http-integration]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+prepare:
+  checks:
+    - command: [forj, build]
+    - command: [go, test, ./...]
+markdown:
+  intro: |
+    Tolerate temporary tax-service 502 and 503 responses with no more than three total GET attempts.
+  prerequisites: |
+    Start with the prepared tax-rate integration and its existing httpx/v2 v2.0.1 pin. Inspect the Project's go.mod before choosing APIs: framework-generated App defaults may still use httpx v1.1.0, and this scenario does not authorize upgrading those Projects. No real tax-service credentials or external destination are required.
+  before: |
+    The existing typed client performs one request and already owns URL-path escaping and App configuration.
+  after: |
+    Transient status failures have an explicit bounded retry policy while caller cancellation, typed errors, and the public API remain intact.
+  files:
+    - internal/taxrates/client.go
+    - internal/taxrates/client_resilience_test.go
+  common_mistakes:
+    - Do not equate two retries with two total attempts; the limit is three requests including the first.
+    - Do not apply GET retry defaults to non-idempotent writes or retry transport and decoding failures without an explicit requirement.
+    - Do not replace wrapped status or context errors with plain strings.
+  troubleshooting: |
+    If an expected retry is missing, inspect the typed HTTP status cause rather than matching error prose. If too many requests occur, distinguish the retry limit from the initial attempt and check the status predicate. A malformed HTTP 200 body is a decoding failure, not a transient status failure. Use a local server and request counts to verify policy; preserve caller context during both requests and retry waits.
+  next_steps:
+    - Review retry status codes and idempotency requirements separately for any additional remote operation.
+    - Add application-owned metrics with bounded labels if operational retry visibility is needed.
+    - Keep the existing App provider and dependency pin unless an independently reviewed change requires otherwise.
+steps:
+  - id: bound-tax-rate-retries
+    title: Apply explicit transient GET retry policy
+    write:
+      path: internal/taxrates/client.go
+      language: go
+      content: |
+        // Package taxrates owns the remote tax-rate contract and HTTP translation.
+        package taxrates
+
+        import (
+            "context"
+            "errors"
+            "fmt"
+            "net/http"
+            "net/url"
+            "strings"
+            "time"
+
+            "github.com/goforj/httpx/v2"
+        )
+
+        // Rate is the application-facing representation returned by the tax service.
+        type Rate struct {
+            Country string `json:"country"`
+            Percent float64 `json:"percent"`
+        }
+
+        // Client keeps outbound transport details outside invoice behavior.
+        type Client struct { http *httpx.Client }
+
+        // NewClient applies the remote base URL once so callers provide only domain inputs.
+        func NewClient(baseURL string) *Client {
+            return &Client{http: httpx.New(httpx.BaseURL(strings.TrimRight(baseURL, "/")))}
+        }
+
+        // Find retries only classified transient GET responses while preserving caller control and the original cause.
+        func (client *Client) Find(ctx context.Context, country string) (Rate, error) {
+            if ctx == nil { ctx = context.Background() }
+            for attempt := 0; ; attempt++ {
+                rate, err := httpx.GetCtx[Rate](client.http, ctx, "/rates/"+url.PathEscape(country))
+                if err == nil { return rate, nil }
+                if attempt == 2 || !retryableTaxRateStatus(err) {
+                    return Rate{}, fmt.Errorf("load tax rate for %s: %w", country, err)
+                }
+                select {
+                case <-ctx.Done(): return Rate{}, fmt.Errorf("load tax rate for %s: %w", country, ctx.Err())
+                case <-time.After(10*time.Millisecond):
+                }
+            }
+        }
+
+        // retryableTaxRateStatus prevents decoding or transport errors from inheriting status retry policy.
+        func retryableTaxRateStatus(err error) bool {
+            var status *httpx.HTTPError
+            return errors.As(err, &status) && (status.StatusCode == http.StatusBadGateway || status.StatusCode == http.StatusServiceUnavailable)
+        }
+  - id: test-tax-rate-resilience
+    title: Count real requests and preserve caller control locally
+    write:
+      path: internal/taxrates/client_resilience_test.go
+      language: go
+      content: |
+        // Package taxrates owns the remote tax-rate contract and HTTP translation.
+        package taxrates
+
+        import (
+            "context"
+            "encoding/json"
+            "errors"
+            "fmt"
+            "net/http"
+            "net/http/httptest"
+            "sync/atomic"
+            "testing"
+            "time"
+            "strings"
+
+            "github.com/goforj/httpx/v2"
+        )
+
+        // TestTaxRateResilienceCounts observes policy through actual HTTP requests rather than retry configuration tokens.
+        func TestTaxRateResilienceCounts(t *testing.T) {
+            for _, test := range []struct {
+                name string
+                status int
+                failures int64
+                malformed bool
+                disconnect bool
+                nilContext bool
+                wantCalls int64
+                wantError bool
+            }{
+                {name: "success", status: 200, wantCalls: 1},
+                {name: "recover 502", status: 502, failures: 1, wantCalls: 2},
+                {name: "nil caller context", status: 502, failures: 1, nilContext: true, wantCalls: 2},
+                {name: "recover 503", status: 503, failures: 2, wantCalls: 3},
+                {name: "exhaust 502", status: 502, failures: 99, wantCalls: 3, wantError: true},
+                {name: "exhaust 503", status: 503, failures: 99, wantCalls: 3, wantError: true},
+                {name: "400", status: 400, failures: 99, wantCalls: 1, wantError: true},
+                {name: "401", status: 401, failures: 99, wantCalls: 1, wantError: true},
+                {name: "404", status: 404, failures: 99, wantCalls: 1, wantError: true},
+                {name: "409", status: 409, failures: 99, wantCalls: 1, wantError: true},
+                {name: "429", status: 429, failures: 99, wantCalls: 1, wantError: true},
+                {name: "500", status: 500, failures: 99, wantCalls: 1, wantError: true},
+                {name: "504", status: 504, failures: 99, wantCalls: 1, wantError: true},
+                {name: "malformed success", status: 200, malformed: true, wantCalls: 1, wantError: true},
+                {name: "connection lost", disconnect: true, wantCalls: 1, wantError: true},
+            } {
+                t.Run(test.name, func(t *testing.T) {
+                    var calls atomic.Int64
+                    country := "United States/West"
+                    server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+                        count := calls.Add(1)
+                        if request.Method != http.MethodGet || request.URL.EscapedPath() != "/rates/United%20States%2FWest" { t.Errorf("request = %s %s", request.Method, request.URL.EscapedPath()) }
+                        if test.disconnect {
+                            connection, _, err := response.(http.Hijacker).Hijack()
+                            if err != nil { t.Error(err); return }
+                            _ = connection.Close()
+                            return
+                        }
+                        response.Header().Set("Content-Type", "application/json")
+                        if count <= test.failures { response.WriteHeader(test.status); _, _ = fmt.Fprint(response, "upstream rejected"); return }
+                        if test.malformed { _, _ = fmt.Fprint(response, "{\"country\":"); return }
+                        _, _ = fmt.Fprint(response, "{\"country\":\"US\",\"percent\":8.75}")
+                    }))
+                    defer server.Close()
+                    ctx := context.Background()
+                    if test.nilContext { ctx = nil }
+                    rate, err := NewClient(server.URL).Find(ctx, country)
+                    if (err != nil) != test.wantError { t.Fatalf("Find() = %#v, %v", rate, err) }
+                    if !test.wantError && (rate.Country != "US" || rate.Percent != 8.75) { t.Fatalf("typed result = %#v", rate) }
+                    if test.wantError && !strings.Contains(err.Error(), country) { t.Fatalf("operation context lost: %v", err) }
+                    if test.wantError && test.status != 200 && !test.disconnect {
+                        var status *httpx.HTTPError
+                        if !errors.As(err, &status) || status.StatusCode != test.status { t.Fatalf("typed status error lost: %v", err) }
+                    }
+                    if test.malformed {
+                        var syntax *json.SyntaxError
+                        if !errors.As(err, &syntax) { t.Fatalf("typed decoding error lost: %v", err) }
+                    }
+                    if got := calls.Load(); got != test.wantCalls { t.Fatalf("requests = %d, want %d", got, test.wantCalls) }
+                })
+            }
+        }
+
+        // TestTaxRateResiliencePreCanceled prevents an expired caller from contacting the service.
+        func TestTaxRateResiliencePreCanceled(t *testing.T) {
+            var calls atomic.Int64
+            server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) { calls.Add(1) }))
+            defer server.Close()
+            ctx, cancel := context.WithCancel(context.Background())
+            cancel()
+            if _, err := NewClient(server.URL).Find(ctx, "US"); !errors.Is(err, context.Canceled) { t.Fatalf("cancellation = %v", err) }
+            deadline, stop := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+            defer stop()
+            if _, err := NewClient(server.URL).Find(deadline, "US"); !errors.Is(err, context.DeadlineExceeded) { t.Fatalf("deadline = %v", err) }
+            if calls.Load() != 0 { t.Fatal("expired caller sent a request") }
+        }
+
+        // TestTaxRateResilienceInFlightCancel proves cancellation reaches a request already accepted by the server.
+        func TestTaxRateResilienceInFlightCancel(t *testing.T) { assertTaxClientCancellation(t, false) }
+
+        // TestTaxRateResilienceInFlightDeadline proves an active request respects its caller's deadline.
+        func TestTaxRateResilienceInFlightDeadline(t *testing.T) { assertTaxClientCancellation(t, true) }
+
+        // assertTaxClientCancellation bounds a broken client so calibration can report context loss without hanging cleanup.
+        func assertTaxClientCancellation(t *testing.T, deadline bool) {
+            t.Helper()
+            entered, release := make(chan struct{}, 1), make(chan struct{})
+            var calls atomic.Int64
+            server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+                calls.Add(1)
+                select { case entered <- struct{}{}: default: }
+                select { case <-request.Context().Done(): case <-release: }
+            }))
+            defer server.Close()
+            defer close(release)
+            ctx, cancel := context.WithCancel(context.Background())
+            expected := context.Canceled
+            if deadline { cancel(); ctx, cancel = context.WithTimeout(context.Background(), time.Second); expected = context.DeadlineExceeded }
+            defer cancel()
+            result := make(chan error, 1)
+            go func() { _, err := NewClient(server.URL).Find(ctx, "US"); result <- err }()
+            select { case <-entered: case <-time.After(3*time.Second): t.Fatal("request never reached server") }
+            if !deadline { cancel() }
+            select {
+            case err := <-result:
+                if !errors.Is(err, expected) { t.Fatalf("context cause = %v, want %v", err, expected) }
+            case <-time.After(3*time.Second): t.Fatal("request ignored caller context")
+            }
+            if calls.Load() != 1 { t.Fatalf("canceled request retried %d times", calls.Load()) }
+        }
+checks:
+  - command: [go, test, ./internal/taxrates]
+  - command: [forj, build]
+  - command: [go, test, ./...]
