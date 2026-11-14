@@ -30,7 +30,7 @@ type appPrimitiveDriverScope struct {
 }
 
 // generationDriverResourcePrefixes bounds App-prefix inference to resources whose overlays generated apps consume.
-var generationDriverResourcePrefixes = []string{"CACHE", "DB", "EVENTS", "MAIL", "QUEUE", "STORAGE"}
+var generationDriverResourcePrefixes = []string{"CACHE", "DB", "EVENTS", "MAIL", "QUEUE", "STORAGE", "SEARCH"}
 
 // generationEnvironmentResource pairs an App-overlay marker with the keys that provide trustworthy prefix evidence.
 type generationEnvironmentResource struct {
@@ -46,6 +46,7 @@ func generationEnvironmentResources() []generationEnvironmentResource {
 		{prefix: "EVENTS", rootKeys: eventRootKeys},
 		{prefix: "MAIL", rootKeys: mailRootKeys},
 		{prefix: "QUEUE", rootKeys: queueRootKeys},
+		{prefix: "SEARCH", rootKeys: searchRootKeys},
 		{prefix: "STORAGE", rootKeys: storageRootKeys},
 	}
 }
@@ -527,6 +528,8 @@ func generationComponentsSupportResource(components project.Components, resource
 		return components.Mail
 	case "QUEUE":
 		return components.Jobs
+	case "SEARCH":
+		return components.Search
 	case "STORAGE":
 		return components.Storage
 	default:

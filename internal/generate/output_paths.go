@@ -1,6 +1,10 @@
 package generate
 
 const (
+	// SearchManagerPath identifies the generated search composition.
+	SearchManagerPath = "internal/searches/manager_gen.go"
+	// SearchAccessorsPath identifies the generated named index accessors.
+	SearchAccessorsPath = "internal/searches/accessors_gen.go"
 	// CacheManagerPath identifies the manager source owned by cache generation.
 	CacheManagerPath = "internal/caches/manager_gen.go"
 	// CacheAccessorsPath identifies accessors derived from application cache declarations.
@@ -36,6 +40,7 @@ func OutputPaths(selection GenerationSelection) []string {
 		enabled bool
 		paths   []string
 	}{
+		{selection.Search, []string{SearchManagerPath, SearchAccessorsPath}},
 		{selection.Cache, []string{CacheManagerPath, CacheAccessorsPath}},
 		{selection.Queue, []string{QueueManagerPath, QueueAccessorsPath}},
 		{selection.Storage, []string{StorageManagerPath, StorageAccessorsPath}},

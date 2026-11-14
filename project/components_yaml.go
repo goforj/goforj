@@ -27,6 +27,7 @@ var componentYAMLKeys = []ComponentKey{
 	ComponentCache,
 	ComponentEvents,
 	ComponentStorage,
+	ComponentSearch,
 	ComponentJobs,
 }
 

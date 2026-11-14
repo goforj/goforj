@@ -89,6 +89,8 @@ func (c *RenderCmd) Run() error {
 				cmp.DatabaseSQLite = true
 			case "scheduler":
 				cmp.Scheduler = true
+			case "search":
+				cmp.Search = true
 			case "jobs":
 				cmp.Jobs = true
 			default:

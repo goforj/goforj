@@ -23,6 +23,9 @@ import (
 
 	"{{.GoModuleName}}/{{.AppImportPath}}"
 	"{{.GoModuleName}}/internal/runtime"
+{{- if .Components.Search }}
+ "{{.GoModuleName}}/internal/searches"
+{{- end }}
 {{- if .Components.Cache }}
 	"{{.GoModuleName}}/internal/caches"
 {{- end }}
@@ -54,6 +57,9 @@ import (
 type App struct {
 	rootCmd *{{.AppPackageName}}.RootCmd
 	logger  *logger.AppLogger
+{{- if .Components.Search }}
+ search *searches.Manager
+{{- end }}
 {{- if .Components.Cache }}
 	cache   *caches.Manager
 {{- end }}
@@ -81,6 +87,11 @@ type App struct {
 	db      *database.Connections
 	{{- end }}
 }
+
+{{- if .Components.Search }}
+// Searches returns the App-owned named index manager.
+func (a *App) Searches() *searches.Manager { return a.search }
+{{- end }}
 
 // RootCmd returns the root command of the application
 func (a *App) RootCmd() *{{.AppPackageName}}.RootCmd {
@@ -355,6 +366,9 @@ func NewApplication(
 	rootCmd *{{.AppPackageName}}.RootCmd,
 	appTimeouts *runtime.Timeouts,
 	lifecycleRegistry *{{.AppPackageName}}.LifecycleRegistry,
+{{- if .Components.Search }}
+ searchManager *searches.Manager,
+{{- end }}
 {{- if .Components.Cache }}
 	cacheManager *caches.Manager,
 {{- end }}
@@ -381,6 +395,9 @@ func NewApplication(
 
 	logTimeoutWarnings(appLogger, appTimeouts)
 	attachInspectLogSink(appLogger, inspectManager)
+{{- if .Components.Search }}
+ registerSearchShutdown(lifecycleManager, searchManager)
+{{- end }}
 {{- if .Components.Storage }}
 	logStorageWarnings(appLogger, storage)
 	registerStorageShutdown(lifecycleManager, appLogger, storage)
@@ -395,6 +412,9 @@ func NewApplication(
 
 	return App{
 		rootCmd: rootCmd,
+{{- if .Components.Search }}
+ search: searchManager,
+{{- end }}
 		logger:  appLogger,
 		{{- if .Components.HasDatabase }}
 		db: db,
@@ -567,3 +587,13 @@ func timeoutWithinParent(parent context.Context, timeout time.Duration) time.Dur
 func (a *App) appShutdownTimeout() time.Duration {
 	return a.appTimeouts.ShutdownTimeout()
 }
+
+{{- if .Components.Search }}
+// searchCloser preserves backend failure reporting without coupling the shutdown hook to manager internals.
+type searchCloser interface { Close() error }
+
+// registerSearchShutdown returns backend cleanup errors through normal App shutdown as well as Wire failure cleanup.
+func registerSearchShutdown(lifecycleManager *runtime.Lifecycle, manager searchCloser) {
+ lifecycleManager.On(runtime.Shutdown, func(context.Context) error { return manager.Close() })
+}
+{{- end }}

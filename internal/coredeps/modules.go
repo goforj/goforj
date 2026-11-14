@@ -8,6 +8,8 @@ import (
 
 // pinnedModuleVersions records validated framework releases and ecosystem security minimums for rendered projects.
 var pinnedModuleVersions = map[string]string{
+	"github.com/goforj/search":                                        "v0.1.1",
+	"github.com/goforj/search/driver/blevesearch":                     "v0.1.1",
 	"go.opentelemetry.io/otel/log":                                    "v1.47.0",
 	"go.opentelemetry.io/otel/sdk/log":                                "v1.47.0",
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp":     "v0.23.0",
@@ -252,6 +254,9 @@ func SyncCoreLibraries(components project.Components) []string {
 	}
 	if components.Events {
 		modules = append(modules, eventsRendererSyncModules...)
+	}
+	if components.Search {
+		modules = append(modules, "github.com/goforj/search", "github.com/goforj/search/driver/blevesearch")
 	}
 	if components.Storage {
 		modules = append(modules, storageRendererSyncModules...)

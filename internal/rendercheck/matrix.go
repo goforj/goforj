@@ -198,7 +198,7 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabaseMySQL: true,
-				Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true,
+				Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true, Search: true,
 			},
 		},
 		{
@@ -206,7 +206,7 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabasePostgres: true,
-				Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true,
+				Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true, Search: true,
 			},
 		},
 		{

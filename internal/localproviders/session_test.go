@@ -14,7 +14,7 @@ import (
 func fixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	put(t, root, ".goforj.yml", "project_name: local\nmodule_name: example.org/local\napps:\n  app:\n    components:\n      database_mysql: true\n      cache: true\n      jobs: true\n      events: true\n      storage: true\n      mail: true\n  admin:\n    components:\n      database_mysql: true\n      cache: true\n")
+	put(t, root, ".goforj.yml", "project_name: local\nmodule_name: example.org/local\napps:\n  app:\n    components:\n      database_mysql: true\n      cache: true\n      search: true\n      jobs: true\n      events: true\n      storage: true\n      mail: true\n  admin:\n    components:\n      database_mysql: true\n      cache: true\n      search: true\n")
 	put(t, root, ".env", "# Keep my comments\nAPP_KEY='unrelated-secret'\nAPP_NAME=Local\nDB_DRIVER=mysql\nDB_SUPPORTED_DRIVERS=mysql\nDB_DATABASE=production\nDB_PASSWORD='line one\nline two'\nCACHE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=memory,redis\nCACHE_SESSIONS_DRIVER=redis\nADMIN_CACHE_DRIVER=redis\nQUEUE_DRIVER=redis\nEVENTS_DRIVER=redis\nSTORAGE_DRIVER=s3\nMAIL_DRIVER=smtp\nCOMPOSE_PROFILES=mysql,redis,grafana,custom\n")
 	return root
 }

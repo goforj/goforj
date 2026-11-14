@@ -615,3 +615,31 @@ func astIdentifierListContains(identifiers []*ast.Ident, want string) bool {
 	}
 	return false
 }
+
+// validateSearchRenderTransition prevents disabling Search from stranding generated resources or App-owned schemas.
+func (p *ProjectRenderer) validateSearchRenderTransition(components project.Components) error {
+	if !components.Search {
+		path := filepath.Join("internal", "searches")
+		exists, err := p.workspace.renderPathExists(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot disable Search while %s exists; move application definitions and remove Search resources explicitly before rendering", path)
+		}
+	}
+	for _, app := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
+		if appRenderComponents(p.config, app).Search {
+			continue
+		}
+		path := filepath.Join(projectlayout.AppDir(".", app), "search.go")
+		exists, err := p.workspace.renderPathExists(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot disable Search for App %q while %s owns its search definitions; remove that App-owned boundary explicitly", app.Name, path)
+		}
+	}
+	return nil
+}

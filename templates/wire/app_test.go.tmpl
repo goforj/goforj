@@ -366,3 +366,23 @@ func TestAppShutdownSharesWireCleanupAcrossCopies(t *testing.T) {
   t.Fatalf("Wire cleanup calls across App copies = %d, want 1", got)
  }
 }
+
+{{- if .Components.Search }}
+// searchShutdownFailure keeps resource failure observable at the App lifecycle boundary.
+type searchShutdownFailure struct { err error; calls int }
+
+// Close records the attempt and returns the backend's shutdown failure.
+func (resource *searchShutdownFailure) Close() error { resource.calls++; return resource.err }
+
+// TestSearchShutdownReturnsBackendFailure verifies normal shutdown preserves a required resource's cleanup error.
+func TestSearchShutdownReturnsBackendFailure(t *testing.T) {
+ failure := errors.New("search close failed")
+ resource := &searchShutdownFailure{err: failure}
+ lifecycle := runtime.NewLifecycle(runtime.NewTimeouts())
+ registerSearchShutdown(lifecycle, resource)
+ application := App{inspects: inspects.NewManager(), logger: logger.NewSilentLogger(), lifecycle: lifecycle}
+ if err := application.Startup(context.Background()); err != nil { t.Fatal(err) }
+ if err := application.Shutdown(context.Background()); !errors.Is(err, failure) { t.Fatalf("search close error lost: %v", err) }
+ if resource.calls != 1 { t.Fatalf("search close calls = %d", resource.calls) }
+}
+{{- end }}

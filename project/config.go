@@ -256,6 +256,7 @@ type Components struct {
 	Scheduler        bool `yaml:"scheduler" json:"scheduler"`
 	Cache            bool `yaml:"cache" json:"cache"`
 	Events           bool `yaml:"events" json:"events"`
+	Search           bool `yaml:"search" json:"search,omitempty"`
 	Storage          bool `yaml:"storage" json:"storage"`
 	Jobs             bool `yaml:"jobs" json:"jobs"`
 }
@@ -297,6 +298,8 @@ func (c Components) Enabled(key ComponentKey) bool {
 		return c.Cache
 	case ComponentEvents:
 		return c.Events
+	case ComponentSearch:
+		return c.Search
 	case ComponentStorage:
 		return c.Storage
 	case ComponentJobs:
@@ -343,6 +346,8 @@ func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
 		c.Cache = enabled
 	case ComponentEvents:
 		c.Events = enabled
+	case ComponentSearch:
+		c.Search = enabled
 	case ComponentStorage:
 		c.Storage = enabled
 	case ComponentJobs:
