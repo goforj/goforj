@@ -96,12 +96,15 @@ func configureFeatureFixture(t *testing.T) string {
 
 // TestManagedFeatureMemoryWithoutDocument starts the default evaluator without an inline environment definition.
 func TestManagedFeatureMemoryWithoutDocument(t *testing.T) {
-    configureFeatureFixture(t)
+    path := configureFeatureFixture(t)
+    if err := os.Remove(path); err != nil { t.Fatal(err) }
+    t.Setenv("FEATURE_CHECKOUT_DRIVER", "memory")
     t.Setenv("FEATURE_DOCUMENT", "")
     if err := os.Unsetenv("FEATURE_DOCUMENT"); err != nil { t.Fatal(err) }
     manager, err := NewManager()
     if err != nil { t.Fatal(err) }
     defer manager.Close()
+    if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
     snapshot, err := manager.Default().Snapshot()
     if err != nil { t.Fatal(err) }
     if snapshot.Enabled(context.Background(), "not-configured") { t.Fatal("empty memory evaluator enabled an undefined flag") }

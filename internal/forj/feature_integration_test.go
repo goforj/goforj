@@ -50,9 +50,9 @@ func TestRenderedFeatureResourceComposition(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, key := range []string{"FEATURE_REFRESH_INTERVAL=", "FEATURE_CHECKOUT_REFRESH_INTERVAL="} {
+			for _, key := range []string{"FEATURE_REFRESH_INTERVAL=", "FEATURE_CHECKOUT_REFRESH_INTERVAL=", "FEATURE_INITIALIZATION_TIMEOUT="} {
 				if strings.Contains(string(body), key) {
-					t.Fatalf("fallback tuning leaked into %s", path)
+					t.Fatalf("optional feature tuning leaked into %s", path)
 				}
 			}
 		}
