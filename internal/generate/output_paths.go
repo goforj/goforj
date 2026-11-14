@@ -9,6 +9,10 @@ const (
 	NotificationManagerPath = "internal/notifications/manager_gen.go"
 	// NotificationAccessorsPath identifies generated named sender accessors.
 	NotificationAccessorsPath = "internal/notifications/accessors_gen.go"
+	// SearchManagerPath identifies the generated search composition.
+	SearchManagerPath = "internal/searches/manager_gen.go"
+	// SearchAccessorsPath identifies the generated named index accessors.
+	SearchAccessorsPath = "internal/searches/accessors_gen.go"
 	// CacheManagerPath identifies the manager source owned by cache generation.
 	CacheManagerPath = "internal/caches/manager_gen.go"
 	// CacheAccessorsPath identifies accessors derived from application cache declarations.
@@ -45,6 +49,7 @@ func OutputPaths(selection GenerationSelection) []string {
 		paths   []string
 	}{
 		{selection.Feature, []string{FeatureManagerPath, FeatureAccessorsPath}},
+		{selection.Search, []string{SearchManagerPath, SearchAccessorsPath}},
 		{selection.Cache, []string{CacheManagerPath, CacheAccessorsPath}},
 		{selection.Queue, []string{QueueManagerPath, QueueAccessorsPath}},
 		{selection.Storage, []string{StorageManagerPath, StorageAccessorsPath}},

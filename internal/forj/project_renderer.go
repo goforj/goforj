@@ -404,6 +404,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.validateFeatureRenderTransition(projectComponents); err != nil {
 		return err
 	}
+	if err := p.validateSearchRenderTransition(projectComponents); err != nil {
+		return err
+	}
 	if err := p.validateNotificationRenderTransition(projectComponents); err != nil {
 		return err
 	}
@@ -676,6 +679,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/event.tmpl",
 				"internal/makecmd/subscriber.tmpl",
 			},
+		},
+		{
+			title: "Search Components Rendering", enabled: projectComponents.Search,
+			templates: []string{"internal/searches/README.md.tmpl"},
 		},
 		{
 			title:     "Feature Components Rendering",
@@ -1300,6 +1307,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
+	if err := p.validateSearchRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
 	if err := p.validateNotificationRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
@@ -1329,6 +1339,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 			return err
 		}
 		if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
+		if err := p.validateSearchRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		if err := p.validateNotificationRenderTransition(project.ProjectComponents(p.config)); err != nil {
@@ -1587,6 +1600,7 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 		residues []string
 	}{
 		{name: "Events", removed: before.Events && !after.Events, residues: projectEventsResiduePaths()},
+		{name: "Search", removed: before.Search && !after.Search, residues: []string{filepath.Join("internal", "searches")}},
 		{name: "Feature", removed: before.Feature && !after.Feature, residues: []string{filepath.Join("internal", "features")}},
 		{name: "Storage", removed: before.Storage && !after.Storage, residues: projectStorageResiduePaths()},
 	}
@@ -1823,6 +1837,14 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 			return err
 		}
 		envDefaults[prefix+"_EVENTS_DRIVER"] = eventsDriver
+	}
+	if components.Search {
+		driver, err := p.workspace.resourceDriverDefaultFromEnv(environmentPath, project.ResourceSearch, "SEARCH", "bleve")
+		if err != nil {
+			return err
+		}
+		envDefaults[prefix+"_SEARCH_DRIVER"] = driver
+		envDefaults[prefix+"_SEARCH_PATH"] = "storage/search/" + app.Name
 	}
 	if components.Storage {
 		storageDriver, err := p.workspace.storageDriverDefaultFromEnv(environmentPath)
@@ -3030,6 +3052,9 @@ func (p *ProjectRenderer) appOwnedMappings(app project.App) []templateMapping {
 		mapTemplateTo("app/commands.go.tmpl", filepath.Join(appDir, "commands.go")),
 		mapTemplateTo("wire/inject_services_app.go.tmpl", filepath.Join(wireDir, "inject_services_app.go")),
 		mapTemplateTo("wire/inject_cmd_app.go.tmpl", filepath.Join(wireDir, "inject_cmd_app.go")),
+	}
+	if components.Search {
+		mappings = append(mappings, mapTemplateTo("app/search.go.tmpl", filepath.Join(appDir, "search.go")))
 	}
 	if components.Events {
 		mappings = append(mappings, mapTemplateTo("wire/inject_subscribers_app.go.tmpl", filepath.Join(wireDir, "inject_subscribers_app.go")))

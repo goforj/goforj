@@ -24,6 +24,7 @@ func resourceNames(input generationInput) map[project.ResourceKey][]string {
 		project.ResourceEvents:       discoverEventNames(input),
 		project.ResourceStorage:      discoverStorageDiskNames(input),
 		project.ResourceMail:         discoverMailNames(input),
+		project.ResourceSearch: discoverSearchNames(input),
 	}
 }
 

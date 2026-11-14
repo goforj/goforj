@@ -49,6 +49,9 @@ type resourceRenderValues struct {
 	EventsDriver                   string
 	EventsSupportedDrivers         string
 	EventsAvailableDrivers         string
+	SearchDriver                   string
+	SearchSupportedDrivers         string
+	SearchAvailableDrivers         string
 	StorageDriver                  string
 	StorageSupportedDrivers        string
 	StorageAvailableDrivers        string
@@ -400,6 +403,7 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 	set(project.ResourceCache, &values.CacheDriver, &values.CacheSupportedDrivers, &values.CacheAvailableDrivers)
 	set(project.ResourceQueue, &values.QueueDriver, &values.QueueSupportedDrivers, &values.QueueAvailableDrivers)
 	set(project.ResourceEvents, &values.EventsDriver, &values.EventsSupportedDrivers, &values.EventsAvailableDrivers)
+	set(project.ResourceSearch, &values.SearchDriver, &values.SearchSupportedDrivers, &values.SearchAvailableDrivers)
 	set(project.ResourceStorage, &values.StorageDriver, &values.StorageSupportedDrivers, &values.StorageAvailableDrivers)
 	set(project.ResourceNotification, &values.NotificationDriver, &values.NotificationSupportedDrivers, &values.NotificationAvailableDrivers)
 	set(project.ResourceMail, &values.MailDriver, &values.MailSupportedDrivers, &values.MailAvailableDrivers)
@@ -536,6 +540,7 @@ func (v resourceRenderValues) DriverEnvironmentPlaceholders() string {
 		project.ResourceStorage:      {Active: v.StorageDriver, Supported: splitDriverList(v.StorageSupportedDrivers)},
 		project.ResourceMail:         {Active: v.MailDriver, Supported: splitDriverList(v.MailSupportedDrivers)},
 		project.ResourceNotification: {Active: v.NotificationDriver, Supported: splitDriverList(v.NotificationSupportedDrivers)},
+		project.ResourceSearch: {Active: v.SearchDriver, Supported: splitDriverList(v.SearchSupportedDrivers)},
 	}
 	return renderDriverEnvironmentPlaceholders(selections)
 }

@@ -48,6 +48,7 @@ func generationEnvironmentResources() []generationEnvironmentResource {
 		{prefix: "MAIL", rootKeys: mailRootKeys},
 		{prefix: "NOTIFICATION", rootKeys: notificationRootKeys},
 		{prefix: "QUEUE", rootKeys: queueRootKeys},
+		{prefix: "SEARCH", rootKeys: searchRootKeys},
 		{prefix: "STORAGE", rootKeys: storageRootKeys},
 	}
 }
@@ -629,6 +630,8 @@ func generationComponentsSupportResource(components project.Components, resource
 		return components.Mail
 	case "QUEUE":
 		return components.Jobs
+	case "SEARCH":
+		return components.Search
 	case "STORAGE":
 		return components.Storage
 	default:
