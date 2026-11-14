@@ -16,7 +16,7 @@ func TestAppResourceEnvironmentOwner(t *testing.T) {
 		{"FEATURE_FEATURE_DRIVER", "FEATURE", true},
 		{"FEATURE_CHILD_FEATURE_DOCUMENT", "FEATURE_CHILD", true},
 		{"FEATURE_CHILD_FEATURE_NAMED_REFRESH_INTERVAL", "FEATURE_CHILD", true},
-		{"FEATURE_CUSTOM_SETTING", "", false}, {"FEATURE_FEATURE_CUSTOM_SETTING", "", false}, {"UNRELATED_DRIVER", "", false},
+		{"FEATURE_CACHE_DRIVER", "", false}, {"FEATURE_CHILD_CACHE_DRIVER", "", false}, {"FEATURE_CUSTOM_SETTING", "", false}, {"FEATURE_FEATURE_CUSTOM_SETTING", "", false}, {"UNRELATED_DRIVER", "", false},
 	} {
 		t.Run(test.key, func(t *testing.T) {
 			prefixes := []string{"FEATURE", "FEATURE_CHILD"}

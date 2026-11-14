@@ -27,3 +27,20 @@ func AppEnvironmentPrefix(name string) string {
 	}
 	return strings.Trim(builder.String(), "_")
 }
+
+// AppResourceKeyOwner assigns resource settings to the longest known App prefix across resource families.
+func AppResourceKeyOwner(key string, knownAppPrefixes []string) string {
+	owner := ""
+	for _, prefix := range knownAppPrefixes {
+		if prefix == "" || len(prefix) <= len(owner) {
+			continue
+		}
+		for _, definition := range resourceCatalog {
+			if strings.HasPrefix(key, prefix+"_"+definition.EnvironmentPrefix+"_") {
+				owner = prefix
+				break
+			}
+		}
+	}
+	return owner
+}

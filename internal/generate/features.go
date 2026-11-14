@@ -30,10 +30,11 @@ type featureScope struct {
 
 // featureTemplateData captures build capabilities independently from runtime source selection.
 type featureTemplateData struct {
-	Drivers     []string
-	Names       []featureAccessor
-	Scopes      []featureScope
-	AppPrefixes []string
+	Drivers          []string
+	Names            []featureAccessor
+	Scopes           []featureScope
+	AppPrefixes      []string
+	ResourcePrefixes []string
 }
 
 // GenerateFeatureFiles generates managed native evaluators from the environment build contract.
@@ -63,7 +64,7 @@ func generateFeatureFiles(input generationInput) (int, error) {
 	}); err != nil {
 		return 0, err
 	}
-	data := featureTemplateData{AppPrefixes: generationKnownAppEnvPrefixes(input)}
+	data := featureTemplateData{AppPrefixes: generationKnownAppEnvPrefixes(input), ResourcePrefixes: generationResourceEnvPrefixes()}
 	methods := makeSet("Default", "Instances", "ReadinessChecks", "Start", "Close", "Refresh")
 	for _, name := range discoverFeatureNames(input) {
 		method := str.Of(name).Pascal().String()
@@ -171,6 +172,7 @@ import (
 
 var compiledFeatureDrivers = map[string]bool{ {{range .Drivers}} "{{.}}": true, {{end}} }
 var featureAppPrefixes = []string{ {{range .AppPrefixes}} "{{.}}", {{end}} }
+var featureResourcePrefixes = []string{ {{range .ResourcePrefixes}} "{{.}}", {{end}} }
 var featureAppResources = map[string][]string{
 {{range .Scopes}} "{{.Prefix}}": { {{range .Names}} "{{.}}", {{end}} }, {{end}}
 }
@@ -231,7 +233,9 @@ func featureValue(prefix, name, key, fallback string) string {
 func featureEnvironmentOwner(key string) string {
     owner := ""
     for _, prefix := range featureAppPrefixes {
-        if strings.HasPrefix(key, prefix+"_FEATURE_") && len(prefix) > len(owner) { owner = prefix }
+        for _, resourcePrefix := range featureResourcePrefixes {
+            if strings.HasPrefix(key, prefix+"_"+resourcePrefix+"_") && len(prefix) > len(owner) { owner = prefix }
+        }
     }
     return owner
 }
