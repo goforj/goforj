@@ -49,6 +49,18 @@ prepare:
     - command: [forj, build]
     - command: [go, test, ./...]
 markdown:
+  prerequisites: |
+    Use a GoForj Project with the opt-in notification component enabled for the owning App. The framework integration initially supports log capture and webhook drivers. The prepared scenario compiles notification v0.1.0, webhook support, and primary/secondary named accessors before feature work begins.
+  common_mistakes:
+    - Do not construct provider drivers or load credentials inside the incident service; select generated manager accessors at the App provider boundary.
+    - Do not treat a successful synchronous send as proof of recipient receipt, or automatically fall back after uncertain acceptance.
+    - Do not use fanout as a substitute for an explicit primary/fallback policy.
+  troubleshooting: |
+    If a selected driver is not built in, add it to NOTIFICATION_SUPPORTED_DRIVERS, run forj generate --notification, and rebuild. If a typed accessor is missing, declare its named sender configuration before generating. Keep configuration or resource-removal errors explicit; reconcile existing App-owned providers before disabling the component. Run local tests with recording senders or temporary HTTP servers instead of real provider destinations.
+  next_steps:
+    - Configure the selected deployment destinations and credentials through the owning App's existing environment overlay.
+    - Add durable scheduling or retries through an explicit queue workflow only when the application requires them.
+    - Review uncertain acceptance and idempotency policy before enabling retries or additional channels.
   intro: |
     Alert operators without duplicating messages whose acceptance is uncertain.
   before: |
