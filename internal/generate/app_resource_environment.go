@@ -97,26 +97,29 @@ func SharedResourceEnvironmentSetting(key string, components project.Components)
 
 // legacyResourceGenerationInput preserves configless prefix boundaries and excludes settings consumed by enabled App Feature managers.
 func legacyResourceGenerationInput(input generationInput, resourcePrefix string) generationInput {
-	if resourcePrefix == "FEATURE" {
+	if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" {
 		return input
 	}
 	if _, err := input.projectConfig(); err != nil {
 		// Legacy projects used Feature words as App names before Feature became a resource marker.
 		resources := make([]generationEnvironmentResource, 0, len(generationEnvironmentResources())-1)
 		for _, resource := range generationEnvironmentResources() {
-			if resource.prefix != "FEATURE" {
+			if resource.prefix != "FEATURE" && resource.prefix != "NOTIFICATION" {
 				resources = append(resources, resource)
 			}
 		}
 		input.appPrefixes = sortStrings(generationAppEnvPrefixSetForResources(input.projectDir, input.environment, resources))
 		return input
 	}
-	enabled := makeSet(generationAppEnvPrefixesForResource(input, "FEATURE")...)
+	enabledFeature := makeSet(generationAppEnvPrefixesForResource(input, "FEATURE")...)
+	enabledNotification := makeSet(generationAppEnvPrefixesForResource(input, "NOTIFICATION")...)
 	prefixes := generationKnownAppEnvPrefixes(input)
 	values := make(map[string]string, len(input.environment.values))
 	for _, entry := range input.environment.Entries() {
 		owner := appResourceEnvironmentOwner(entry.key, prefixes)
-		if _, ok := enabled[owner]; owner != "" && ok && strings.HasPrefix(entry.key, owner+"_FEATURE_") {
+		_, feature := enabledFeature[owner]
+		_, notification := enabledNotification[owner]
+		if owner != "" && ((feature && strings.HasPrefix(entry.key, owner+"_FEATURE_")) || (notification && strings.HasPrefix(entry.key, owner+"_NOTIFICATION_"))) {
 			continue
 		}
 		values[entry.key] = entry.value

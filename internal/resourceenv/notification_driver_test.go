@@ -67,3 +67,30 @@ func TestConsumersNotificationCrossFamilyAppOwnership(t *testing.T) {
 		}
 	}
 }
+
+// TestConsumersNotificationAppExcludesLegacyCollision keeps enabled App Notification settings out of root Cache stores.
+func TestConsumersNotificationAppExcludesLegacyCollision(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disabled", true: "enabled"}[enabled], func(t *testing.T) {
+			config := &project.Config{Render: project.RenderConfig{Components: project.Components{CLI: true, Cache: true}}, Apps: map[string]project.AppConfig{"cache": {Components: project.Components{CLI: true, Notification: enabled}}}}
+			components := project.ProjectComponents(config)
+			driver := "memory"
+			if enabled {
+				driver = "webhook"
+			}
+			consumers, err := ResolveConsumers([]byte("CACHE_DRIVER=memory\nCACHE_NOTIFICATION_DRIVER="+driver+"\nCACHE_NOTIFICATION_WEBHOOK_URL=https://example.com/hook\n"), defaultResourcePlanForTest(t, components), components, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for _, consumer := range consumers {
+				if consumer.Resource == project.ResourceCache && consumer.Consumer == "cache:notification" {
+					count++
+				}
+			}
+			if enabled && count != 0 || !enabled && count != 1 {
+				t.Fatalf("enabled=%t consumers=%#v", enabled, consumers)
+			}
+		})
+	}
+}
