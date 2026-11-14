@@ -6,7 +6,15 @@ Enable the optional `feature` component in the owning App and run `forj generate
 
 The default memory source starts empty without an inline definition in the generated environment. No flag file is needed to boot; undefined boolean checks return false. For normal flag definitions, set `FEATURE_DRIVER=file` and configure `FEATURE_PATH` to point to a definition file. File sources load synchronously before startup. `FEATURE_DOCUMENT` remains an optional startup override for memory sources in tests or small fixtures.
 
-`FEATURE_INITIALIZATION_TIMEOUT` optionally overrides the positive startup budget (default `5s`); it is omitted from the rendered environment. The App lifecycle watches each file source's parent directory, debounces changes for 50ms, and refreshes after edits or atomic replacements. Healthy watches do not poll. If watch setup fails or the watcher becomes unavailable, the manager polls and retries the watch every 30s, then stops polling when watching recovers. `FEATURE_REFRESH_INTERVAL` optionally overrides that fallback interval (at least `10ms`); it is omitted from the rendered environment. Notification overflow triggers an immediate refresh while keeping the watch active. Memory sources start no background workers. Shutdown cancels and joins file workers. Invalid refresh retains valid decisions and keeps readiness usable. `Instances()` exposes the last refresh error and freshness timestamps; startup still fails when no valid initial configuration can be loaded.
+`FEATURE_INITIALIZATION_TIMEOUT` optionally overrides the positive startup budget (default `5s`); it is omitted from the rendered environment.
+
+The App lifecycle watches file source directories, coalesces events in 50ms windows, and refreshes after edits or atomic replacements. Continuous directory activity does not postpone updates indefinitely.
+
+Healthy watches do not poll. If watch setup fails or the watcher becomes unavailable, the manager polls and retries the watch every 30s, then stops polling when watching recovers.
+
+Symlinked paths use polling on macOS/BSD because their filesystem watcher cannot reliably report link replacement. Supported platforms watch link control directories and follow changed targets. `FEATURE_REFRESH_INTERVAL` optionally overrides that fallback interval (at least `10ms`); it is omitted from the rendered environment. Notification overflow rebuilds notification coverage and refreshes immediately.
+
+Memory sources start no background workers. Shutdown cancels and joins file workers. Invalid refresh retains valid decisions and keeps readiness usable. `Instances()` exposes the last refresh error and freshness timestamps; startup still fails when no valid initial configuration can be loaded.
 
 A named evaluator uses `FEATURE_CHECKOUT_DRIVER=file` and `FEATURE_CHECKOUT_PATH=storage/flags/checkout.json`. Regenerate to add `Manager.Checkout()`.
 
