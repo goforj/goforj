@@ -13,7 +13,7 @@ import (
 func TestSearchResourceTemplateScopes(t *testing.T) {
 	workspace := currentProjectRenderWorkspace(t)
 	for _, enabled := range []bool{false, true} {
-		config := &project.Config{ProjectName:"Search", GoModuleName:"example.com/search", Render:project.RenderConfig{Components:project.Components{CLI:true}}, Apps:map[string]project.AppConfig{"worker":{Components:project.Components{CLI:true,Search:enabled}}}}
+		config := &project.Config{ProjectName: "Search", GoModuleName: "example.com/search", Render: project.RenderConfig{Components: project.Components{CLI: true}}, Apps: map[string]project.AppConfig{"worker": {Components: project.Components{CLI: true, Search: enabled}}}}
 		for _, app := range []project.App{project.DefaultApp(), project.DefaultNamedApp("worker")} {
 			data := workspace.templateDataForApp(config, app)
 			data.Resources.SearchDriver = "bleve"
@@ -47,6 +47,10 @@ func TestSearchResourceTemplateScopes(t *testing.T) {
 		}
 		if enabled && !strings.Contains(environment, "WORKER_SEARCH_PATH=storage/search/worker") {
 			t.Fatal("named App did not get independent physical path")
+		}
+		overlay := renderSharedTemplate(t, "internal/cmd/env_defaults.go.tmpl", data)
+		if strings.Contains(overlay, `strings.CutPrefix(key, "SEARCH_")`) != enabled {
+			t.Fatal("Search projection protection does not follow project component union")
 		}
 	}
 }
