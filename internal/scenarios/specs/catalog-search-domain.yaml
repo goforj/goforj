@@ -30,6 +30,7 @@ markdown:
     - internal/catalog/product.go
     - app/search.go
     - internal/searches/accessors_gen.go
+    - tools/search-provision/main.go
 steps:
   - id: add-catalog-projection
     title: Define the product projection
@@ -83,7 +84,7 @@ steps:
   - id: add-search-bootstrap
     title: Add explicit provisioning without initializing the App graph
     write:
-      path: cmd/search-provision/main.go
+      path: tools/search-provision/main.go
       language: go
       content: |
         // Package main provisions the App's explicitly declared search projection.
@@ -111,7 +112,7 @@ steps:
         }
   - id: provision-catalog
     title: Provision the declared schema before runtime validation
-    command: [go, run, ./cmd/search-provision]
+    command: [go, run, ./tools/search-provision]
 checks:
   - command: [go, test, ./internal/catalog]
   - command: [forj, build]
