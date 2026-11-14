@@ -65,6 +65,153 @@ The tree illustrates responsibilities, rather than a mandatory component selecti
 
 A resource name identifies a configured instance, such as the `checkout` evaluator or `catalog` index. It does not create another package directory. Additional Apps use the same family packages and receive their own configured managers through their Wire graphs. Package placement does not change App isolation or root-resource inheritance.
 
+## Exhaustive Current Placement
+
+This inventory is dated 2026-11-14. It covers main at `d6ec5157` and the separately proposed Feature, Search, and Notification integrations together at [resource integration revision `7a33e9cd`](https://github.com/goforj/goforj/tree/7a33e9cd27d24e15886a59ea918265b29f8ba823). The six existing families account for 25 possible emitted files. The three proposed families add nine, giving 34 resource files in the combined inventory, including READMEs and tests. Enabled components and instrumentation determine the subset emitted for a particular Project.
+
+### Complete Emitted File Tree
+
+These are the complete destination paths for currently emitted resource-family artifacts. `metrics_logger.go` is conditional on Database and Metrics. The Feature, Notification, and Search subtrees depend on their proposed integrations becoming available.
+
+```text
+internal/resources/
+  caches/
+    README.md
+    accessors_gen.go
+    manager_gen.go
+  database/
+    connections.go
+    connections_gen.go
+    connections_test.go
+    fingerprinting.go
+    fingerprinting_test.go
+    gorm_log_writer.go
+    metrics_logger.go
+  events/
+    README.md
+    accessors_gen.go
+    bus_integration_test.go
+    bus_transport.go
+    event.go
+    manager_gen.go
+  features/
+    README.md
+    accessors_gen.go
+    manager_gen.go
+  mail/
+    README.md
+    accessors_gen.go
+    manager_gen.go
+  notifications/
+    README.md
+    accessors_gen.go
+    manager_gen.go
+  queues/
+    README.md
+    accessors_gen.go
+    manager_gen.go
+  searches/
+    README.md
+    accessors_gen.go
+    manager_gen.go
+  storages/
+    README.md
+    accessors_gen.go
+    manager_gen.go
+```
+
+Driver-specific imports and construction branches remain within their family's generated implementation. This inventory creates no additional package per driver, named instance, App, flag, index document, queue job, or notification channel. Standalone library driver modules remain dependencies rather than copied Project source.
+
+### Authoritative Sources and Destination Mapping
+
+Every file in the tree currently has the corresponding flat output path `internal/<family>/<filename>`. Its destination inserts `resources` between `internal` and the existing family name, preserving the filename and declared package name.
+
+| Family | Focused generator source in GoForj | Focused generator output files | Additional active template output files |
+| --- | --- | --- | --- |
+| `caches` | `internal/generate/caches.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
+| `database` | `internal/generate/db.go` | `connections_gen.go` | `connections.go`, `connections_test.go`, `fingerprinting.go`, `fingerprinting_test.go`, `gorm_log_writer.go`, conditional `metrics_logger.go` |
+| `events` | `internal/generate/events.go` | `manager_gen.go`, `accessors_gen.go` | `event.go`, `bus_transport.go`, `bus_integration_test.go`, `README.md` |
+| Proposed `features` | `internal/generate/features.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
+| `mail` | `internal/generate/mail.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
+| Proposed `notifications` | `internal/generate/notifications.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
+| `queues` | `internal/generate/queues.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
+| Proposed `searches` | `internal/generate/searches.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
+| `storages` | `internal/generate/storages.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
+
+The focused generators account for 17 of the combined inventory's files, eleven on main and six from the proposed integrations. They emit source directly; moving template directories does not relocate these outputs. The other 17 files come from active renderer mappings, with source under `templates/internal/<family>/`. Their template source moves to `templates/internal/resources/<family>/`, preserving each template basename and the usual removal of `.tmpl` when publishing it. Generator implementation and generator tests stay in the GoForj repository's tooling packages.
+
+Database connection fingerprinting, GORM log formatting, and the private query metrics logger stay together in `resources/database`. They adapt the database handle and its SQL operations to shared logging, metrics, and inspect services. Likewise, family observer interfaces, operation-event metadata, and observer chaining move with their generated managers. The namespace admission rule classifies the package's primary responsibility; it does not require extracting every private instrumentation helper from a resource implementation.
+
+### Present Source Files That Are Not Emitted Today
+
+The database source directory contains three additional files without current renderer or generator publication mappings:
+
+| Current repository source | Source destination | Project output status |
+| --- | --- | --- |
+| `templates/internal/database/README.md` | `templates/internal/resources/database/README.md` | Source documentation, currently read by a documentation contract test and linked from context; not an emitted Project README |
+| `templates/internal/database/connections_integration_test.go.tmpl` | `templates/internal/resources/database/connections_integration_test.go.tmpl` | Retained integration-test template; not currently emitted |
+| `templates/internal/database/connections_generated_integration_test.go.tmpl` | `templates/internal/resources/database/connections_generated_integration_test.go.tmpl` | Retained generated-connection integration-test template; not currently emitted |
+
+These sources belong to the database family, but they are not extra files in the emitted tree above. Relocation must update their source consumers and imports. Activating or retiring an inactive template is a separate explicit decision, rather than an accidental side effect of changing paths.
+
+### Exact Splits Within Current Resource Directories
+
+Two source files currently stored beside resource implementations belong outside the new namespace:
+
+| Current source and output | Source and output after the split | Responsibility |
+| --- | --- | --- |
+| `templates/internal/events/topics.go.tmpl` -> `internal/events/topics.go` | `templates/demo/internal/events/topics.go.tmpl` -> `internal/events/topics.go` for the selected demo | Monitoring payloads and topic constants remain application event contracts. They do not follow the bus into `resources/events`. |
+| `templates/internal/mail/auth_delivery.go.tmpl` -> `internal/mail/auth_delivery.go` | `templates/internal/auth/mail_delivery.go.tmpl` -> `internal/auth/mail_delivery.go` | The auth-specific implementation of `auth.Delivery` consumes `resources/mail`; generic mail transport no longer imports auth. |
+
+The monitoring payloads are `MonitorPolling`, `MonitorStatusChanged`, `MonitorDown`, and `MonitorRecovered`, with their corresponding topic constants and methods. They remain in the application event fallback so consumers can retain the payload package while changing bus references separately. Demo-owned file reconciliation remains distinct from preserved user-created events in the same directory; moving a template source does not change its overwrite policy by implication. A non-demo Project needs no empty `topics.go` solely to accompany a bus.
+
+Grouped event and subscriber makers keep their chosen domain destinations, such as `internal/billing`. Ungrouped makers retain the application-owned `internal/events` fallback. The preceding table identifies all exceptions within the nine current resource template directories; the three source-only database entries are classified separately above.
+
+### All Other Current Internal Template Packages
+
+Every other top-level package in `templates/internal` remains outside `internal/resources`:
+
+| Packages | Responsibility retained outside resources |
+| --- | --- |
+| `auth` | Accounts, sessions, OAuth flows, security policy, and auth delivery contracts and adapters |
+| `cmd`, `konghelp`, `makecmd` | Commands, presentation, inspection, resource shells, environment editing, and application makers |
+| `hello`, `monitoring` | Example and application behavior |
+| `http`, `router` | HTTP hosting, ingress, routing, readiness presentation, frontend serving, and API descriptions |
+| `jobs`, `schedules` | Worker and scheduler hosts, handlers, execution policy, and runtime diagnostics |
+| `maintenance` | Application availability control, including its cache-backed implementation |
+| `runtime` | Lifecycle, source context, timeouts, App metadata, discovery, and host coordination |
+| `logger`, `metrics`, `inspects`, `observability` | Logging, instrumentation, propagation, capture, aggregation, observer adapters, and export |
+| `lighthouse` | Diagnostics, protocol, runtime connections, UI, and assets |
+
+Resource-related names do not change the following specific destinations:
+
+- `internal/observability/cache_observer.go`, `event_observer.go`, `mail_observer.go`, `queue_observer.go`, and `storage_observer.go`, together with the existing cache, event, queue, and storage observer tests, remain shared telemetry adapters.
+- `internal/metrics/cache_metrics_gen.go` and `cache_metrics_gen_test.go` remain metric collection code.
+- `internal/inspects/propagation_gen.go` and `propagation_test.go` remain shared Queue/Events trace propagation. The focused generator emits the first of these outside the resource families.
+- `internal/jobs/worker_logger.go` remains worker runtime support even though its logger is injected into queue construction.
+- All files in `internal/cmd`, including cache/database shells, resource description, health, and event-pipeline commands, remain command surfaces. Their resource imports change without moving their files.
+- All App assembly, manager-provider sets, resource observer attachment, readiness adaptation, and cleanup wiring remain under `app/wire/` or named-App equivalents. Proposed `app/search.go` and `app/<name>/search.go` remain schema definitions.
+- `containers/observability/vmagent/metrics-targets.json`, the other non-resource artifact in the combined generation output contract, remains container configuration.
+- Environment contracts, `.goforj.yml`, module files, migrations, storage directories, Compose services, and dashboards retain their own locations.
+
+The demo packages `alerts`, `appsettings`, `models`, `monitoring`, and singular `notification` remain application packages. In particular, the entire demo `internal/notification` provider set stays outside the plural `resources/notifications` family: stored channel policy, provider rendering, repositories, and dispatch workflows are domain behavior. Demo migration sources publish beneath Project `migrations/`, not the resource namespace.
+
+All Gopher Eats `internal/eats` code, including event payloads, subscriptions, jobs, and its workflow-specific HTTP client, remains application behavior. All templ/HTMX `internal/starterui` files, generated templ projections, other frontend sources, and assets retain their existing application locations. Maker-generated models, repositories, jobs, schedules, commands, controllers, events, and subscribers remain in their selected application packages.
+
+### Historical Artifacts Are Retirement Inputs
+
+The generator's [legacy artifact lists](../../internal/generate/legacy_artifacts.go) describe old generated files to retire or reconcile. They are not additional resource files to recreate in the target tree:
+
+| Historical package | Listed legacy filenames |
+| --- | --- |
+| `internal/caches` | `runtime.go`, `manager.go`, `stores_gen.go`, `config_gen.go` |
+| `internal/events` | `driver.go`, `driver_gen.go`, `factory.go`, `bus_redis.go`, `bus_inproc.go`, `helpers.go`, `driver_test.go`, `factory_test.go`, `bus_redis_test.go`, `bus_inproc_test.go`, `helpers_test.go` |
+| `internal/mail` | `manager.go` |
+| `internal/queues` | `runtime.go`, `manager.go`, `queues_gen.go`, `config_gen.go` |
+| `internal/storages` | `runtime.go`, `manager.go`, `disks_gen.go`, `config_gen.go` |
+
+Retain controlled old-path reconciliation separately from active namespaced output ownership. Component cleanup inventories also include shells, observers, metrics, and dashboards; membership in one cleanup operation does not move those support files into a resource package.
+
 ## Admission Rule
 
 A new resource family must satisfy all four conditions:
@@ -149,7 +296,7 @@ The implementation must update these surfaces together:
 - Component removal, disabled-component residue checks, and framework upgrade artifact ownership.
 - Public documentation, generated examples, and Atlas ownership, guidance, and evaluation paths where they reference the layout.
 
-The [generation output contract](../../internal/generate/output_paths.go) is one existing source of authoritative paths. The implementation should extend the existing contracts rather than introduce a second independent path catalog. Template sources and generators remain authoritative; checked-in projections must be regenerated.
+The [generation output contract](../../internal/generate/output_paths.go) is one existing source of authoritative paths. The implementation should extend the existing contracts rather than introduce a second independent path catalog. The [generated-module import scan](../../internal/generate/module_requirements.go) also constructs `internal/<package>/<filename>` paths and includes both resource packages and the retained `inspects` support package. It must use classification-aware path resolution rather than inserting `resources` for every generated file. Template sources and generators remain authoritative; checked-in projections must be regenerated.
 
 CLI implementation packages in the GoForj repository are a different scope. This design does not relocate `goforj/internal/forj/resources`, the Project catalog, or the framework's own tooling packages simply because their names contain resources.
 
@@ -200,6 +347,7 @@ Implementation is complete when all of the following hold:
 10. Root and relevant nested Go modules are validated, intentional sibling replacements are preserved, and released-module resolution is checked with `GOWORK=off` where applicable.
 11. Authoritative templates, generated examples, public documentation, and Atlas path policies agree with the implemented layout.
 12. Layout identity tests cover absence, supported identities, malformed values, unsupported values, conflicting provenance, contradictory artifacts, and all-components-disabled Projects. Failure leaves Project state unchanged, and frozen upgrade inputs and snapshots retain the selected identity.
+13. Reconcile the exhaustive placement inventory against actual renderer mappings, focused generator output, and retained source-only files. Update the inventory explicitly when a family gains an artifact; inactive templates and historical cleanup entries must not silently become new emitted files.
 
 Tests must exercise actual generated code, retained custom providers, and resource behavior. A search-and-replace assertion over template strings is insufficient evidence for the namespace contract.
 
