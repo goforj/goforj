@@ -199,4 +199,16 @@ func TestManagedFeatureInvalidInitialDocument(t *testing.T) {
     if err := os.WriteFile(path, []byte("invalid"), 0600); err != nil { t.Fatal(err) }
     if _, err := NewManager(); !errors.Is(err, feature.ErrInvalidDocument) { t.Fatalf("invalid initial file: %v",err) }
 }
+
+// TestManagedFeatureWhitespaceDrivers preserves the generator's defaulting policy at runtime.
+func TestManagedFeatureWhitespaceDrivers(t *testing.T) {
+    configureFeatureFixture(t)
+    for _, key := range []string{"FEATURE_DRIVER", "FEATURE_CHECKOUT_DRIVER", "BILLING_FEATURE_BILLING_ONLY_DRIVER"} { t.Setenv(key, " \t ") }
+    for _, prefix := range []string{"", "BILLING"} {
+        manager, err := NewManagerForApp(prefix)
+        if err != nil { t.Fatal(err) }
+        for _, instance := range manager.Instances() { if instance.Driver != "memory" { t.Fatalf("whitespace driver did not default: %#v", instance) } }
+        if err := manager.Close(); err != nil { t.Fatal(err) }
+    }
+}
 `
