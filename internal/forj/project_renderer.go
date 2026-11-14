@@ -188,6 +188,7 @@ type templateRenderConfig struct {
 	HelpFormatterFunc           string
 	HelpCommandFunc             string
 	App                         project.App
+	AppEnvPrefix                string
 	AppPackageName              string
 	AppImportPath               string
 	WireImportPath              string
@@ -396,6 +397,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return fmt.Errorf("project component envelope: %w", err)
 	}
 	if err := p.validateEventsRenderTransition(projectComponents); err != nil {
+		return err
+	}
+	if err := p.validateNotificationRenderTransition(projectComponents); err != nil {
+		return err
+	}
+	if err := p.validateFeatureRenderTransition(projectComponents); err != nil {
 		return err
 	}
 	if err := p.validateSearchRenderTransition(projectComponents); err != nil {
@@ -672,9 +679,12 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 			},
 		},
 		{
-			title: "Search Components Rendering", enabled: projectComponents.Search,
-			templates: []string{"internal/searches/README.md.tmpl"},
+			title:     "Feature Components Rendering",
+			enabled:   projectComponents.Feature,
+			templates: []string{"internal/features/README.md.tmpl"},
 		},
+		{title: "Search Components Rendering", enabled: projectComponents.Search,
+			templates: []string{"internal/searches/README.md.tmpl"}},
 		{
 			title:   "Storage Components Rendering",
 			enabled: projectComponents.Storage,
@@ -890,6 +900,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				return p.writeTemplates(templates)
 			},
 		},
+		{title: "Notification Components Rendering", enabled: projectComponents.Notification, templates: []string{"internal/notifications/README.md.tmpl"}},
 		{
 			title:   "Mail Components Rendering",
 			enabled: projectComponents.Mail,
@@ -1283,6 +1294,12 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateEventsRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
+	if err := p.validateNotificationRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
+	if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
 	if err := p.validateSearchRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
@@ -1306,6 +1323,12 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 			return err
 		}
 		if err := p.validateEventsRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
+		if err := p.validateNotificationRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
+		if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		if err := p.validateSearchRenderTransition(project.ProjectComponents(p.config)); err != nil {
@@ -1496,6 +1519,8 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 		residues []string
 	}{
 		{name: "Events", removed: before.Events && !after.Events, residues: projectEventsResiduePaths()},
+		{name: "Notifications", removed: before.Notification && !after.Notification, residues: []string{filepath.Join("internal", "notifications")}},
+		{name: "Feature", removed: before.Feature && !after.Feature, residues: []string{filepath.Join("internal", "features")}},
 		{name: "Search", removed: before.Search && !after.Search, residues: []string{filepath.Join("internal", "searches")}},
 		{name: "Storage", removed: before.Storage && !after.Storage, residues: projectStorageResiduePaths()},
 	}
@@ -1532,6 +1557,16 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 	if before.Cache && !after.Cache {
 		if err := p.validateCacheRenderTransition(after, app); err != nil {
 			return fmt.Errorf("cannot remove App %q because it is the last App using Cache: %w", app.Name, err)
+		}
+	}
+	if before.Notification && !after.Notification {
+		path := filepath.Join(projectlayout.WireDir(".", app), "app.go")
+		exists, err := p.notificationAccessorExists(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Notifications while %s exposes the generated Notifications API; automatic Notifications removal is not supported", app.Name, path)
 		}
 	}
 	return nil
@@ -3901,6 +3936,7 @@ func (w projectRenderWorkspace) templateDataForApp(config *project.Config, app p
 		HelpFormatterFunc:           helpFormatterFunc(helpFormat),
 		HelpCommandFunc:             helpCommandFunc(helpFormat),
 		App:                         app,
+		AppEnvPrefix:                project.AppEnvironmentPrefix(app.Name),
 		AppPackageName:              project.AppPackageName(app.Name),
 		AppImportPath:               appImportPath,
 		WireImportPath:              wireImportPath,

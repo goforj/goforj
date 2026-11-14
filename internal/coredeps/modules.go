@@ -8,6 +8,7 @@ import (
 
 // pinnedModuleVersions records validated framework releases and ecosystem security minimums for rendered projects.
 var pinnedModuleVersions = map[string]string{
+	"github.com/goforj/feature":                                       "v0.1.0",
 	"github.com/goforj/search":                                        "v0.1.1",
 	"github.com/goforj/search/driver/blevesearch":                     "v0.1.1",
 	"go.opentelemetry.io/otel/log":                                    "v1.47.0",
@@ -53,6 +54,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/execx":                                         "v1.1.4",
 	"github.com/goforj/godump":                                        "v1.9.1",
 	"github.com/goforj/httpx":                                         "v1.1.0",
+	"github.com/goforj/notification":                                  "v0.1.0",
 	"github.com/goforj/mail":                                          "v0.3.1",
 	"github.com/goforj/mail/mailses":                                  "v0.3.1",
 	"github.com/goforj/metrics":                                       "v0.2.0",
@@ -246,6 +248,9 @@ func SyncCoreLibraries(components project.Components) []string {
 	if components.WebAPI || components.WebUI {
 		modules = append(modules, webRendererSyncModules...)
 	}
+	if components.Feature {
+		modules = append(modules, "github.com/goforj/feature")
+	}
 	if components.Cache {
 		modules = append(modules, cacheRendererSyncModules...)
 	}
@@ -260,6 +265,9 @@ func SyncCoreLibraries(components project.Components) []string {
 	}
 	if components.Storage {
 		modules = append(modules, storageRendererSyncModules...)
+	}
+	if components.Notification {
+		modules = append(modules, "github.com/goforj/notification")
 	}
 	if components.Mail {
 		modules = append(modules, mailRendererSyncModules...)

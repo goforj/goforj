@@ -13,6 +13,9 @@ import (
  "{{.GoModuleName}}/internal/searches"
 {{- end }}
 
+{{- if .Components.Feature }}
+	"{{.GoModuleName}}/internal/features"
+{{- end }}
 {{- if .Components.Cache }}
 	"{{.GoModuleName}}/internal/caches"
 {{- end }}
@@ -22,6 +25,9 @@ import (
 	"{{.GoModuleName}}/internal/inspects"
 {{- if .Components.Jobs }}
 	"{{.GoModuleName}}/internal/jobs"
+{{- end }}
+{{- if .Components.Notification }}
+	"{{.GoModuleName}}/internal/notifications"
 {{- end }}
 {{- if .Components.Mail }}
 	"{{.GoModuleName}}/internal/mail"
@@ -41,6 +47,9 @@ import (
 )
 
 var managerSet = wire.NewSet(
+{{- if .Components.Feature }}
+	provideFeatureManager,
+{{- end }}
 {{- if .Components.Search }}
  provideSearchManager,
 {{- end }}
@@ -60,6 +69,9 @@ var managerSet = wire.NewSet(
 	provideStorageManager,
 {{- else if .ProjectComponents.Storage }}
 	provideDisabledStorageManager,
+{{- end }}
+{{- if .Components.Notification }}
+	provideNotificationManager,
 {{- end }}
 {{- if .Components.Mail }}
 	provideMailManager,
@@ -216,10 +228,28 @@ func provideAppLogger(timeouts *runtime.Timeouts) (*logger.AppLogger, func(), er
 	return appLogger, cleanup, nil
 }
 
+{{ if .Components.Feature }}
+// provideFeatureManager binds evaluator resources to this App's startup configuration.
+func provideFeatureManager() (*features.Manager, func(), error) {
+    manager, err := features.NewManagerForApp("{{.AppEnvPrefix}}")
+    if err != nil { return nil, nil, err }
+    return manager, func() { _ = manager.Close() }, nil
+}
+{{- end }}
+
+{{ if .Components.Notification }}
+// provideNotificationManager releases owned transports if later App initialization fails.
+func provideNotificationManager() (*notifications.Manager, func(), error) {
+    manager, err := notifications.NewManagerForApp("{{.AppEnvPrefix}}")
+    if err != nil { return nil, nil, err }
+    return manager, func() { _ = manager.Close() }, nil
+}
+{{- end }}
+
 {{- if .Components.Search }}
 // provideSearchManager validates existing schemas and transfers backend cleanup to the App.
 func provideSearchManager() (*searches.Manager, func(), error) {
- manager, err := searches.NewManager(runtime.BackgroundSourceContext(runtime.SourceStartup), {{.AppPackageName}}.SearchDefinitions())
+ manager, err := searches.NewManagerForApp(runtime.BackgroundSourceContext(runtime.SourceStartup), "{{.AppEnvPrefix}}", {{.AppPackageName}}.SearchDefinitions())
  if err != nil { return nil, nil, err }
  return manager, func() { _ = manager.Close() }, nil
 }

@@ -11,10 +11,12 @@ import (
 )
 
 var generationEnvironmentPrefixes = []string{
+	"FEATURE_",
 	"CACHE_",
 	"DB_",
 	"EVENTS_",
 	"MAIL_",
+	"NOTIFICATION_",
 	"METRICS_",
 	"OBSERVABILITY_",
 	"QUEUE_",

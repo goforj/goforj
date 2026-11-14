@@ -24,11 +24,13 @@ var componentYAMLKeys = []ComponentKey{
 	ComponentDatabasePostgres,
 	ComponentDatabaseSQLite,
 	ComponentScheduler,
+	ComponentFeature,
 	ComponentCache,
 	ComponentEvents,
 	ComponentStorage,
 	ComponentSearch,
 	ComponentJobs,
+	ComponentNotification,
 }
 
 var retiredLegacyComponentYAMLKeys = map[ComponentKey]struct{}{

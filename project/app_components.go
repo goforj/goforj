@@ -10,6 +10,7 @@ import (
 var appComponentKeys = []ComponentKey{
 	ComponentCLI,
 	ComponentMail,
+	ComponentNotification,
 	ComponentWebAPI,
 	ComponentWebUI,
 	ComponentAuth,
@@ -18,6 +19,7 @@ var appComponentKeys = []ComponentKey{
 	ComponentDatabasePostgres,
 	ComponentDatabaseSQLite,
 	ComponentScheduler,
+	ComponentFeature,
 	ComponentCache,
 	ComponentEvents,
 	ComponentStorage,

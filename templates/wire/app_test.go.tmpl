@@ -4,6 +4,9 @@
 package wire
 
 import (
+{{- if .Components.Notification }}
+    "github.com/goforj/notification"
+{{- end }}
 {{- if .Components.Cache }}
 	"go.opentelemetry.io/otel"
 {{- end }}
@@ -366,6 +369,21 @@ func TestAppShutdownSharesWireCleanupAcrossCopies(t *testing.T) {
   t.Fatalf("Wire cleanup calls across App copies = %d, want 1", got)
  }
 }
+
+{{- if .Components.Notification }}
+// TestNotificationAccessorUsesConfiguredManager verifies App access and Wire provider cleanup without a real delivery.
+func TestNotificationAccessorUsesConfiguredManager(t *testing.T) {
+    t.Setenv("NOTIFICATION_DRIVER", "log")
+    manager, cleanup, err := provideNotificationManager()
+    if err != nil { t.Fatal(err) }
+    defer cleanup()
+    application := App{notifications: manager}
+    if application.Notifications() != manager { t.Fatal("App lost notification manager") }
+    if err := application.Notifications().Default().Send(context.Background(), notification.Message{Title: "Incident test", Body: "local capture"}); err != nil { t.Fatal(err) }
+    cleanup()
+    if err := manager.Close(); err != nil { t.Fatal(err) }
+}
+{{- end }}
 
 {{- if .Components.Search }}
 // searchShutdownFailure keeps resource failure observable at the App lifecycle boundary.

@@ -486,6 +486,7 @@ func (p Pipeline) generateProjectFiles(root string) (string, error) {
 		Storage:       hasDir(filepath.Join(root, "internal", "storages")),
 		Cache:         hasDir(filepath.Join(root, "internal", "caches")),
 		Mail:          hasDir(filepath.Join(root, "internal", "mail")),
+		Notification:  hasDir(filepath.Join(root, "internal", "notifications")),
 		Queue:         hasDir(filepath.Join(root, "internal", "jobs")) || hasDir(filepath.Join(root, "internal", "queues")),
 		Events:        hasDir(filepath.Join(root, "internal", "events")),
 		Database:      hasDir(filepath.Join(root, "internal", "database")),
