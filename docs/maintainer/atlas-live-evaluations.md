@@ -123,3 +123,9 @@ The highest-value next implementation is the authoritative container or VM backe
 After that trust boundary exists, the next paid measurement should answer a specific adjacent-treatment question with repeated paired trials, beginning with the smoke tier. Do not pay for another complete matrix merely to replace stochastic failures with green cells. Publish a new scorecard only when its protocol, denominator, retained authenticated artifacts, and revision identities are explicit. The newly promoted `create-data-resource` evaluation also needs retained evidence before it joins that scorecard.
 
 Some capability gaps require new infrastructure rather than more source contracts. Browser-observed frontend loading and flicker, deployment rollback, graceful multi-runtime shutdown, and production driver swaps should remain planned until their verifier can observe the real behavior economically and deterministically.
+
+## Tax-rate resilience
+
+`resilient-tax-rate-http` starts from the existing typed client and its pinned httpx/v2 v2.0.1 dependency. It adds bounded retries only for 502 and 503 GET responses, while retaining the App provider and public API. This does not change the generated App default httpx v1 dependency or the historical outbound-client evaluation.
+
+The supervisor counts actual local HTTP requests, checks recovery and exhaustion, rejects retries for other statuses, transport errors, or malformed successful JSON, and verifies typed errors, escaped paths, and caller cancellation/deadlines. `TestTaxRateResilienceVerifierCalibration` accepts the reviewed golden and rejects compiling retry-limit and status-policy mutants. Dependency installation remains outside candidate execution, and no external tax service or paid model attempt is needed.
