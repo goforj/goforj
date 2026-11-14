@@ -88,6 +88,8 @@ const notificationOwnershipRuntimeTests = `package notifications
 import "testing"
 // TestAppOwnership checks isolation with invalid and ambiguous App-owned transport settings.
 func TestAppOwnership(t *testing.T) {
+ t.Setenv("NOTIFICATION_FEATURE_DRIVER","file")
+ t.Setenv("NOTIFICATION_CACHE_DRIVER","redis")
  t.Setenv("NOTIFICATION_NOTIFICATION_DRIVER","webhook")
  t.Setenv("NOTIFICATION_NOTIFICATION_WEBHOOK_URL","https://example.com/app")
  t.Setenv("NOTIFICATION_NOTIFICATION_NOTIFICATION_DRIVER","log")
@@ -107,7 +109,7 @@ func TestAppOwnership(t *testing.T) {
  if err != nil { t.Fatal(err) }
  if len(billing.Instances()) != 2 || billing.Named("notification") == nil { t.Fatal("billing named sender missing") }
  if err := billing.Close();err != nil { t.Fatal(err) }
- for _,name := range []string{"notification","disabled_notification","notification_notification"} {
+ for _,name := range []string{"notification","disabled_notification","notification_notification","feature","cache"} {
   _,closer,err := newSender("",name)
   if err != nil || closer != nil { t.Fatalf("default %s inherited App transport: %v",name,err) }
  }

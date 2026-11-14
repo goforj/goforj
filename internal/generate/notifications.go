@@ -25,11 +25,12 @@ type notificationScope struct {
 
 // notificationTemplateData limits imports to the supported provider manifest.
 type notificationTemplateData struct {
-	Scopes      []notificationScope
-	Names       []notificationAccessorName
-	Drivers     []string
-	Webhook     bool
-	AppPrefixes []string
+	Scopes           []notificationScope
+	Names            []notificationAccessorName
+	Drivers          []string
+	Webhook          bool
+	AppPrefixes      []string
+	ResourcePrefixes []string
 }
 
 var notificationRootKeys = []string{"DRIVER", "WEBHOOK_URL", "WEBHOOK_FORMAT", "WEBHOOK_TIMEOUT", "WEBHOOK_BEARER_TOKEN", "WEBHOOK_ALLOW_PRIVATE"}
@@ -68,7 +69,7 @@ func generateNotificationFiles(input generationInput) (int, error) {
 	}
 	active := map[string]struct{}{effectivePrimitiveDriver(input.environment.Get("NOTIFICATION_DRIVER", "log"), "log"): {}}
 	names := discoverPrimitiveChildNames(input, "NOTIFICATION", notificationRootKeys)
-	data := notificationTemplateData{AppPrefixes: generationKnownAppEnvPrefixes(input)}
+	data := notificationTemplateData{AppPrefixes: generationKnownAppEnvPrefixes(input), ResourcePrefixes: generationResourceEnvPrefixes()}
 	reserved := makeSet("Default", "Named", "Names", "Instances", "Close")
 	for _, name := range names {
 		method := str.Of(name).Pascal().String()
@@ -166,6 +167,7 @@ var compiledNotificationDrivers = []string{
 {{end}}}
 
 var notificationAppPrefixes = []string{ {{range .AppPrefixes}} "{{.}}", {{end}} }
+var notificationResourcePrefixes = []string{ {{range .ResourcePrefixes}} "{{.}}", {{end}} }
 
 var notificationAppResources = map[string][]string{
 {{range .Scopes}} "{{.Prefix}}": { {{range .Names}} "{{.}}", {{end}} }, {{end}}
@@ -230,7 +232,9 @@ func notificationValue(prefix, name, key, fallback string) string {
 func notificationEnvironmentOwner(key string) string {
     owner := ""
     for _, prefix := range notificationAppPrefixes {
-        if strings.HasPrefix(key, prefix+"_NOTIFICATION_") && len(prefix) > len(owner) { owner = prefix }
+        for _, resourcePrefix := range notificationResourcePrefixes {
+            if strings.HasPrefix(key, prefix+"_"+resourcePrefix+"_") && len(prefix) > len(owner) { owner = prefix }
+        }
     }
     return owner
 }
