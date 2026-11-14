@@ -1,0 +1,205 @@
+schema_version: 2
+id: dispatch-startup-config
+title: Dispatch Startup Configuration
+description: Validate a typed startup snapshot with process precedence and safe diagnostics.
+depends_on:
+- invoice-domain
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+prepare:
+  steps:
+  - id: prepare-dispatch-config
+    title: Reserve the typed provider boundary
+    write:
+      path: internal/dispatch/config.go
+      language: go
+      content: |
+        // Package dispatch owns outbound dispatch policy independently from process configuration.
+        package dispatch
+
+        import "time"
+
+        // Config is the typed startup snapshot consumed by the dispatch service.
+        type Config struct { Token string; Workers int; Timeout time.Duration; Enabled bool; Region string }
+
+        // LoadConfig reserves the application-owned provider before configuration behavior is implemented.
+        func LoadConfig() (Config,error) { return Config{},nil }
+  - id: prepare-dispatch-service
+    title: Establish an immutable service dependency
+    write:
+      path: internal/dispatch/service.go
+      language: go
+      content: |
+        // Package dispatch owns outbound dispatch policy independently from process configuration.
+        package dispatch
+
+        // Service consumes a validated immutable startup configuration.
+        type Service struct { config Config }
+
+        // NewService keeps configuration loading outside request and delivery paths.
+        func NewService(config Config) *Service { return &Service{config:config} }
+
+        // Snapshot returns the configured policy without rereading process variables.
+        func (service *Service) Snapshot() Config { return service.config }
+  - id: seed-dispatch-environment
+    title: Provide fake local startup values
+    append:
+      path: .env
+      language: dotenv
+      content: |2
+
+        DISPATCH_TOKEN=fixture-token
+        DISPATCH_WORKERS=4
+  checks:
+  - command:
+    - forj
+    - build
+  - command:
+    - go
+    - mod
+    - download
+  - command:
+    - go
+    - test
+    - ./...
+markdown:
+  intro: Configure the dispatch service at startup using a typed, validated snapshot.
+  before: The dispatch service has a placeholder configuration provider and is not yet rooted in App composition.
+  after: Invalid required configuration blocks composition, process settings override files, and diagnostics redact
+    credentials.
+  files:
+  - internal/dispatch/config.go
+  - internal/dispatch/config_test.go
+  - app/lifecycle.go
+  - app/wire/inject_services_app.go
+steps:
+- id: implement-dispatch-config
+  title: Load and validate the startup snapshot
+  write:
+    path: internal/dispatch/config.go
+    language: go
+    content: |
+      // Package dispatch owns outbound dispatch policy independently from process configuration.
+      package dispatch
+
+      import (
+       "errors"
+       "fmt"
+       "strings"
+       "time"
+
+       "github.com/goforj/env/v2"
+      )
+
+      // Config is one validated startup snapshot; Token is intentionally excluded from diagnostics.
+      type Config struct {
+       Token string
+       Workers int
+       Timeout time.Duration
+       Enabled bool
+       Region string
+      }
+
+      // LoadConfig resolves process-over-file settings and rejects invalid required values before composition completes.
+      func LoadConfig() (Config, error) {
+       if err := env.Load(); err != nil { return Config{}, errors.New("load dispatch environment") }
+       scope := env.WithPrefix("DISPATCH")
+       config := Config{Token:scope.Get("TOKEN", ""), Workers:scope.GetInt("WORKERS", "0"), Timeout:scope.GetDuration("TIMEOUT", "2s"), Enabled:scope.GetBool("ENABLED", "true"), Region:scope.Get("REGION", "local")}
+       if strings.TrimSpace(config.Token) == "" { return Config{}, errors.New("DISPATCH_TOKEN is required") }
+       if config.Workers < 1 || config.Workers > 64 { return Config{}, errors.New("DISPATCH_WORKERS must be an integer from 1 to 64") }
+       if config.Timeout <= 0 { return Config{}, errors.New("DISPATCH_TIMEOUT must be positive") }
+       return config, nil
+      }
+
+      // String permits operational diagnostics without retaining the credential in the rendered output.
+      func (config Config) String() string {
+       return fmt.Sprintf("dispatch workers=%d timeout=%s enabled=%t region=%s token=[redacted]",config.Workers,config.Timeout,config.Enabled,config.Region)
+      }
+
+      // GoString keeps Go-syntax diagnostics subject to the same redaction policy.
+      func (config Config) GoString() string { return config.String() }
+- id: import-dispatch-providers
+  title: Import application configuration providers
+  replace:
+    path: app/wire/inject_services_app.go
+    language: go
+    old: "\t\"example.com/invoiceeval/internal/runtime\"\n"
+    new: "\t\"example.com/invoiceeval/internal/runtime\"\n\t\"example.com/invoiceeval/internal/dispatch\"\n"
+- id: register-dispatch-providers
+  title: Register the validated service graph
+  replace:
+    path: app/wire/inject_services_app.go
+    language: go
+    old: "\tapp.NewLifecycleRegistry,\n"
+    new: "\tdispatch.LoadConfig,\n\tdispatch.NewService,\n\tapp.NewLifecycleRegistry,\n"
+- id: root-dispatch-service
+  title: Require configured dispatch before readiness
+  write:
+    path: app/lifecycle.go
+    language: go
+    content: |
+      // Package app owns application composition and lifecycle hooks.
+      package app
+
+      import (
+       "context"
+       "example.com/invoiceeval/internal/dispatch"
+       "example.com/invoiceeval/internal/runtime"
+      )
+
+      // LifecycleRegistry roots the configured dispatch service in the App graph before readiness.
+      type LifecycleRegistry struct { dispatch *dispatch.Service }
+
+      // NewLifecycleRegistry requires validated dispatch configuration during Wire composition.
+      func NewLifecycleRegistry(service *dispatch.Service) *LifecycleRegistry { return &LifecycleRegistry{dispatch:service} }
+
+      // Register attaches the App readiness boundary to its runtime.
+      func (registry *LifecycleRegistry) Register(lifecycle *runtime.Lifecycle) { lifecycle.On(runtime.BeforeStartup,registry.BeforeStartup) }
+
+      // BeforeStartup preserves cancellation after the validated graph has been composed.
+      func (registry *LifecycleRegistry) BeforeStartup(ctx context.Context) error { return ctx.Err() }
+- id: test-dispatch-config
+  title: Check required values and typed fallbacks
+  write:
+    path: internal/dispatch/config_test.go
+    language: go
+    content: |
+      // Package dispatch owns outbound dispatch policy independently from process configuration.
+      package dispatch
+
+      import (
+       "strings"
+       "testing"
+       "time"
+      )
+
+      // TestLoadConfigRejectsMissingToken proves required credentials fail before startup.
+      func TestLoadConfigRejectsMissingToken(t *testing.T) {
+       t.Setenv("DISPATCH_TOKEN", "")
+       t.Setenv("DISPATCH_WORKERS", "4")
+       if _,err := LoadConfig(); err == nil || !strings.Contains(err.Error(),"DISPATCH_TOKEN") { t.Fatalf("error = %v",err) }
+      }
+
+      // TestLoadConfigUsesTypedFallbacks proves optional parse failures follow the selected library contract.
+      func TestLoadConfigUsesTypedFallbacks(t *testing.T) {
+       t.Setenv("DISPATCH_TOKEN", "fixture-token")
+       t.Setenv("DISPATCH_WORKERS", "4")
+       t.Setenv("DISPATCH_TIMEOUT", "not-a-duration")
+       t.Setenv("DISPATCH_ENABLED", "not-a-bool")
+       config,err := LoadConfig()
+       if err != nil || config.Timeout != 2*time.Second || !config.Enabled { t.Fatalf("config = %v, error = %v",config,err) }
+      }
+checks:
+- command:
+  - forj
+  - build
+- command:
+  - go
+  - test
+  - ./...
+- command:
+  - forj
+  - route:list
