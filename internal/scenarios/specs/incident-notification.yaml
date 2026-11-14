@@ -1,0 +1,147 @@
+schema_version: 2
+id: incident-notification
+title: Incident Notification
+description: Add conservative incident alert fallback through injected senders.
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+prepare:
+  steps:
+    - id: pin-notification
+      title: Prepare the released notification API
+      command: [go, get, github.com/goforj/notification@v0.1.0]
+    - id: add-incident-boundary
+      title: Establish the incident and sender boundary
+      write:
+        path: internal/incidents/incident.go
+        language: go
+        content: |
+          // Package incidents owns operator alert policy without provisioning transports.
+          package incidents
+
+          import "github.com/goforj/notification"
+
+          // Incident carries the operator-facing facts needed for one alert.
+          type Incident struct { ID, Severity, Summary string }
+
+          // Sender is the existing synchronous transport boundary used by incident alerts.
+          type Sender = notification.Sender
+  checks:
+    - command: [forj, build]
+    - command: [go, test, ./...]
+markdown:
+  intro: |
+    Alert operators without duplicating messages whose acceptance is uncertain.
+  before: |
+    The incident data and synchronous sender contract exist, with no delivery policy.
+  after: |
+    The service composes a primary and fallback without automatic retries.
+  files:
+    - internal/incidents/alert_service.go
+    - internal/incidents/alert_service_test.go
+steps:
+  - id: add-alert-service
+    title: Compose the incident acceptance policy
+    write:
+      path: internal/incidents/alert_service.go
+      language: go
+      content: |
+        // Package incidents owns operator alert policy without provisioning transports.
+        package incidents
+
+        import (
+            "context"
+            "github.com/goforj/notification"
+        )
+
+        // AlertService keeps conservative acceptance policy behind injected senders.
+        type AlertService struct { sender notification.Sender }
+
+        // NewAlertService advances only after a classified definitive rejection.
+        func NewAlertService(primary, fallback notification.Sender) *AlertService {
+            return &AlertService{sender: notification.Fallback(primary, fallback)}
+        }
+
+        // Notify preserves caller context and reports acceptance without claiming receipt.
+        func (service *AlertService) Notify(ctx context.Context, incident Incident) error {
+            return service.sender.Send(ctx, notification.Message{
+                Title: "Incident " + incident.ID,
+                Body: incident.Severity + ": " + incident.Summary,
+            })
+        }
+  - id: test-alert-service
+    title: Record local acceptance without a provider
+    write:
+      path: internal/incidents/alert_service_test.go
+      language: go
+      content: |
+        // Package incidents owns operator alert policy without provisioning transports.
+        package incidents
+
+        import (
+            "context"
+            "errors"
+            "testing"
+
+            "github.com/goforj/notification"
+        )
+
+        // incidentContextKey distinguishes caller propagation from a replacement context.
+        type incidentContextKey struct{}
+
+        // TestIncidentNotificationPolicy records calls without sending real notifications.
+        func TestIncidentNotificationPolicy(t *testing.T) {
+            tests := []struct {
+                name string
+                primary error
+                fallback error
+                canceled bool
+                wantPrimary int
+                wantFallback int
+                wantError error
+            }{
+                {name: "accepted", wantPrimary: 1},
+                {name: "permanent fallback", primary: notification.ErrPermanent, wantPrimary: 1, wantFallback: 1},
+                {name: "unauthorized fallback", primary: notification.ErrUnauthorized, wantPrimary: 1, wantFallback: 1},
+                {name: "render fallback", primary: notification.ErrRender, wantPrimary: 1, wantFallback: 1},
+                {name: "both reject", primary: notification.ErrPermanent, fallback: notification.ErrUnauthorized, wantPrimary: 1, wantFallback: 1, wantError: notification.ErrUnauthorized},
+                {name: "unknown acceptance", primary: notification.ErrOutcomeUnknown, wantPrimary: 1, wantError: notification.ErrOutcomeUnknown},
+                {name: "unclassified acceptance", primary: errors.New("untrusted provider response"), wantPrimary: 1, wantError: notification.ErrOutcomeUnknown},
+                {name: "retryable", primary: notification.ErrRetryable, wantPrimary: 1, wantError: notification.ErrRetryable},
+                {name: "throttled", primary: notification.ErrThrottled, wantPrimary: 1, wantError: notification.ErrThrottled},
+                {name: "canceled during send", primary: context.Canceled, wantPrimary: 1, wantError: context.Canceled},
+                {name: "deadline", primary: context.DeadlineExceeded, wantPrimary: 1, wantError: context.DeadlineExceeded},
+                {name: "already canceled", canceled: true, wantError: context.Canceled},
+            }
+            for _, test := range tests {
+                t.Run(test.name, func(t *testing.T) {
+                    ctx, cancel := context.WithCancel(context.WithValue(context.Background(), incidentContextKey{}, "caller"))
+                    defer cancel()
+                    if test.canceled { cancel() }
+                    primaryCalls, fallbackCalls := 0, 0
+                    incident := Incident{ID: "inc-73", Severity: "critical", Summary: "Payments unavailable"}
+                    want := notification.Message{Title: "Incident inc-73", Body: "critical: Payments unavailable"}
+                    record := func(calls *int, failure error) notification.Sender {
+                        return notification.SenderFunc(func(got context.Context, message notification.Message) error {
+                            *calls++
+                            if got != ctx || got.Value(incidentContextKey{}) != "caller" { t.Error("caller context lost") }
+                            if message != want { t.Errorf("message = %#v, want %#v", message, want) }
+                            return failure
+                        })
+                    }
+                    err := NewAlertService(record(&primaryCalls, test.primary), record(&fallbackCalls, test.fallback)).Notify(ctx, incident)
+                    if test.wantError == nil && err != nil || test.wantError != nil && !errors.Is(err, test.wantError) {
+                        t.Fatalf("Notify() = %v, want classification %v", err, test.wantError)
+                    }
+                    if primaryCalls != test.wantPrimary || fallbackCalls != test.wantFallback {
+                        t.Fatalf("calls = %d/%d, want %d/%d", primaryCalls, fallbackCalls, test.wantPrimary, test.wantFallback)
+                    }
+                })
+            }
+        }
+checks:
+  - command: [go, test, ./internal/incidents]
+  - command: [forj, build]
+  - command: [go, test, ./...]
