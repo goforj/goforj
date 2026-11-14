@@ -35,6 +35,8 @@ func TestConsumersCrossFamilyAppOwnership(t *testing.T) {
 				"feature:feature": "file", "feature:feature:checkout": "memory", "feature:cache": "redis",
 				"feature-child:feature": "file", "feature-child:feature:checkout": "file", "feature-child:cache": "redis",
 				"cache:feature": "file", "cache:feature:checkout": "file", "cache:cache": "redis",
+				"feature:cache:cache":       "redis",
+				"feature-child:cache:cache": "redis",
 			}
 			if len(got) != len(want) {
 				t.Fatalf("consumers = %#v, want %#v", got, want)
@@ -112,6 +114,58 @@ func TestConsumersDisabledAppStillOwnsResourceKeys(t *testing.T) {
 	for _, consumer := range consumers {
 		if consumer.Driver != "memory" {
 			t.Fatalf("disabled App key changed root driver: %#v", consumer)
+		}
+	}
+}
+
+// TestConsumersLegacyCacheNamedFeature keeps legacy Cache discovery aligned with its generated runtime.
+func TestConsumersLegacyCacheNamedFeature(t *testing.T) {
+	components := project.Components{CLI: true, Cache: true, Docker: true}
+	config := &project.Config{
+		Render: project.RenderConfig{Components: components},
+		Apps:   map[string]project.AppConfig{"cache": {Components: project.Components{CLI: true, Cache: true}}},
+	}
+	plan := defaultResourcePlanForTest(t, components)
+	source := []byte("CACHE_FEATURE_DRIVER=redis\nCACHE_SUPPORTED_DRIVERS=memory,redis\n")
+	consumers, err := ResolveConsumers(source, plan, components, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, consumer := range consumers {
+		if consumer.Consumer == "cache:feature" && consumer.Resource == project.ResourceCache && consumer.Driver == "redis" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing legacy named Cache: %#v", consumers)
+	}
+	servicePlan, err := project.ResolveServicePlanWithConsumers(plan, components, project.LocalServiceIntent{}.WithMode(project.ServiceRedis, project.LocalServiceModeLocal), consumers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !servicePlan.HasActiveLocal() {
+		t.Fatalf("legacy named Cache did not activate Redis: %#v", servicePlan)
+	}
+}
+
+// TestConsumersEnabledFeatureAppExcludesLegacyCollision keeps an App Feature driver from becoming a root Cache store.
+func TestConsumersEnabledFeatureAppExcludesLegacyCollision(t *testing.T) {
+	config := &project.Config{
+		Render: project.RenderConfig{Components: project.Components{CLI: true, Cache: true}},
+		Apps:   map[string]project.AppConfig{"cache": {Components: project.Components{CLI: true, Feature: true}}},
+	}
+	components := project.ProjectComponents(config)
+	consumers, err := ResolveConsumers([]byte("CACHE_DRIVER=memory\nCACHE_FEATURE_DRIVER=file\nCACHE_FEATURE_PATH=flags.json\n"), defaultResourcePlanForTest(t, components), components, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consumers) != 2 {
+		t.Fatalf("App Feature settings created legacy consumers: %#v", consumers)
+	}
+	for _, consumer := range consumers {
+		if consumer.Resource == project.ResourceCache && (consumer.Consumer != "cache" || consumer.Driver != "memory") {
+			t.Fatalf("App Feature changed Cache: %#v", consumer)
 		}
 	}
 }

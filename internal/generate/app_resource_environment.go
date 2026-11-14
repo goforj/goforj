@@ -64,3 +64,25 @@ func AppResourceEnvironmentOwner(key string, knownAppPrefixes []string, componen
 	}
 	return owner, true
 }
+
+// legacyResourceGenerationInput excludes settings consumed by enabled App Feature managers from legacy resource interpretation.
+func legacyResourceGenerationInput(input generationInput, resourcePrefix string) generationInput {
+	if resourcePrefix == "FEATURE" {
+		return input
+	}
+	if _, err := project.LoadProjectConfigAt(input.projectDir); err != nil {
+		return input
+	}
+	enabled := makeSet(generationAppEnvPrefixesForResource(input, "FEATURE")...)
+	prefixes := generationKnownAppEnvPrefixes(input)
+	values := make(map[string]string, len(input.environment.values))
+	for _, entry := range input.environment.Entries() {
+		owner := appResourceEnvironmentOwner(entry.key, prefixes)
+		if _, ok := enabled[owner]; owner != "" && ok && strings.HasPrefix(entry.key, owner+"_FEATURE_") {
+			continue
+		}
+		values[entry.key] = entry.value
+	}
+	input.environment = generationEnvironment{values: values}
+	return input
+}
