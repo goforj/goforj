@@ -30,44 +30,44 @@ steps:
         package catalog
 
         import (
-        	"context"
-        	"github.com/goforj/search"
-        	"github.com/goforj/search/driver/blevesearch"
+                "context"
+                "github.com/goforj/search"
+                "github.com/goforj/search/driver/blevesearch"
         )
 
         // Product is a projection of a durable catalog record, not its persistence model.
         type Product struct {
-        	ID          string `json:"id"`
-        	Description string `json:"description"`
-        	Category    string `json:"category"`
+                ID          string `json:"id"`
+                Description string `json:"description"`
+                Category    string `json:"category"`
         }
 
         // Definition declares lexical text separately from exact category and stable ordering.
         func Definition() search.Definition {
-        	return search.Definition{Name: "catalog", Fields: []search.Field{
-        		{Name: "description", Type: search.TextField, Searchable: true},
-        		{Name: "category", Type: search.KeywordField, Filterable: true},
-        		{Name: "id", Type: search.KeywordField, Required: true, Sortable: true},
-        	}, DefaultSearchable: []search.FieldName{"description"}}
+                return search.Definition{Name: "catalog", Fields: []search.Field{
+                        {Name: "description", Type: search.TextField, Searchable: true},
+                        {Name: "category", Type: search.KeywordField, Filterable: true},
+                        {Name: "id", Type: search.KeywordField, Required: true, Sortable: true},
+                }, DefaultSearchable: []search.FieldName{"description"}}
         }
 
         // OpenIndex provisions a disposable embedded projection for the local App.
         func OpenIndex() (*search.Index, func(), error) {
-        	ctx := context.Background()
-        	driver, err := blevesearch.Open(ctx, blevesearch.Config{Memory: true})
-        	if err != nil {
-        		return nil, nil, err
-        	}
-        	if err := driver.CreateIndex(ctx, Definition()); err != nil {
-        		_ = driver.Close()
-        		return nil, nil, err
-        	}
-        	index, err := search.NewIndex(driver, Definition())
-        	if err != nil {
-        		_ = driver.Close()
-        		return nil, nil, err
-        	}
-        	return index, func() { _ = driver.Close() }, nil
+                ctx := context.Background()
+                driver, err := blevesearch.Open(ctx, blevesearch.Config{Memory: true})
+                if err != nil {
+                        return nil, nil, err
+                }
+                if err := driver.CreateIndex(ctx, Definition()); err != nil {
+                        _ = driver.Close()
+                        return nil, nil, err
+                }
+                index, err := search.NewIndex(driver, Definition())
+                if err != nil {
+                        _ = driver.Close()
+                        return nil, nil, err
+                }
+                return index, func() { _ = driver.Close() }, nil
         }
 checks:
   - command: [go, test, ./internal/catalog]
