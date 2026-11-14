@@ -3484,7 +3484,7 @@ func (p *ProjectRenderer) runGenerateAll() error {
 // runGenerateAppResources reconciles managers whose names can change with App ownership.
 func (p *ProjectRenderer) runGenerateAppResources() ([]string, error) {
 	components := p.projectRenderComponents()
-	if !components.Feature && !components.Notification {
+	if !components.Feature && !components.Notification && !components.Search {
 		return nil, nil
 	}
 	if err := p.runGenerateAll(); err != nil {
