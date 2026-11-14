@@ -1,0 +1,175 @@
+schema_version: 2
+id: tenant-request-domain
+title: Authenticated Tenant Request Boundary
+description: Prepare authenticated export and health routes with a named request cache.
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+    cache: true
+markdown:
+  intro: |
+    This fixture validates credentials before placing tenant identity in request context. The existing export route has an explicit policy extension point; health remains public.
+  before: |
+    no tenant export surface exists.
+  after: |
+    exports require verified identity and borrow the named requests cache through App composition.
+  prerequisites: |
+    Use the existing Cache and Web components. The root cache module is pinned independently from cachecore and Redis driver modules by the framework dependency catalog. Redis is required when running the full App; deterministic tests use an embedded Redis protocol server.
+  common_mistakes:
+    - Do not use X-Tenant-ID or another caller assertion as authenticated identity.
+    - Do not turn the fixture's static credentials into a production authentication scheme.
+  troubleshooting: |
+    App startup requires the configured Redis endpoint. Start the shared service before running the App. Building the Project does not require a running Redis service.
+  next_steps:
+    - Implement the explicit export policy in Tenant Request Rate Limits.
+  files:
+    - internal/requests/auth.go
+    - internal/requests/limiter.go
+    - internal/requests/controller.go
+steps:
+  - id: configure-request-cache
+    title: Declare the shared request resource
+    append:
+      path: .env
+      content: |
+        CACHE_SUPPORTED_DRIVERS=memory,redis
+        CACHE_REQUESTS_DRIVER=redis
+        CACHE_REQUESTS_ADDR=127.0.0.1:6379
+        CACHE_REQUESTS_PREFIX=tenant-requests
+  - id: generate-request-cache
+    title: Generate the existing named cache accessor
+    command: [forj, generate, --cache]
+  - id: add-deterministic-redis-test-server
+    title: Prepare deterministic protocol-level backend tests
+    command: [go, get, github.com/alicebob/miniredis/v2@v2.35.0]
+  - id: define-authenticated-identity
+    title: Validate credentials before assigning tenant identity
+    write:
+      path: internal/requests/auth.go
+      language: go
+      content: |
+        // Package requests owns authenticated request identity and route policy.
+        package requests
+
+        import (
+                "context"
+                "github.com/goforj/web"
+                "net/http"
+                "strings"
+        )
+
+        // tenantContextKey keeps caller headers from impersonating an authenticated principal.
+        type tenantContextKey struct{}
+
+        // Tenant returns identity established by authentication, never an asserted tenant header.
+        func Tenant(ctx context.Context) (string, bool) {
+                tenant, ok := ctx.Value(tenantContextKey{}).(string)
+                return tenant, ok && tenant != ""
+        }
+
+        // Authenticate is a deterministic credential fixture; production Apps use their verified principal middleware.
+        func Authenticate(next web.Handler) web.Handler {
+                return func(request web.Context) error {
+                        tenant := map[string]string{"Bearer tenant-a-token": "tenant-a", "Bearer tenant-b-token": "tenant-b"}[strings.TrimSpace(request.Request().Header.Get("Authorization"))]
+                        if tenant == "" {
+                                return request.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+                        }
+                        request.SetRequest(request.Request().WithContext(context.WithValue(request.Context(), tenantContextKey{}, tenant)))
+                        return next(request)
+                }
+        }
+  - id: define-policy-boundary
+    title: Prepare the policy extension point
+    write:
+      path: internal/requests/limiter.go
+      language: go
+      content: |
+        // Package requests owns authenticated request identity and route policy.
+        package requests
+
+        import (
+                "github.com/goforj/cache"
+                "github.com/goforj/web"
+                "time"
+        )
+
+        // Limiter owns the route policy and borrows the App cache resource.
+        type Limiter struct {
+                client *cache.Cache
+                now    func() time.Time
+        }
+
+        // NewLimiter accepts shared storage and a clock so policy can be tested without sleeps.
+        func NewLimiter(client *cache.Cache, now func() time.Time) *Limiter {
+                return &Limiter{client: client, now: now}
+        }
+
+        // Middleware is the prepared policy extension point around the existing export handler.
+        func (limiter *Limiter) Middleware(next web.Handler) web.Handler { return next }
+  - id: scaffold-request-controller
+    title: Register the existing route owner
+    command: [forj, make:controller, requests]
+  - id: define-request-controller
+    title: Separate export policy from health
+    write:
+      path: internal/requests/controller.go
+      language: go
+      content: |
+        // Package requests owns authenticated request identity and route policy.
+        package requests
+
+        import (
+                "github.com/goforj/web"
+                "net/http"
+        )
+
+        // Controller keeps the export policy separate from an unrelated health route.
+        type Controller struct{ limiter *Limiter }
+
+        // NewController receives the configured policy from App composition.
+        func NewController(limiter *Limiter) *Controller { return &Controller{limiter: limiter} }
+
+        // Routes applies authentication before tenant policy and leaves health public.
+        func (controller *Controller) Routes() []web.Route {
+                return []web.Route{
+                        web.NewRoute(http.MethodGet, "/exports", controller.Export, Authenticate, controller.limiter.Middleware),
+                        web.NewRoute(http.MethodGet, "/health", controller.Health),
+                }
+        }
+
+        // Export represents existing expensive application work behind the policy.
+        func (controller *Controller) Export(request web.Context) error {
+                return request.JSON(http.StatusOK, map[string]string{"status": "exported"})
+        }
+
+        // Health remains independent from export policy and cache availability.
+        func (controller *Controller) Health(request web.Context) error {
+                return request.JSON(http.StatusOK, map[string]string{"status": "ok"})
+        }
+  - id: import-policy-dependencies
+    title: Import configured resource and clock dependencies
+    replace:
+      path: app/wire/inject_http_controllers_app.go
+      old: "import (\n"
+      new: "import (\n\t\"time\"\n\t\"example.com/invoiceeval/internal/caches\"\n"
+  - id: provide-request-controller
+    title: Provide the route owner through its named resource
+    replace:
+      path: app/wire/inject_http_controllers_app.go
+      old: "\trequests.NewController,\n"
+      new: "\tprovideRequestController,\n"
+  - id: configure-request-controller
+    title: Resolve the cache and clock once
+    append:
+      path: app/wire/inject_http_controllers_app.go
+      content: |
+
+        // provideRequestController borrows the shared App resource without constructing a backend in middleware.
+        func provideRequestController(manager *caches.Manager) *requests.Controller {
+                return requests.NewController(requests.NewLimiter(manager.Requests(), time.Now))
+        }
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./internal/requests]

@@ -1520,3 +1520,25 @@ func evaluationCheckHasStatus(checks []eval.EndpointResult, id string, status ev
 	}
 	return false
 }
+
+// TestTenantRequestRateLimitVerifierCalibration rejects shared-scope and tenant-isolation defects that still compile.
+func TestTenantRequestRateLimitVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "tenant-request-rate-limits", scenario: "tenant-request-rate-limits",
+		path:       "internal/requests/limiter.go",
+		old:        `base64.RawURLEncoding.EncodeToString([]byte(tenant))`,
+		mutant:     `base64.RawURLEncoding.EncodeToString([]byte("global" + tenant[:0]))`,
+		wantFailed: "tenant-rate-limit-behavior", wantCompile: true,
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/requests/limiter.go",
+			old:        `return &Limiter{client: client, now: now}`,
+			mutant:     `return &Limiter{client: cache.NewCache(cache.NewMemoryStore(nil)), now: now}`,
+			wantFailed: "tenant-rate-limit-behavior", wantCompile: true,
+		},
+		alternates: []evaluationFileMutation{
+			{path: "internal/requests/limiter.go", old: "\tclient *cache.Cache", replacement: "\tbudget *cache.Cache"},
+			{path: "internal/requests/limiter.go", old: "client: client", replacement: "budget: client"},
+			{path: "internal/requests/limiter.go", old: "limiter.client", replacement: "limiter.budget"},
+		},
+	})
+}
