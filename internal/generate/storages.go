@@ -379,6 +379,7 @@ func renderStorageAccessors(names []string) ([]byte, error) {
 
 // renderStorageConfig keeps local backends in every generated build.
 func renderStorageConfig(input generationInput) ([]byte, error) {
+	input = legacyResourceGenerationInput(input, "STORAGE")
 	names := discoverStorageDiskNames(input)
 	driverSet := map[string]struct{}{}
 	defaultDriver := effectivePrimitiveDriver(input.environment.Get("STORAGE_DRIVER", "local"), "local")

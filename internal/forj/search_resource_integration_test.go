@@ -78,34 +78,37 @@ func TestSearchResourceFullComposition(t *testing.T) {
 	if !strings.Contains(string(documentation), strings.TrimSpace(bootstrap)) {
 		t.Fatal("documented bootstrap differs from executed fixture")
 	}
-	bootstrapDir := filepath.Join(root, "cmd/search-provision")
+	bootstrapDir := filepath.Join(root, "tools/search-provision")
 	if err := os.MkdirAll(bootstrapDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(bootstrapDir, "main.go"), []byte(bootstrap), 0600); err != nil {
 		t.Fatal(err)
 	}
-	provision := exec.CommandContext(t.Context(), "go", "run", "./cmd/search-provision")
+	provision := exec.CommandContext(t.Context(), "go", "run", "./tools/search-provision")
 	provision.Dir = root
 	provision.Env = environment
 	if output, err := provision.CombinedOutput(); err != nil || !strings.Contains(string(output), "Search schemas provisioned") {
 		t.Fatalf("standalone provisioning: %v\n%s", err, output)
 	}
 	before := map[string][]byte{}
-	for _, name := range []string{"manager_gen.go", "accessors_gen.go"} {
-		path := filepath.Join(root, "internal/searches", name)
-		body, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		before[path] = body
-	}
 	for attempt := 0; attempt < 2; attempt++ {
 		command := exec.CommandContext(t.Context(), forj, "generate", "--search")
 		command.Dir = root
 		command.Env = environment
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("regenerate: %v\n%s", err, output)
+		}
+		if attempt == 0 {
+			// Capture the configured inventory before requiring the next generation to remain byte stable.
+			for _, name := range []string{"manager_gen.go", "accessors_gen.go"} {
+				path := filepath.Join(root, "internal/searches", name)
+				body, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before[path] = body
+			}
 		}
 	}
 	for path, want := range before {
@@ -223,5 +226,76 @@ func main() {
  if _,err:=defaults.Searches().Catalog().Wait(ctx,receipt);err!=nil{log.Fatal(err)}
  page,err:=named.Searches().Archive().Search(ctx,search.Query{Text:"red"});if err!=nil || page.Total.Value!=0{log.Fatalf("cross-App index data: %#v %v",page,err)}
  fmt.Println("App search indexes isolated")
+}
+`
+
+// TestSearchResourceWordAppRuntime renders valid resource-word App names without creating default index settings.
+func TestSearchResourceWordAppRuntime(t *testing.T) {
+	root := t.TempDir()
+	repository, err := testkit.RepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	components := project.Components{CLI: true, Search: true}
+	config := project.Config{ProjectName: "Search App names", GoModuleName: "example.com/searchappnames", Render: project.RenderConfig{Components: components}, Apps: map[string]project.AppConfig{}}
+	for _, name := range []string{"search", "search-worker", "search-search"} {
+		config.Apps[name] = project.AppConfig{Components: components}
+		if err := writeConventionalAppMarker(root, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testkit.RenderProjectWithForj(t, root, testkit.RenderProjectRequest{Config: config, ModuleReplaces: map[string]string{"github.com/goforj/goforj": repository}})
+	accessors, err := os.ReadFile(filepath.Join(root, "internal/searches/accessors_gen.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(accessors), "Search()") {
+		t.Fatalf("App root generated index accessor: %s", accessors)
+	}
+	programDir := filepath.Join(root, "cmd/search-app-check")
+	if err := os.MkdirAll(programDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(programDir, "main.go"), []byte(searchResourceWordAppProgram), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(t.Context(), "go", "run", "./cmd/search-app-check")
+	command.Dir = root
+	command.Env = testkit.IntegrationGoProcessEnv(t, map[string]string{"GOWORK": "off"})
+	if output, err := command.CombinedOutput(); err != nil || !strings.Contains(string(output), "Resource-word Apps initialized") {
+		t.Fatalf("resource-word App runtime: %v\n%s", err, output)
+	}
+}
+
+const searchResourceWordAppProgram = `// Package main verifies that App roots cannot invent search indexes.
+package main
+import (
+ "context"
+ "fmt"
+ "log"
+ "github.com/goforj/env/v2"
+ defaultwire "example.com/searchappnames/app/wire"
+ searchwire "example.com/searchappnames/app/search/wire"
+ workerwire "example.com/searchappnames/app/search-worker/wire"
+ nestedwire "example.com/searchappnames/app/search-search/wire"
+ "example.com/searchappnames/internal/searches"
+)
+// main provisions empty declarations and initializes the independently rendered App graphs.
+func main() {
+ if err := env.Load(); err != nil { log.Fatal(err) }
+ ctx := context.Background()
+ for _, prefix := range []string{"", "SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"} {
+  if err := searches.ProvisionForApp(ctx, prefix, nil); err != nil { log.Fatal(err) }
+ }
+ defaults, err := defaultwire.InitializeApplication(); if err != nil { log.Fatal(err) }
+ defer defaults.Shutdown(ctx)
+ named, err := searchwire.InitializeApplication(); if err != nil { log.Fatal(err) }
+ defer named.Shutdown(ctx)
+ worker, err := workerwire.InitializeApplication(); if err != nil { log.Fatal(err) }
+ defer worker.Shutdown(ctx)
+ nested, err := nestedwire.InitializeApplication(); if err != nil { log.Fatal(err) }
+ defer nested.Shutdown(ctx)
+ if len(defaults.Searches().Instances())+len(named.Searches().Instances())+len(worker.Searches().Instances())+len(nested.Searches().Instances()) != 0 { log.Fatal("App environment invented indexes") }
+ fmt.Println("Resource-word Apps initialized")
 }
 `

@@ -11,9 +11,11 @@ SEARCH_PATH=storage/search
 SEARCH_CATALOG_PATH=storage/search/catalog
 ```
 
-Run `forj generate --search` to generate `manager.Catalog()`. Pass the named handle to application services. There is no implicit default schema: use a generated named accessor or `manager.Index("catalog")` for a declared index. A missing App definition for a configured index is an error. A manager with no definitions and no named configuration is inert. Named Apps use explicit App-aware construction and the existing App environment prefixes, such as `ADMIN_SEARCH_PATH`. Each manager opens only its Go-declared indexes and validates its own named settings; unrelated default-App schemas are not required. Give independent Apps independent physical paths or service prefixes.
+Index map keys must exactly match their SDK `Definition.Name`. Logical names and default backend paths retain their original spelling, including case, hyphens, and Unicode. Environment and accessor aliases ignore case and replace hyphens with underscores: a declared `Catalog` uses `SEARCH_CATALOG_*` and `manager.Catalog()`, while `catalog-v2` uses `SEARCH_CATALOG_V2_*` and `manager.CatalogV2()`. `manager.Index` accepts either the exact declared name or its alias. Names with the same alias, such as `Catalog` and `catalog`, or `catalog-v2` and `catalog_v2`, are rejected before any backend opens. Existing exact-name hyphen keys in the process environment remain supported when their underscore equivalent is absent; use underscore keys in dotenv files. Declaring an alias does not rename an existing schema or physical index.
 
-Bleve uses one process owner per physical index. The manager creates one backend per logical definition and closes each through App Wire cleanup. For multiple replicas, select an externally managed Meilisearch service with `SEARCH_DRIVER=meilisearch`, `SEARCH_URL`, `SEARCH_API_KEY`, and a deployment-specific `SEARCH_PREFIX`. Bleve remains the always-available local baseline. Compile each external driver with `SEARCH_SUPPORTED_DRIVERS` before switching it at runtime. No local service provisioning or other driver is included in this first resource.
+Run `forj generate --search` to generate `manager.Catalog()`. Pass the named handle to application services. There is no implicit default schema: use a generated named accessor or `manager.Index("catalog")` for a declared index. A missing App definition for a configured index is an error. A manager with no definitions and no named configuration is inert. Named Apps use explicit App-aware construction and the existing App environment prefixes, such as `ADMIN_SEARCH_PATH`. Each manager opens only its Go-declared indexes and validates its own named settings; unrelated default-App schemas are not required. Give independent Apps independent physical paths or service prefixes. Known App prefixes take precedence over ambiguous default index keys, with the longest matching App prefix winning. For example, when an App is named `search`, `SEARCH_SEARCH_PATH` belongs to that App root, not a default index named `search`. A default index with that name can still use the default root path and driver, or use a different logical name when it needs a distinct named override.
+
+Bleve uses one process owner per physical index. The manager creates one backend per logical definition and closes each through App Wire cleanup. For multiple replicas, select an externally managed Meilisearch service with `SEARCH_DRIVER=meilisearch`, `SEARCH_URL`, `SEARCH_API_KEY`, and a deployment-specific `SEARCH_PREFIX`. Bleve remains the always-available local baseline. Compile each external driver with `SEARCH_SUPPORTED_DRIVERS` before switching it at runtime. Known backend settings, including named paths, URLs, and API keys, are retained while another driver is selected so portable presets and later switches preserve deployment configuration. No local service provisioning or other driver is included in this first resource.
 
 Startup only validates existing schemas. Before first startup, an application-owned bootstrap program can call `searches.Provision(ctx, app.SearchDefinitions())` without initializing the runtime graph. Provisioning explicitly creates schemas and closes its handles; it rejects schema drift and does not destroy or recreate an existing incompatible index. Stop the local App before provisioning the same Bleve path. Use a bounded caller context.
 
@@ -23,7 +25,7 @@ Search is lexical, not vector or semantic search. Preserve typed filters, total 
 
 ## First-time provisioning
 
-Create the App-owned `cmd/search-provision/main.go` below after declaring your schemas. Stop the Bleve owner process before provisioning its physical indexes. This program loads configuration but never initializes the App runtime or a manager that requires those indexes to exist.
+Create the App-owned `tools/search-provision/main.go` below after declaring your schemas. Keep this tool outside `cmd/` so it is not discovered as a runtime App. Stop the Bleve owner process before provisioning its physical indexes. This program loads configuration but never initializes the App runtime or a manager that requires those indexes to exist.
 
 ```go
 package main
@@ -52,7 +54,7 @@ func main() {
 Run from the Project root:
 
 ```console
-$ go run ./cmd/search-provision
+$ go run ./tools/search-provision
 Search schemas provisioned
 ```
 

@@ -10,7 +10,7 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestGenerateSearchFilesValidatesBeforeWriting covers disabled selections, unsupported drivers, invalid settings, and conflicting accessor names.
+// TestGenerateSearchFilesValidatesBeforeWriting covers disabled selections, unsupported drivers, and invalid accessor names.
 func TestGenerateSearchFilesValidatesBeforeWriting(t *testing.T) {
 	if err := validateRequestedGenerationSelection(GenerationSelection{Search: true}, GenerationSelection{}); err == nil {
 		t.Fatal("disabled Search accepted generation")
@@ -22,17 +22,31 @@ func TestGenerateSearchFilesValidatesBeforeWriting(t *testing.T) {
 	}{
 		{"unknown", map[string]string{"SEARCH_DRIVER": "unknown"}, "unsupported driver"},
 		{"not-compiled", map[string]string{"SEARCH_DRIVER": "meilisearch", "SEARCH_SUPPORTED_DRIVERS": "bleve"}, "not enabled"},
-		{"wrong-setting", map[string]string{"SEARCH_DRIVER": "bleve", "SEARCH_CATALOG_URL": "https://example.invalid"}, "URL"},
 		{"reserved-accessor", map[string]string{"SEARCH_INDEX_PATH": "index"}, "conflicts"},
+		{"numeric-accessor", map[string]string{"SEARCH_123_PATH": "index"}, "accessor"},
+		{"normalized-collision", map[string]string{"SEARCH_FOO_BAR_PATH": "first", "SEARCH_FOO__BAR_PATH": "second"}, "conflicts"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
+			originals := map[string]string{SearchManagerPath: "original manager", SearchAccessorsPath: "original accessors"}
+			for path, body := range originals {
+				target := filepath.Join(root, path)
+				if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(target, []byte(body), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			_, err := generateSearchFiles(generationInput{projectDir: root, environment: generationEnvironment{values: test.values}})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("generation error = %v, want %q", err, test.want)
 			}
-			if _, err := os.Stat(filepath.Join(root, SearchManagerPath)); !os.IsNotExist(err) {
-				t.Fatal("invalid input published manager")
+			for path, original := range originals {
+				body, err := os.ReadFile(filepath.Join(root, path))
+				if err != nil || string(body) != original {
+					t.Fatalf("invalid input changed %s: %q (%v)", path, body, err)
+				}
 			}
 		})
 	}
@@ -77,12 +91,11 @@ func TestGenerateSearchFilesKeepsAppNamesAndDriversScoped(t *testing.T) {
 func TestSearchAppRootDriverPrecedence(t *testing.T) {
 	for _, test := range []struct {
 		name, named, appNamed, option, want string
-		invalid                             bool
 	}{
 		{name: "App root inherited", option: "URL", want: "meilisearch"},
 		{name: "global named overrides App root", named: "bleve", option: "PATH", want: "bleve"},
 		{name: "App named overrides global named", named: "meilisearch", appNamed: "bleve", option: "PATH", want: "bleve"},
-		{name: "App root rejects Bleve option", option: "PATH", want: "meilisearch", invalid: true},
+		{name: "App root retains Bleve option", option: "PATH", want: "meilisearch"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -97,13 +110,8 @@ func TestSearchAppRootDriverPrecedence(t *testing.T) {
 				values["ADMIN_SEARCH_CATALOG_DRIVER"] = test.appNamed
 			}
 			input := fixtureGenerationInput(root, values)
-			if _, err := generateSearchFiles(input); (err != nil) != test.invalid {
+			if _, err := generateSearchFiles(input); err != nil {
 				t.Fatalf("generate = %v", err)
-			}
-			if test.invalid {
-				if _, err := os.Stat(filepath.Join(root, SearchManagerPath)); !os.IsNotExist(err) {
-					t.Fatal("invalid driver option published output")
-				}
 			}
 			found := false
 			for _, choice := range appPrefixedActiveDrivers(input, "SEARCH", "bleve", true) {
@@ -125,7 +133,7 @@ func TestSearchAppRootDriverPrecedence(t *testing.T) {
 func TestGeneratedSearchManagerBehavior(t *testing.T) {
 	root := mustTempGeneratedModuleRoot(t, "forj-search-generation-*", filepath.Join("internal", "searches"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec("example.com/searchgeneration", []string{"github.com/goforj/search", "github.com/goforj/search/driver/blevesearch", "github.com/goforj/env/v2"}, nil, nil))
-	input := generationInput{projectDir: root, environment: generationEnvironment{values: map[string]string{"SEARCH_DRIVER": "bleve", "SEARCH_SUPPORTED_DRIVERS": "bleve,meilisearch", "SEARCH_CATALOG_DRIVER": "bleve", "SEARCH_ARCHIVE_DRIVER": "bleve"}}}
+	input := generationInput{projectDir: root, environment: generationEnvironment{values: map[string]string{"SEARCH_DRIVER": "bleve", "SEARCH_SUPPORTED_DRIVERS": "bleve,meilisearch", "SEARCH_CATALOG_DRIVER": "bleve", "SEARCH_ARCHIVE_DRIVER": "bleve", "SEARCH_CATALOG_V2_DRIVER": "bleve"}}, appPrefixes: []string{"SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"}}
 	if _, err := generateSearchFiles(input); err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +168,53 @@ func TestSearchDriverManifests(t *testing.T) {
 			runFixtureGoModTidy(t, root, nil)
 			runFixtureGoTest(t, root, "./internal/searches", "TestDoesNotExist", nil)
 		})
+	}
+}
+
+// TestSearchDefaultResourceWordIndex preserves an unambiguous default index when no App owns its prefix.
+func TestSearchDefaultResourceWordIndex(t *testing.T) {
+	root := t.TempDir()
+	input := generationInput{projectDir: root, environment: generationEnvironment{values: map[string]string{"SEARCH_SEARCH_PATH": "search-index"}}}
+	if _, err := generateSearchFiles(input); err != nil {
+		t.Fatal(err)
+	}
+	if names := discoverSearchNames(input); !slices.Equal(names, []string{"search"}) {
+		t.Fatalf("default index inventory = %v", names)
+	}
+	body, err := os.ReadFile(filepath.Join(root, SearchAccessorsPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "Search() *search.Index") {
+		t.Fatalf("default index accessor missing: %s", body)
+	}
+}
+
+// TestSearchResourceWordAppOwnership excludes known App root keys from the default index inventory.
+func TestSearchResourceWordAppOwnership(t *testing.T) {
+	root := t.TempDir()
+	config := "render:\n  components: [cli, search]\napps:\n  search:\n    components: [cli, search]\n  search-worker:\n    components: [cli, search]\n  search-search:\n    components: [cli, search]\n"
+	if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{"SEARCH_DRIVER": "bleve", "SEARCH_SEARCH_DRIVER": "bleve", "SEARCH_SEARCH_PATH": "search-root", "SEARCH_WORKER_SEARCH_DRIVER": "bleve", "SEARCH_WORKER_SEARCH_PATH": "worker-root", "SEARCH_SEARCH_SEARCH_DRIVER": "bleve", "SEARCH_SEARCH_SEARCH_PATH": "nested-root", "SEARCH_CATALOG_PATH": "catalog", "SEARCH_SEARCH_ARCHIVE_PATH": "archive"}
+	input := fixtureGenerationInput(root, values)
+	if _, err := generateSearchFiles(input); err != nil {
+		t.Fatal(err)
+	}
+	names := discoverSearchNames(input)
+	if !slices.Equal(names, []string{"archive", "catalog"}) {
+		t.Fatalf("index inventory = %v", names)
+	}
+	body, err := os.ReadFile(filepath.Join(root, SearchAccessorsPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "Search()") || strings.Contains(string(body), "WorkerSearch()") {
+		t.Fatalf("synthetic App accessor: %s", body)
+	}
+	if changed, err := generateSearchFiles(input); err != nil || changed != 0 {
+		t.Fatalf("regeneration changed %d files: %v", changed, err)
 	}
 }
 
@@ -342,4 +397,165 @@ func TestSearchManagerAppRootSelection(t *testing.T) {
  if err == nil { _ = manager.Close(); t.Fatal("remote validation failure was hidden") }
  if requests.Load() <= before { t.Fatal("runtime validation did not reach App root backend") }
 }
+// TestSearchManagerResourceWordApps keeps root App settings and exact named overrides disjoint.
+func TestSearchManagerResourceWordApps(t *testing.T) {
+ ctx := context.Background()
+ t.Setenv("SEARCH_DRIVER", "bleve")
+ t.Setenv("SEARCH_PATH", filepath.Join(t.TempDir(), "default"))
+ t.Setenv("SEARCH_SEARCH_DRIVER", "meilisearch")
+ t.Setenv("SEARCH_SEARCH_PATH", filepath.Join(t.TempDir(), "search-app"))
+ t.Setenv("SEARCH_WORKER_SEARCH_DRIVER", "bleve")
+ t.Setenv("SEARCH_WORKER_SEARCH_PATH", filepath.Join(t.TempDir(), "worker-app"))
+ t.Setenv("SEARCH_SEARCH_SEARCH_DRIVER", "bleve")
+ t.Setenv("SEARCH_SEARCH_SEARCH_PATH", filepath.Join(t.TempDir(), "nested-app"))
+ t.Setenv("SEARCH_UNRELATED_SETTING", "ignored")
+ t.Setenv("SEARCH_CACHE_DRIVER", "redis")
+ t.Setenv("SEARCH_NOTIFICATION_DRIVER", "log")
+ t.Setenv("SEARCH_FEATURE_DRIVER", "file")
+ t.Setenv("SEARCH_WORKER_CACHE_DRIVER", "redis")
+ t.Setenv("SEARCH_SEARCH_NOTIFICATION_DRIVER", "log")
+ for _, prefix := range []string{"", "SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"} {
+  if err := ProvisionForApp(ctx, prefix, nil); err != nil { t.Fatalf("%s empty provision: %v", prefix, err) }
+  manager, err := NewManagerForApp(ctx, prefix, nil)
+  if err != nil { t.Fatalf("%s empty startup: %v", prefix, err) }
+  if len(manager.Instances()) != 0 { t.Fatal("environment invented schemas") }
+  if err := manager.Close(); err != nil { t.Fatal(err) }
+ }
+ // A real default index named search keeps its global root fallback when an App owns the ambiguous key.
+ if got := namedSearchValue("", "search", "PATH", "default-index"); got != "default-index" { t.Fatalf("App root became default index path: %s", got) }
+ if got := searchDriverName("", "search"); got != "bleve" { t.Fatalf("App root became default index driver: %s", got) }
+ if got := searchDriverName("", "cache"); got != "bleve" { t.Fatalf("another App family became a Search driver: %s", got) }
+ if got := searchDriverName("", "notification"); got != "bleve" { t.Fatalf("App Notification settings became a Search driver: %s", got) }
+ if got := searchDriverName("ADMIN", "search"); got != "bleve" { t.Fatalf("App root became another App index driver: %s", got) }
+ defs := map[string]search.Definition{"search": {Name: "search", Fields: []search.Field{{Name: "description", Type: search.TextField, Searchable: true}}}}
+ if err := Provision(ctx, defs); err != nil { t.Fatal(err) }
+ manager, err := NewManager(ctx, defs)
+ if err != nil { t.Fatal(err) }
+ if err := manager.Close(); err != nil { t.Fatal(err) }
+ for _, prefix := range []string{"", "SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"} {
+  key := "SEARCH_TYPO_PATH"
+  if prefix != "" { key = prefix+"_"+key }
+  t.Setenv(key, "unused")
+  if _, err := NewManagerForApp(ctx, prefix, nil); err == nil || !strings.Contains(err.Error(), "typo") { t.Fatalf("%s undeclared index accepted: %v", prefix, err) }
+  if err := ProvisionForApp(ctx, prefix, nil); err == nil || !strings.Contains(err.Error(), "typo") { t.Fatalf("%s provision accepted undeclared index: %v", prefix, err) }
+  unsetSearchDriver(t, key)
+ }
+}
+
+// searchNamedDefinitions retains original logical names while sharing a small valid schema for identity tests.
+func searchNamedDefinitions(names ...string) map[string]search.Definition {
+ result:=map[string]search.Definition{}
+ for _,name:=range names { definition:=definitions()["catalog"];definition.Name=search.IndexName(name);result[name]=definition }
+ return result
+}
+
+// TestSearchManagerDeclaredNames maps environment and accessor aliases without renaming schemas or default physical paths.
+func TestSearchManagerDeclaredNames(t *testing.T) {
+ ctx:=context.Background()
+ root:=t.TempDir()
+ t.Setenv("SEARCH_DRIVER","bleve")
+ t.Setenv("SEARCH_PATH",root)
+ for _,key:=range []string{"SEARCH_CATALOG_PATH","SEARCH_CATALOG_DRIVER","SEARCH_CATALOG_V2_PATH","SEARCH_CATALOG_V2_DRIVER","SEARCH_CAFÉ_PATH","SEARCH_KELVIN_PATH","SEARCH_KELVIN_PATH"}{unsetSearchDriver(t,key)}
+ defs:=searchNamedDefinitions("Catalog","catalog-v2","Café","Kelvin")
+ if err:=Provision(ctx,defs);err!=nil{t.Fatal(err)}
+ entries,err:=os.ReadDir(root);if err!=nil{t.Fatal(err)}
+ for _,entry:=range entries { if !entry.IsDir(){continue}; if _,exists:=defs[entry.Name()];!exists{t.Fatalf("default backend path renamed to %q",entry.Name())} }
+ for name:=range defs {
+  if _,err:=os.Stat(filepath.Join(root,name));err!=nil{t.Fatalf("original backend path missing for %s: %v",name,err)}
+  t.Setenv("SEARCH_"+searchConfigName(name)+"_PATH",filepath.Join(root,name))
+ }
+ manager,err:=NewManager(ctx,defs);if err!=nil{t.Fatal(err)}
+ if manager.Catalog()!=manager.Index("Catalog") || manager.Catalog()!=manager.Index("CATALOG"){t.Fatal("case alias did not resolve exact definition")}
+ if manager.CatalogV2()!=manager.Index("catalog-v2") || manager.CatalogV2()!=manager.Index("CATALOG_V2"){t.Fatal("hyphen alias did not resolve exact definition")}
+ if manager.Index("café").Definition().Name!="Café" || manager.Index("kelvin").Definition().Name!="Kelvin"{t.Fatal("Unicode alias changed schema name")}
+ if manager.Catalog().Definition().Name!="Catalog" || manager.CatalogV2().Definition().Name!="catalog-v2"{t.Fatal("schema identity normalized")}
+ if err:=manager.Close();err!=nil{t.Fatal(err)}
+ // Existing exact-name hyphen environment keys remain usable when the canonical key is absent.
+ unsetSearchDriver(t,"SEARCH_CATALOG_V2_PATH")
+ t.Setenv("SEARCH_CATALOG-V2_PATH",filepath.Join(root,"catalog-v2"))
+ manager,err=NewManager(ctx,defs);if err!=nil{t.Fatal(err)}
+ if err:=manager.Close();err!=nil{t.Fatal(err)}
+ t.Setenv("SEARCH_CATALOG_V2_PATH",filepath.Join(root,"catalog-v2"))
+ t.Setenv("SEARCH_CATALOG-V2_PATH",filepath.Join(root,"must-not-open"))
+ manager,err=NewManager(ctx,defs);if err!=nil{t.Fatalf("canonical key did not take precedence: %v",err)}
+ if err:=manager.Close();err!=nil{t.Fatal(err)}
+ appRoot:=t.TempDir()
+ t.Setenv("ADMIN_SEARCH_CATALOG_PATH",filepath.Join(appRoot,"Catalog"))
+ t.Setenv("ADMIN_SEARCH_CATALOG_V2_PATH",filepath.Join(appRoot,"catalog-v2"))
+ t.Setenv("ADMIN_SEARCH_CAFÉ_PATH",filepath.Join(appRoot,"Café"))
+ t.Setenv("ADMIN_SEARCH_KELVIN_PATH",filepath.Join(appRoot,"Kelvin"))
+ if err:=ProvisionForApp(ctx,"ADMIN",defs);err!=nil{t.Fatal(err)}
+ manager,err=NewManagerForApp(ctx,"ADMIN",defs);if err!=nil{t.Fatal(err)}
+ if manager.CatalogV2().Definition().Name!="catalog-v2"{t.Fatal("App alias changed schema name")}
+ if err:=manager.Close();err!=nil{t.Fatal(err)}
+}
+
+// TestSearchManagerRejectsAmbiguousAliases validates the entire declaration map before any local or remote backend opens.
+func TestSearchManagerRejectsAmbiguousAliases(t *testing.T) {
+ for _,names:=range [][]string{{"Catalog","catalog"},{"catalog-v2","catalog_v2"},{"Café","café"},{"Kelvin","Kelvin"}}{
+  t.Run(strings.Join(names,"/"),func(t *testing.T){
+   root:=t.TempDir()
+   t.Setenv("SEARCH_DRIVER","bleve");t.Setenv("SEARCH_PATH",root)
+   defs:=searchNamedDefinitions(append([]string{"aaa"},names...)...)
+   var previous string
+   for attempt:=0;attempt<3;attempt++{
+    if err:=Provision(context.Background(),defs);err==nil || !strings.Contains(err.Error(),"share environment/accessor alias"){t.Fatalf("ambiguous aliases accepted: %v",err)}else if previous!="" && err.Error()!=previous{t.Fatalf("nondeterministic alias error: %s vs %s",previous,err)}else{previous=err.Error()}
+    if _,err:=NewManager(context.Background(),defs);err==nil || !strings.Contains(err.Error(),"share environment/accessor alias"){t.Fatalf("startup accepted aliases: %v",err)}
+   }
+   entries,err:=os.ReadDir(root);if err!=nil || len(entries)!=0{t.Fatalf("alias validation opened backend paths: %v %v",entries,err)}
+   var requests atomic.Int64
+   server:=httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter,request *http.Request){requests.Add(1);response.WriteHeader(http.StatusServiceUnavailable)}))
+   defer server.Close()
+   t.Setenv("SEARCH_DRIVER","meilisearch");t.Setenv("SEARCH_URL",server.URL)
+   if err:=Provision(context.Background(),defs);err==nil || !strings.Contains(err.Error(),"share environment/accessor alias"){t.Fatalf("remote provision accepted aliases: %v",err)}
+   if _,err:=NewManager(context.Background(),defs);err==nil || !strings.Contains(err.Error(),"share environment/accessor alias"){t.Fatalf("remote startup accepted aliases: %v",err)}
+   if requests.Load()!=0{t.Fatalf("alias validation contacted backend %d times",requests.Load())}
+  })
+ }
+}
+
 `
+
+// TestSearchGenerationCanonicalAliasPrecedence keeps duplicate raw ambient aliases aligned with runtime selection.
+func TestSearchGenerationCanonicalAliasPrecedence(t *testing.T) {
+	root := t.TempDir()
+	values := map[string]string{"SEARCH_CATALOG_V2_PATH": "canonical", "SEARCH_CATALOG-V2_PATH": "legacy", "SEARCH_CATALOG_V2_DRIVER": "bleve", "SEARCH_CATALOG-V2_DRIVER": "unknown"}
+	input := generationInput{projectDir: root, environment: generationEnvironment{values: values}}
+	if _, err := generateSearchFiles(input); err != nil {
+		t.Fatal(err)
+	}
+	accessors, err := os.ReadFile(filepath.Join(root, SearchAccessorsPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(accessors), "CatalogV2()") != 1 {
+		t.Fatalf("canonical alias duplicated accessor: %s", accessors)
+	}
+	manager, err := os.ReadFile(filepath.Join(root, SearchManagerPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(manager), "driver/meilisearch") {
+		t.Fatal("shadowed driver widened compiled inventory")
+	}
+	delete(values, "SEARCH_CATALOG_V2_PATH")
+	if changed, err := generateSearchFiles(input); err != nil || changed != 0 {
+		t.Fatalf("mixed suffix aliases duplicated output: %d %v", changed, err)
+	}
+	values["SEARCH_CATALOG-V2_DRIVER"] = "meilisearch"
+	if changed, err := generateSearchFiles(input); err != nil || changed != 0 {
+		t.Fatalf("shadowed alias changed files: %d %v", changed, err)
+	}
+	if values["SEARCH_CATALOG-V2_PATH"] != "legacy" {
+		t.Fatal("generation mutated captured input")
+	}
+}
+
+// TestSearchAliasShadowingPreservesAppOwnership prevents a canonical spelling owned by a longer App from hiding an exact-name setting.
+func TestSearchAliasShadowingPreservesAppOwnership(t *testing.T) {
+	input := generationInput{environment: generationEnvironment{values: map[string]string{"SEARCH_SEARCH_CACHE-FOO_DRIVER": "bleve", "SEARCH_SEARCH_CACHE_FOO_DRIVER": "redis"}}, appPrefixes: []string{"SEARCH", "SEARCH_SEARCH"}}
+	canonical := canonicalSearchGenerationInput(input)
+	if value, present := canonical.environment.Lookup("SEARCH_SEARCH_CACHE-FOO_DRIVER"); !present || value != "bleve" {
+		t.Fatal("another App's setting shadowed a declared Search alias")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"go/token"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -21,9 +22,11 @@ var searchDriverKeys = map[string]map[string]struct{}{
 
 // searchTemplateData keeps the generated import inventory and named accessors consistent.
 type searchTemplateData struct {
-	Bleve       bool
-	Meilisearch bool
-	Names       []storageAccessorName
+	Bleve            bool
+	Meilisearch      bool
+	Names            []storageAccessorName
+	AppPrefixes      []string
+	ResourcePrefixes []string
 }
 
 // GenerateSearchFiles generates portable search composition from the current environment contract.
@@ -33,18 +36,19 @@ func GenerateSearchFiles(projectDir string) (int, error) {
 
 // generateSearchFiles validates driver selection before publishing either generated file.
 func generateSearchFiles(input generationInput) (int, error) {
+	input = canonicalSearchGenerationInput(input)
 	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix: "SEARCH", DefaultDriver: "bleve", LocalDrivers: searchLocalDrivers, RootKeys: searchRootKeys,
 		CommonKeys: makeSet("DRIVER"), DriverKeys: searchDriverKeys,
-		InheritRootDriver: true, AllowInactiveRootKeys: true,
+		InheritRootDriver: true, AllowInactiveRootKeys: true, AllowInactiveNamedKeys: true,
 		ChildNames: func(environment generationEnvironment) []string {
-			return exactScopedChildNames(environment, "SEARCH", searchRootKeys)
+			return searchScopedChildNames(input, "")
 		},
 	}); err != nil {
 		return 0, err
 	}
 	active := map[string]struct{}{effectivePrimitiveDriver(input.environment.Get("SEARCH_DRIVER", "bleve"), "bleve"): {}}
-	for _, name := range discoverPrimitiveChildNames(input, "SEARCH", searchRootKeys) {
+	for _, name := range searchScopedChildNames(input, "") {
 		active[effectivePrimitiveDriver(input.environment.Get("SEARCH_"+name+"_DRIVER", input.environment.Get("SEARCH_DRIVER", "bleve")), "bleve")] = struct{}{}
 	}
 	for _, choice := range appPrefixedActiveDrivers(input, "SEARCH", "bleve", true) {
@@ -54,35 +58,49 @@ func generateSearchFiles(input generationInput) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	data := searchTemplateData{}
+	data := searchTemplateData{AppPrefixes: generationKnownAppEnvPrefixes(input), ResourcePrefixes: generationResourceEnvPrefixes()}
 	for _, driver := range drivers {
 		data.Bleve = data.Bleve || driver == "bleve"
 		data.Meilisearch = data.Meilisearch || driver == "meilisearch"
 	}
 	methods := makeSet("Index", "Close", "Instances")
+	aliases := makeSet()
 	for _, name := range discoverPrimitiveChildNames(input, "SEARCH", searchRootKeys) {
-		method := str.Of(name).Pascal().String()
+		alias := searchConfigName(name)
+		if _, exists := aliases[alias]; exists {
+			continue
+		}
+		aliases[alias] = struct{}{}
+		method := str.Of(alias).Pascal().String()
+		if !token.IsIdentifier(method) || !token.IsExported(method) {
+			return 0, fmt.Errorf("search accessor %q must be an exported Go identifier", method)
+		}
 		if _, reserved := methods[method]; reserved {
 			return 0, fmt.Errorf("search accessor %q conflicts with another generated method", method)
 		}
 		methods[method] = struct{}{}
-		data.Names = append(data.Names, storageAccessorName{Method: method, Disk: strings.ToLower(name)})
+		data.Names = append(data.Names, storageAccessorName{Method: method, Disk: strings.ToLower(alias)})
 	}
-	written := 0
-	for _, output := range []struct{ path, source string }{{SearchManagerPath, searchManagerSource}, {SearchAccessorsPath, searchAccessorsSource}} {
+	outputs := []struct{ path, source string }{{SearchManagerPath, searchManagerSource}, {SearchAccessorsPath, searchAccessorsSource}}
+	bodies := make([][]byte, len(outputs))
+	for index, output := range outputs {
 		tmpl, err := template.New(output.path).Parse(output.source)
 		if err != nil {
-			return written, err
+			return 0, err
 		}
 		var buffer bytes.Buffer
 		if err := tmpl.Execute(&buffer, data); err != nil {
-			return written, err
+			return 0, err
 		}
 		source, err := format.Source(buffer.Bytes())
 		if err != nil {
-			return written, fmt.Errorf("format search source: %w", err)
+			return 0, fmt.Errorf("format search source: %w", err)
 		}
-		changed, err := writeGeneratedSource(filepath.Join(input.projectDir, output.path), source)
+		bodies[index] = source
+	}
+	written := 0
+	for index, output := range outputs {
+		changed, err := writeGeneratedSource(filepath.Join(input.projectDir, output.path), bodies[index])
 		if err != nil {
 			return written, err
 		}
@@ -93,14 +111,51 @@ func generateSearchFiles(input generationInput) (int, error) {
 	return written, nil
 }
 
+// searchConfigName matches declared and environmental aliases without changing physical index names.
+func searchConfigName(name string) string {
+	return strings.ReplaceAll(strings.ToUpper(strings.ToLower(name)), "-", "_")
+}
+
+// canonicalSearchGenerationInput mirrors runtime precedence when canonical and exact-name legacy settings coexist.
+func canonicalSearchGenerationInput(input generationInput) generationInput {
+	values := make(map[string]string, len(input.environment.values))
+	prefixes := generationKnownAppEnvPrefixes(input)
+	for _, entry := range input.environment.Entries() {
+		owner := appResourceEnvironmentOwner(entry.key, prefixes)
+		scope := "SEARCH_"
+		if owner != "" {
+			scope = owner + "_" + scope
+		}
+		if relative, exists := strings.CutPrefix(entry.key, scope); exists {
+			if scoped, valid := splitScopedEnvKey(relative, searchRootKeys); valid && scoped.child != "" {
+				canonical := scope + searchConfigName(scoped.child) + "_" + scoped.rootKey
+				if canonical != entry.key && appResourceEnvironmentOwner(canonical, prefixes) == owner {
+					if _, present := input.environment.Lookup(canonical); present {
+						continue
+					}
+				}
+			}
+		}
+		values[entry.key] = entry.value
+	}
+	input.environment = generationEnvironment{values: values}
+	return input
+}
+
+// searchScopedChildNames recognizes exact Search settings after assigning their App ownership.
+func searchScopedChildNames(input generationInput, prefix string) []string {
+	return appScopedChildNames(input, "SEARCH", prefix, searchRootKeys)
+}
+
 const searchAccessorsSource = `// Code generated by forj generate --search. DO NOT EDIT.
 package searches
 
 import "github.com/goforj/search"
 
-// Index returns an explicitly declared App index and fails fast for invalid wiring.
+// Index resolves an exact App declaration before its environment alias and fails fast for invalid wiring.
 func (manager *Manager) Index(name string) *search.Index {
  resource, exists := manager.indexes[name]
+ if !exists { resource, exists = manager.indexes[manager.aliases[searchConfigName(name)]] }
  if !exists { panic("search: index not declared for this App: " + name) }
  return resource.index
 }
@@ -130,6 +185,12 @@ import (
  {{if .Meilisearch}}"github.com/goforj/search/driver/meilisearch"{{end}}
 )
 
+// searchAppPrefixes fixes App ownership when this composition is generated.
+var searchAppPrefixes = []string{ {{range .AppPrefixes}}{{printf "%q" .}},{{end}} }
+
+// searchResourcePrefixes keeps ownership aligned with the framework resource catalog.
+var searchResourcePrefixes = []string{ {{range .ResourcePrefixes}}{{printf "%q" .}},{{end}} }
+
 // indexBackend keeps schema operations outside the portable request-path handle.
 type indexBackend interface {
  search.Backend
@@ -144,6 +205,7 @@ type indexResource struct { index *search.Index; backend indexBackend; driver st
 // Manager owns the App's declared indexes and closes each backend once.
 type Manager struct {
  indexes map[string]indexResource
+ aliases map[string]string
  closeOnce sync.Once
  closeErr error
 }
@@ -180,20 +242,22 @@ func ProvisionForApp(ctx context.Context, prefix string, definitions map[string]
 func openManager(ctx context.Context, prefix string, definitions map[string]search.Definition, provision bool) (*Manager, error) {
  if err := ctx.Err(); err != nil { return nil, err }
  prefix = strings.ToUpper(strings.TrimSpace(prefix))
- scope := env.WithPrefix("SEARCH")
- if prefix != "" { scope = env.WithPrefix(prefix).Child("SEARCH") }
- for _, child := range scope.ChildNames([]string{"DRIVER", "PATH", "URL", "API_KEY", "PREFIX", "SUPPORTED_DRIVERS"}) {
-  name := strings.ToLower(child)
-  if _, exists := definitions[name]; !exists { return nil, fmt.Errorf("search: environment index %q has no App definition", name) }
- }
  names := make([]string, 0, len(definitions))
- for name, definition := range definitions {
+ for name := range definitions { names = append(names, name) }
+ sort.Strings(names)
+ aliases := make(map[string]string, len(names))
+ for _, name := range names {
+  definition := definitions[name]
   if name != string(definition.Name) { return nil, fmt.Errorf("search: definition name does not match index %q", name) }
   if err := definition.Validate(); err != nil { return nil, fmt.Errorf("search: invalid definition %q: %w", name, err) }
-  names = append(names, name)
+  alias := searchConfigName(name)
+  if previous, exists := aliases[alias]; exists { return nil, fmt.Errorf("search: index names %q and %q share environment/accessor alias %q", previous, name, alias) }
+  aliases[alias] = name
  }
- sort.Strings(names)
- manager := &Manager{indexes: make(map[string]indexResource, len(names))}
+ for _, name := range configuredSearchNames(prefix) {
+  if _, exists := aliases[name]; !exists { return nil, fmt.Errorf("search: environment index %q has no App definition", strings.ToLower(name)) }
+ }
+ manager := &Manager{indexes: make(map[string]indexResource, len(names)), aliases: aliases}
  for _, name := range names {
   driverName := searchDriverName(prefix, name)
   backend, err := openBackend(ctx, name, driverName, prefix)
@@ -223,6 +287,68 @@ func openBackend(ctx context.Context, name, driver, prefix string) (indexBackend
  }
 }
 
+// searchEnvironmentOwner assigns ambiguous keys to the longest compiled App prefix.
+func searchEnvironmentOwner(key, requestedPrefix string) string {
+ owner := ""
+ for _, prefix := range searchAppPrefixes {
+  if len(prefix)>len(owner) && searchAppResourceKey(key,prefix) { owner=prefix }
+ }
+ if len(requestedPrefix)>len(owner) && searchAppResourceKey(key,requestedPrefix) { owner=requestedPrefix }
+ return owner
+}
+
+// searchAppResourceKey recognizes resource settings beneath an explicitly known App prefix.
+func searchAppResourceKey(key,prefix string) bool {
+ for _,resourcePrefix:=range searchResourcePrefixes {
+  if strings.HasPrefix(key,prefix+"_"+resourcePrefix+"_"){return true}
+ }
+ return false
+}
+
+// lookupSearchEnvironment prevents another App's root settings from becoming named index overrides.
+func lookupSearchEnvironment(prefix, key string) (string, bool) {
+ if searchEnvironmentOwner(key, prefix) != prefix { return "", false }
+ return os.LookupEnv(key)
+}
+
+// searchEnvironmentValue preserves non-empty environment fallback within one owning App.
+func searchEnvironmentValue(prefix, key, fallback string) string {
+ if value, exists := lookupSearchEnvironment(prefix, key); exists && value != "" { return value }
+ return fallback
+}
+
+// configuredSearchNames validates exact root and named keys without interpreting unrelated application settings.
+func configuredSearchNames(prefix string) []string {
+ scope := "SEARCH_"
+ if prefix != "" { scope = prefix+"_SEARCH_" }
+ names := map[string]struct{}{}
+ keys := []string{"DRIVER", "PATH", "URL", "API_KEY", "PREFIX", "SUPPORTED_DRIVERS"}
+ for _, entry := range os.Environ() {
+  key, _, _ := strings.Cut(entry, "=")
+  if searchEnvironmentOwner(key, prefix) != prefix || !strings.HasPrefix(key, scope) { continue }
+  relative := strings.TrimPrefix(key, scope)
+  root := false
+  for _, suffix := range keys { if relative == suffix { root = true; break } }
+  if root { continue }
+  for _, suffix := range keys {
+   if suffix == "SUPPORTED_DRIVERS" { continue }
+   if name, found := strings.CutSuffix(relative, "_"+suffix); found && name != "" {
+    names[searchConfigName(name)] = struct{}{}
+    break
+   }
+  }
+ }
+ result := make([]string, 0, len(names))
+ for name := range names { result = append(result, name) }
+ sort.Strings(result)
+ return result
+}
+
+// searchConfigName matches case-insensitive environment and accessor aliases while preserving declared backend identity.
+func searchConfigName(name string) string {
+ return strings.ReplaceAll(strings.ToUpper(strings.ToLower(name)), "-", "_")
+}
+
 // normalizedSearchDriver preserves the generator's fallback for empty or whitespace-only selections.
 func normalizedSearchDriver(value, fallback string) string {
  driver := strings.ToLower(strings.TrimSpace(value))
@@ -236,29 +362,41 @@ func searchDriverName(prefix, name string) string {
  driver := root
  appRoot := root
  if prefix != "" {
-  if value, exists := os.LookupEnv(prefix+"_SEARCH_DRIVER"); exists { appRoot = normalizedSearchDriver(value, "bleve") }
+  if value, exists := lookupSearchEnvironment(prefix, prefix+"_SEARCH_DRIVER"); exists { appRoot = normalizedSearchDriver(value, "bleve") }
   driver = appRoot
  }
- if value, exists := os.LookupEnv("SEARCH_"+strings.ToUpper(name)+"_DRIVER"); exists { driver = normalizedSearchDriver(value, root) }
+ if value, exists := lookupNamedSearchEnvironment("", name, "DRIVER"); exists { driver = normalizedSearchDriver(value, root) }
  if prefix != "" {
-  if value, exists := os.LookupEnv(prefix+"_SEARCH_"+strings.ToUpper(name)+"_DRIVER"); exists { driver = normalizedSearchDriver(value, appRoot) }
+  if value, exists := lookupNamedSearchEnvironment(prefix, name, "DRIVER"); exists { driver = normalizedSearchDriver(value, appRoot) }
  }
  return driver
 }
 
 // searchValue resolves App root defaults before any more-specific named resource settings.
 func searchValue(prefix, name, key, fallback string) string {
- value := env.WithPrefix("SEARCH").Get(key, fallback)
- if prefix != "" { value = env.WithPrefix(prefix).Child("SEARCH").Get(key, value) }
+ value := searchEnvironmentValue("", "SEARCH_"+key, fallback)
+ if prefix != "" { value = searchEnvironmentValue(prefix, prefix+"_SEARCH_"+key, value) }
  if name == "" { return value }
  return namedSearchValue(prefix, name, key, value)
 }
 
 // namedSearchValue preserves explicit named overrides without conflating a root directory with one index path.
 func namedSearchValue(prefix, name, key, fallback string) string {
- value := env.WithPrefix("SEARCH").Child(strings.ToUpper(name)).Get(key, fallback)
- if prefix != "" { value = env.WithPrefix(prefix).Child("SEARCH").Child(strings.ToUpper(name)).Get(key, value) }
+ value := fallback
+ if current,exists:=lookupNamedSearchEnvironment("",name,key);exists && current!="" { value=current }
+ if prefix!="" { if current,exists:=lookupNamedSearchEnvironment(prefix,name,key);exists && current!="" { value=current } }
  return value
+}
+
+// lookupNamedSearchEnvironment prefers portable underscore keys while retaining existing exact-name hyphen overrides.
+func lookupNamedSearchEnvironment(prefix,name,key string) (string,bool) {
+ scope:="SEARCH_"
+ if prefix!="" { scope=prefix+"_"+scope }
+ canonical:=scope+searchConfigName(name)+"_"+key
+ if value,exists:=lookupSearchEnvironment(prefix,canonical);exists { return value,true }
+ original:=scope+strings.ToUpper(name)+"_"+key
+ if original!=canonical { return lookupSearchEnvironment(prefix,original) }
+ return "",false
 }
 
 // Instances returns deterministic identity metadata for inspection.

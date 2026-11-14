@@ -358,6 +358,98 @@ func TestApplyAppEnvOverlayPromotesAnyAppPrefixedKey(t *testing.T) {
 	}
 }
 
+// TestLoadEnvPreservesAppResourceScopes keeps resource fallback independent from legacy App projection.
+func TestLoadEnvPreservesAppResourceScopes(t *testing.T) {
+	if os.Getenv("GO_WANT_APP_RESOURCE_SCOPES_HELPER") == "1" {
+		runAppResourceScopesHelper()
+		return
+	}
+
+	for _, appValue := range []string{"", "app-value"} {
+		t.Run(fmt.Sprintf("app-value=%q", appValue), func(t *testing.T) {
+			dir := t.TempDir()
+			values := map[string]string{
+				"FEATURE_BUSINESS_KEY":          "custom-base",
+				"SEARCH_BUSINESS_KEY": "custom-base",
+				"SEARCH_CATALOG_BUSINESS_KEY": "custom-named-base",
+				"FEATURE_CHECKOUT_BUSINESS_KEY": "custom-named-base",
+				"NOTIFICATION_BUSINESS_KEY": "custom-base",
+				"NOTIFICATION_CHECKOUT_BUSINESS_KEY": "custom-named-base",
+				"SMTP_PASSWORD":                 "smtp-base-secret",
+				"DB_PASSWORD":                   "db-base-secret",
+			}
+			for _, name := range []string{"", "CHECKOUT_"} {
+				for _, suffix := range []string{"DRIVER", "SUPPORTED_DRIVERS", "PATH", "DOCUMENT", "REFRESH_INTERVAL", "INITIALIZATION_TIMEOUT"} {
+					values["FEATURE_"+name+suffix] = "base-"+name+suffix
+				}
+			}
+			for _, name := range []string{"", "CHECKOUT_"} {
+                for _, suffix := range []string{"DRIVER", "SUPPORTED_DRIVERS", "WEBHOOK_URL", "WEBHOOK_FORMAT", "WEBHOOK_TIMEOUT", "WEBHOOK_BEARER_TOKEN", "WEBHOOK_ALLOW_PRIVATE"} {
+                    values["NOTIFICATION_"+name+suffix] = "base-"+name+suffix
+                }
+            }
+			for _, name := range []string{"", "CATALOG_"} {
+				for _, suffix := range []string{"DRIVER", "PATH", "URL", "API_KEY", "PREFIX", "SUPPORTED_DRIVERS"} {
+					values["SEARCH_"+name+suffix] = "base-"+name+suffix
+				}
+			}
+			var lines []string
+			for key, value := range values {
+				overlay := appValue
+				if key == "SMTP_PASSWORD" || key == "DB_PASSWORD" {
+					overlay = ""
+				}
+				lines = append(lines, key+"="+value, "BILLING_"+key+"="+overlay)
+			}
+			writeTestEnvFile(t, filepath.Join(dir, ".env"), strings.Join(lines, "\n")+"\n")
+			output := runEnvDefaultsHelperProcess(t, "TestLoadEnvPreservesAppResourceScopes", dir, map[string]string{"FORJ_APP": "billing"})
+			got := parseEnvDefaultsOutput(t, output)
+			for key := range values {
+				want := appValue
+				if key == "SMTP_PASSWORD" || key == "DB_PASSWORD" {
+					want = ""
+				}
+				if overlay, ok := got["BILLING_"+key]; !ok || overlay != want {
+					t.Fatalf("BILLING_%s = %q (present %t), want %q", key, overlay, ok, want)
+				}
+{{- if .ProjectComponents.Feature }}
+				if key != "FEATURE_BUSINESS_KEY" && key != "FEATURE_CHECKOUT_BUSINESS_KEY" && strings.HasPrefix(key, "FEATURE_") {
+					want = values[key]
+				}
+{{- end }}
+{{- if .ProjectComponents.Notification }}
+				if key != "NOTIFICATION_BUSINESS_KEY" && key != "NOTIFICATION_CHECKOUT_BUSINESS_KEY" && strings.HasPrefix(key, "NOTIFICATION_") {
+					want = values[key]
+				}
+{{- end }}
+{{- if .ProjectComponents.Search }}
+				if key != "SEARCH_BUSINESS_KEY" && key != "SEARCH_CATALOG_BUSINESS_KEY" && strings.HasPrefix(key, "SEARCH_") {
+					want = values[key]
+				}
+{{- end }}
+				if value, ok := got[key]; !ok || value != want {
+					t.Fatalf("%s = %q (present %t), want %q", key, value, ok, want)
+				}
+			}
+		})
+	}
+}
+
+// runAppResourceScopesHelper isolates the actual file-backed startup path from other environment tests.
+func runAppResourceScopesHelper() {
+	if err := LoadEnv(); err != nil {
+		fmt.Printf("LOAD_ERROR=%v\n", err)
+		os.Exit(1)
+	}
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "FEATURE_") || strings.HasPrefix(key, "BILLING_FEATURE_") || strings.HasPrefix(key, "NOTIFICATION_") || strings.HasPrefix(key, "BILLING_NOTIFICATION_") || strings.HasPrefix(key,"SEARCH_") || strings.HasPrefix(key,"BILLING_SEARCH_") || key == "SMTP_PASSWORD" || key == "DB_PASSWORD" || key == "BILLING_SMTP_PASSWORD" || key == "BILLING_DB_PASSWORD" {
+			fmt.Println(entry)
+		}
+	}
+	os.Exit(0)
+}
+
 func TestAppEnvOverlayCanSelectAppEnvFile(t *testing.T) {
 	if os.Getenv("GO_WANT_APP_ENV_HELPER") == "1" {
 		runAppEnvOverlayHelper()
@@ -509,7 +601,8 @@ func runEnvDefaultsHelperProcess(t *testing.T, testName string, dir string, extr
 	baseEnv := os.Environ()
 	filtered := make([]string, 0, len(baseEnv)+1)
 	for _, entry := range baseEnv {
-		if strings.HasPrefix(entry, "APP_ENV=") {
+		key, _, _ := strings.Cut(entry, "=")
+		if key == "APP_ENV" || testName == "TestLoadEnvPreservesAppResourceScopes" && (strings.HasPrefix(key, "FEATURE_") || strings.HasPrefix(key, "NOTIFICATION_") || strings.HasPrefix(key,"SEARCH_") || strings.HasPrefix(key, "BILLING_") || key == "SMTP_PASSWORD" || key == "DB_PASSWORD") {
 			continue
 		}
 		filtered = append(filtered, entry)
@@ -526,6 +619,8 @@ func runEnvDefaultsHelperProcess(t *testing.T, testName string, dir string, extr
 		cmd.Env = append(cmd.Env, "GO_WANT_ENV_OVERRIDES_APP_ENV_HELPER=1")
 	case "TestInheritedEnvironmentOverridesDotenv":
 		cmd.Env = append(cmd.Env, "GO_WANT_HOST_ENV_OVERRIDES_HELPER=1")
+	case "TestLoadEnvPreservesAppResourceScopes":
+		cmd.Env = append(cmd.Env, "GO_WANT_APP_RESOURCE_SCOPES_HELPER=1")
 	case "TestAppEnvOverlayCanSelectAppEnvFile":
 		cmd.Env = append(cmd.Env, "GO_WANT_APP_ENV_HELPER=1")
 	}

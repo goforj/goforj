@@ -274,6 +274,14 @@ func waitFeatureCondition(t *testing.T, condition func() bool) {
     for !condition() { select { case <-deadline.C: t.Fatal("feature refresh did not converge"); case <-tick.C: } }
 }
 
+// requireFeatureWatcher retries transient native registration failures caused by unrelated ancestor entry churn.
+func requireFeatureWatcher(t *testing.T, path string) *featureWatcher {
+    t.Helper()
+    var watcher *featureWatcher
+    waitFeatureCondition(t,func() bool { watcher = watchFeatureDirectory(path); return watcher != nil })
+    return watcher
+}
+
 // writeFeatureDefinition replaces complete files so editor-style saves can be tested repeatedly.
 func writeFeatureDefinition(t *testing.T, path string, enabled bool) {
     t.Helper()
@@ -313,19 +321,19 @@ func TestManagedFeatureFileNotifications(t *testing.T) {
 // TestFeatureFileRefreshFallback keeps refreshing when a parent cannot be watched.
 func TestFeatureFileRefreshFallback(t *testing.T) {
     var loads atomic.Int64
+    path := filepath.Join(featureFixtureDirectory(t),"missing","flags.json")
     client,err := feature.Open(context.Background(),feature.SourceFunc(func(context.Context)(feature.Document,error) {
-        loads.Add(1)
+        // Publish the parent after a failed registration so the next load follows a complete recovery attempt.
+        if loads.Add(1) == 4 { if err := os.Mkdir(filepath.Dir(path),0700); err != nil { return feature.Document{},err } }
         return feature.Decode([]byte("{\"schema\":1,\"flags\":{}}"))
     }))
     if err != nil { t.Fatal(err) }
-    resource := managedEvaluator{client:client,path:filepath.Join(featureFixtureDirectory(t),"missing","flags.json"),interval:10*time.Millisecond}
+    resource := managedEvaluator{client:client,path:path,interval:10*time.Millisecond}
     if watcher := watchFeatureDirectory(resource.path); watcher != nil { _ = watcher.Close(); t.Fatal("missing parent was watched") }
     ctx,cancel := context.WithCancel(context.Background()); defer cancel()
     done := make(chan struct{})
     go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,nil) }()
-    waitFeatureCondition(t,func() bool { return loads.Load() >= 4 })
-    if err := os.Mkdir(filepath.Dir(resource.path),0700); err != nil { t.Fatal(err) }
-    time.Sleep(100*time.Millisecond)
+    waitFeatureCondition(t,func() bool { return loads.Load() >= 5 })
     recovered := loads.Load()
     time.Sleep(100*time.Millisecond)
     if loads.Load()!=recovered { t.Fatal("polling continued after watch recovery") }
@@ -342,17 +350,17 @@ func TestFeatureFileWatcherFailure(t *testing.T) {
         manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
         resource := manager.resources[1]
         resource.interval = 20*time.Millisecond
-        watcher := watchFeatureDirectory(path)
-        if watcher == nil { t.Fatal("cannot watch test directory") }
+        watcher := requireFeatureWatcher(t,path)
         // Own the injected error channel so the backend cannot close it concurrently with a test send.
         if mode == "error" || mode == "overflow" {
             watcher.Errors = make(chan error,1)
-            if mode == "overflow" { resource.interval = time.Hour; watcher.Errors <- fsnotify.ErrEventOverflow } else { watcher.Errors <- errors.New("watch unavailable") }
+            if mode == "overflow" { watcher.Errors <- fsnotify.ErrEventOverflow } else { watcher.Errors <- errors.New("watch unavailable") }
         }
         ctx,cancel := context.WithCancel(context.Background()); defer cancel()
         done := make(chan struct{})
         initial := manager.Instances()[1].Status.LastSuccess
         go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,watcher) }()
+        defer func(){ cancel(); <-done }()
         if mode == "closed" { _ = watcher.Close() }
         waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
         writeFeatureDefinition(t,path,false)
@@ -521,8 +529,7 @@ func TestManagedFeatureUnicodeSpelling(t *testing.T) {
         if _,err := os.Stat(configured); err != nil { t.Skip("normalization-sensitive filesystem") }
         // An unrelated hardlink must not supply the canonical spelling of a replaceable entry.
         if err := os.Link(path,filepath.Join(parent,"aaa-unrelated.json")); err != nil { t.Fatal(err) }
-        watcher := watchFeatureDirectory(configured)
-        if watcher == nil { t.Fatal("native Unicode spelling disabled notification refresh") }
+        watcher := requireFeatureWatcher(t,configured)
         _ = watcher.Close()
         t.Setenv("FEATURE_CHECKOUT_PATH",configured)
         t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
@@ -615,8 +622,7 @@ func TestFeatureNotificationDebounce(t *testing.T) {
     }))
     if err != nil { t.Fatal(err) }
     path := filepath.Join(featureFixtureDirectory(t),"flags.json")
-    watcher := watchFeatureDirectory(path)
-    if watcher == nil { t.Fatal("cannot watch test directory") }
+    watcher := requireFeatureWatcher(t,path)
     // Own the event channel to exercise platform-independent debounce behavior without backend noise.
     events := make(chan fsnotify.Event,128)
     watcher.Events = events
@@ -751,8 +757,7 @@ func TestFeatureOverflowRebindsSymlinkTargets(t *testing.T) {
     if err := os.Symlink(first,path); err != nil { t.Skipf("symlinks unavailable: %v",err) }
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
     resource := manager.resources[1]; resource.interval = time.Hour
-    watcher := watchFeatureDirectory(path)
-    if watcher == nil { t.Fatal("cannot watch test symlink") }
+    watcher := requireFeatureWatcher(t,path)
     // Suppress swap notifications to reproduce an overflow that lost the topology change.
     watcher.Events = make(chan fsnotify.Event)
     watcher.Errors = make(chan error,1)

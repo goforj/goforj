@@ -49,3 +49,18 @@ func TestBaselineDriversReturnsIndependentCatalogValues(t *testing.T) {
 		t.Fatal("unknown resource has drivers")
 	}
 }
+
+// TestResourceNamesInScopePreservesProjectedNames retains declarations whose projected keys also resemble known App settings.
+func TestResourceNamesInScopePreservesProjectedNames(t *testing.T) {
+	root := featureInventoryProject(t, "apps:\n  feature:\n    components: [cli, feature]\n  notification:\n    components: [cli, notification]\n  search:\n    components: [cli, search]\n")
+	values := map[string]string{"SEARCH_CACHE_PATH": "search-index", "FEATURE_CACHE_PATH": "flags.json", "NOTIFICATION_FEATURE_WEBHOOK_URL": "https://example.com/hook", "DB_ANALYTICS_DATABASE": "analytics", "DB_SQLITE_DATABASE": "app.db", "DB_REPORTING_SQLITE_SQLITE_DATABASE": "reporting.db", "CACHE_FEATURE_DRIVER": "memory"}
+	names := ResourceNamesInScope(values)
+	for key, want := range map[project.ResourceKey][]string{project.ResourceFeature: {"cache"}, project.ResourceSearch: {"cache"}, project.ResourceNotification: {"feature"}, project.ResourceDatabase: {"analytics", "reporting_sqlite"}, project.ResourceCache: {"feature"}} {
+		if !slices.Equal(names[key], want) {
+			t.Fatalf("%s names=%v want=%v", key, names[key], want)
+		}
+	}
+	if names := ResourceNames(root, values); len(names[project.ResourceFeature]) != 0 || len(names[project.ResourceNotification]) != 0 || len(names[project.ResourceSearch]) != 0 {
+		t.Fatalf("project-wide ownership changed: %#v", names)
+	}
+}
