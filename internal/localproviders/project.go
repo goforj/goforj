@@ -186,7 +186,7 @@ func knownAppResourceOwner(config *project.Config, key string) string {
 func managedAppResourceOwner(config *project.Config, key string) (string, bool) {
 	owner := knownAppResourceOwner(config, key)
 	base := strings.TrimPrefix(key, owner+"_")
-	if owner == "" || (!strings.HasPrefix(base, "FEATURE_") && !strings.HasPrefix(key, "FEATURE_") && !strings.HasPrefix(base, "NOTIFICATION_") && !strings.HasPrefix(key, "NOTIFICATION_")) {
+	if owner == "" || (!strings.HasPrefix(base, "FEATURE_") && !strings.HasPrefix(key, "FEATURE_") && !strings.HasPrefix(base, "NOTIFICATION_") && !strings.HasPrefix(key, "NOTIFICATION_") && !strings.HasPrefix(base, "SEARCH_") && !strings.HasPrefix(key, "SEARCH_")) {
 		return "", false
 	}
 	for name, app := range config.Apps {
