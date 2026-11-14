@@ -124,7 +124,7 @@ package features
 
 import "github.com/goforj/feature"
 
-// Default returns the live default evaluator; capture a snapshot at the request boundary.
+// Default returns the live default evaluator for flag checks and optional consistent snapshots.
 func (manager *Manager) Default() *feature.Features { return manager.evaluator("default") }
 {{range .Names}}
 // {{.Method}} returns the configured {{.Name}} evaluator, independently from its dynamic flag inventory.
@@ -140,10 +140,12 @@ import (
     "context"
     "errors"
     "fmt"
+    "path/filepath"
     "strings"
     "sync"
     "time"
 
+    "github.com/fsnotify/fsnotify"
     "github.com/goforj/env/v2"
     "github.com/goforj/feature"
 )
@@ -154,7 +156,7 @@ var featureAppResources = map[string][]string{
 }
 
 // managedEvaluator retains source lifecycle without exposing it through request accessors.
-type managedEvaluator struct { name, driver string; client *feature.Client; flags *feature.Features; interval time.Duration }
+type managedEvaluator struct { name, driver, path string; client *feature.Client; flags *feature.Features; interval time.Duration }
 
 // Manager owns this App's initialized native evaluators and joins every refresh worker on close.
 type Manager struct {
@@ -211,6 +213,7 @@ func openEvaluator(prefix, name string) (managedEvaluator, error) {
     timeout, err := time.ParseDuration(featureValue(prefix, name, "INITIALIZATION_TIMEOUT", "5s"))
     if err != nil || timeout <= 0 { return managedEvaluator{}, errors.New("FEATURE_INITIALIZATION_TIMEOUT must be positive") }
     var source feature.Source
+    var path string
     switch driver {
     case "memory":
         document, err := feature.Decode([]byte(featureValue(prefix, name, "DOCUMENT", "{\"schema\":1,\"flags\":{}}")))
@@ -218,8 +221,10 @@ func openEvaluator(prefix, name string) (managedEvaluator, error) {
         source, err = feature.NewMemorySource(document)
         if err != nil { return managedEvaluator{}, err }
     case "file":
-        path := strings.TrimSpace(featureValue(prefix, name, "PATH", ""))
+        path = strings.TrimSpace(featureValue(prefix, name, "PATH", ""))
         if path == "" { return managedEvaluator{}, errors.New("file feature source requires FEATURE_PATH") }
+        path, err = filepath.Abs(path)
+        if err != nil { return managedEvaluator{}, err }
         source = feature.NewFileSource(path)
     default:
         return managedEvaluator{}, errors.New("unsupported native feature source")
@@ -228,7 +233,7 @@ func openEvaluator(prefix, name string) (managedEvaluator, error) {
     defer cancel()
     client, err := feature.Open(ctx, source)
     if err != nil { return managedEvaluator{}, err }
-    return managedEvaluator{name: name, driver: driver, client: client, flags: feature.New(client), interval: interval}, nil
+    return managedEvaluator{name: name, driver: driver, path: path, client: client, flags: feature.New(client), interval: interval}, nil
 }
 
 // evaluator fails fast if application wiring requests another App's named resource.
@@ -269,9 +274,59 @@ func (manager *Manager) Start(ctx context.Context) error {
     for _, resource := range manager.resources {
         if resource.driver != "file" { continue }
         manager.workers.Add(1)
-        go func() { defer manager.workers.Done(); _ = resource.client.Run(runCtx, resource.interval) }()
+        watcher := watchFeatureDirectory(resource.path)
+        go func() { defer manager.workers.Done(); runFeatureFileRefresh(runCtx, resource, watcher) }()
     }
     return nil
+}
+
+// watchFeatureDirectory watches the parent so atomic file replacement does not detach the watch.
+// A missing or unsupported watch is optional: periodic refresh remains available and retries setup.
+func watchFeatureDirectory(path string) *fsnotify.Watcher {
+    watcher, err := fsnotify.NewWatcher()
+    if err != nil { return nil }
+    if err := watcher.Add(filepath.Dir(path)); err != nil { _ = watcher.Close(); return nil }
+    return watcher
+}
+
+// runFeatureFileRefresh debounces filesystem changes and retains periodic reconciliation for missed events.
+func runFeatureFileRefresh(ctx context.Context, resource managedEvaluator, watcher *fsnotify.Watcher) {
+    // Reconcile after watch registration to cover changes since synchronous initialization.
+    _ = resource.client.Refresh(ctx)
+    ticker := time.NewTicker(resource.interval)
+    defer ticker.Stop()
+    debounce := time.NewTimer(time.Hour)
+    debounce.Stop()
+    defer debounce.Stop()
+    var pending <-chan time.Time
+    var events <-chan fsnotify.Event
+    var failures <-chan error
+    defer func() { if watcher != nil { _ = watcher.Close() } }()
+    for {
+        if watcher != nil { events, failures = watcher.Events, watcher.Errors } else { events, failures = nil, nil }
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            if watcher == nil { watcher = watchFeatureDirectory(resource.path) }
+            _ = resource.client.Refresh(ctx)
+        case event, ok := <-events:
+            if !ok { _ = watcher.Close(); watcher = nil; continue }
+            // Directory entry changes also cover symlink swaps used by mounted configuration.
+            if event.Has(fsnotify.Create|fsnotify.Remove|fsnotify.Rename) || (event.Has(fsnotify.Write) && (filepath.Clean(event.Name) == resource.path || filepath.Clean(event.Name) == filepath.Dir(resource.path))) {
+                debounce.Reset(50*time.Millisecond)
+                pending = debounce.C
+            }
+            if filepath.Clean(event.Name) == filepath.Dir(resource.path) && event.Has(fsnotify.Remove|fsnotify.Rename) { _ = watcher.Close(); watcher = nil }
+        case _, ok := <-failures:
+            _ = watcher.Close()
+            watcher = nil
+            if ok { _ = resource.client.Refresh(ctx) }
+        case <-pending:
+            pending = nil
+            _ = resource.client.Refresh(ctx)
+        }
+    }
 }
 
 // Close cancels refresh and waits for all owned workers, including concurrent close callers.

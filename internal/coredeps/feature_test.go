@@ -16,3 +16,14 @@ func TestFeaturePinIsComponentGated(t *testing.T) {
 		t.Fatal("missing released feature pin")
 	}
 }
+
+// TestFeatureWatcherPinIsComponentGated keeps runtime notification support optional and aligned with the CLI.
+func TestFeatureWatcherPinIsComponentGated(t *testing.T) {
+	pin := "github.com/fsnotify/fsnotify@v1.10.1"
+	if slices.Contains(SyncCoreLibraries(project.Components{}), pin) {
+		t.Fatal("disabled component selected file watcher")
+	}
+	if !slices.Contains(SyncCoreLibraries(project.Components{Feature: true}), pin) || MustVersionFor("github.com/fsnotify/fsnotify") != "v1.10.1" {
+		t.Fatal("missing pinned feature watcher")
+	}
+}

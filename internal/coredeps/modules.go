@@ -8,6 +8,7 @@ import (
 
 // pinnedModuleVersions records validated framework releases and ecosystem security minimums for rendered projects.
 var pinnedModuleVersions = map[string]string{
+	"github.com/fsnotify/fsnotify":                                    "v1.10.1",
 	"github.com/goforj/feature":                                       "v0.1.0",
 	"github.com/goforj/search":                                        "v0.1.1",
 	"github.com/goforj/search/driver/blevesearch":                     "v0.1.1",
@@ -249,7 +250,7 @@ func SyncCoreLibraries(components project.Components) []string {
 		modules = append(modules, webRendererSyncModules...)
 	}
 	if components.Feature {
-		modules = append(modules, "github.com/goforj/feature")
+		modules = append(modules, "github.com/goforj/feature", "github.com/fsnotify/fsnotify")
 	}
 	if components.Cache {
 		modules = append(modules, cacheRendererSyncModules...)
