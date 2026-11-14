@@ -82,6 +82,7 @@ import (
 	_ "golang.org/x/net/ipv6"
 	_ "golang.org/x/oauth2"
 	_ "golang.org/x/term"
+	_ "golang.org/x/text/unicode/norm"
 	_ "golang.org/x/tools/go/packages"
 	_ "gopkg.in/yaml.v3"
 	_ "gorm.io/driver/mysql"
