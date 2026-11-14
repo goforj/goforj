@@ -1,0 +1,21 @@
+# Feature evaluators
+
+Enable the optional `feature` component in the owning App and run `forj generate --feature` after declaring evaluator resources in `.env`. The native memory and file drivers are always compiled, following the framework baseline-driver convention. `FEATURE_SUPPORTED_DRIVERS=memory,file` records their build capability; `FEATURE_DRIVER` selects the active native source at runtime. Vendor SDK adapters are outside this first integration.
+
+The default memory source captures `FEATURE_DOCUMENT` at startup, using an empty document when omitted. File sources require `FEATURE_PATH` and load synchronously before startup. Set `FEATURE_REFRESH_INTERVAL` (at least `10ms`, default `30s`) and `FEATURE_INITIALIZATION_TIMEOUT` (positive, default `5s`). The App lifecycle starts refresh and cancels and joins workers on shutdown. Invalid refresh retains valid decisions and keeps readiness usable. `Instances()` exposes the last refresh error and freshness timestamps; startup still fails when no valid initial configuration can be loaded.
+
+A named evaluator uses `FEATURE_CHECKOUT_DRIVER=file` and `FEATURE_CHECKOUT_PATH=/etc/app/checkout.json`. Regenerate to add `Manager.Checkout()`. Named Apps use their existing environment overlay, for example `BILLING_FEATURE_CHECKOUT_PATH`. Resources identify evaluator configuration, not individual flag names. A name declared only for Billing is not initialized by another App. Accessing an undeclared App resource fails fast.
+
+Inject `*features.Manager` into an application service through the owning App's service Wire set. Capture one request snapshot before targeting:
+
+```go
+snapshot, err := manager.Checkout().Snapshot()
+if err != nil {
+    return err
+}
+request := snapshot.For(feature.Target{Key: tenantID})
+checkout := request.Evaluate(ctx, "checkout-v2", false)
+receipt := request.Evaluate(ctx, "receipt-v2", false)
+```
+
+The ordinary `For` targeting scope does not freeze provider configuration. A snapshot captures both definitions and evaluation time. Dynamic flag names and tenant rollout rules stay in the source document. Keep authorization separate from presentation decisions.

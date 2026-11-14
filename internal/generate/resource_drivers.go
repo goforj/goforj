@@ -10,6 +10,8 @@ import (
 func BaselineDrivers(resource project.ResourceKey) []string {
 	var drivers []string
 	switch resource {
+	case project.ResourceFeature:
+		drivers = featureLocalDrivers
 	case project.ResourceDatabase:
 		drivers = dbLocalDrivers
 	case project.ResourceCache:

@@ -17,6 +17,7 @@ func TestValidateRenderedComponentContractsAcceptsProjectAndAppSelections(t *tes
 		apps       map[string]project.AppConfig
 	}{
 		{name: "all disabled", components: project.Components{CLI: true}},
+		{name: "feature", components: project.Components{CLI: true, Feature: true}},
 		{name: "cache", components: project.Components{CLI: true, Cache: true}},
 		{name: "events", components: project.Components{CLI: true, Events: true}},
 		{name: "storage", components: project.Components{CLI: true, Storage: true}},
@@ -294,7 +295,7 @@ func writeRenderedContractFixture(t *testing.T, components project.Components, c
 			writeRenderedContractFile(t, root, path, "generated\n")
 		}
 		writeRenderedContractFile(t, root, contract.documentationPath, "generated documentation\n")
-		if projectComponents.Grafana {
+		if projectComponents.Grafana && contract.dashboardPath != "" {
 			writeRenderedContractFile(t, root, contract.dashboardPath, "{}\n")
 		}
 		environmentLines = append(environmentLines,

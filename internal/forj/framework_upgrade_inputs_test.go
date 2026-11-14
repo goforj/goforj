@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/goforj/goforj/project"
@@ -55,7 +56,7 @@ func TestFrameworkInputContractTracksAllComponents(t *testing.T) {
 			var components project.Components
 			reflect.ValueOf(&components).Elem().Field(index).SetBool(true)
 			selection := frameworkInputSelection(components, project.StarterKitNone, nil, "")
-			if !reflect.DeepEqual(selection.Components, []string{field.Tag.Get("json")}) {
+			if !reflect.DeepEqual(selection.Components, []string{strings.SplitN(field.Tag.Get("json"), ",", 2)[0]}) {
 				t.Fatalf("component selection lost or duplicated: %v", selection.Components)
 			}
 			for _, named := range []bool{false, true} {

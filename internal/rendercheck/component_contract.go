@@ -37,6 +37,13 @@ type renderedContentMarker struct {
 
 var renderedPrimitiveContracts = []renderedPrimitiveContract{
 	{
+		key: project.ComponentFeature, label: "Feature",
+		packageRoots:      []string{"internal/features"},
+		corePaths:         []string{"internal/features/manager_gen.go", "internal/features/accessors_gen.go"},
+		documentationPath: "internal/features/README.md", environmentPrefix: "FEATURE", modulePath: "github.com/goforj/feature",
+		appMarkers: []string{"func (a *App) Features()"},
+	},
+	{
 		key:          project.ComponentCache,
 		label:        "Cache",
 		packageRoots: []string{"internal/caches"},
@@ -178,18 +185,21 @@ func (contract renderedPrimitiveContract) validateProject(root string, enabled b
 		checkPath(contract.documentationPath, false, "documentation")
 	}
 
-	dashboardRequired := enabled && grafanaEnabled
-	dashboardExists, err := renderedPathExists(root, contract.dashboardPath)
-	if err != nil {
-		violations = append(violations, fmt.Sprintf("%s cannot inspect dashboard %s: %v", contract.label, contract.dashboardPath, err))
-	} else if dashboardRequired && !dashboardExists {
-		violations = append(violations, fmt.Sprintf("%s requires dashboard %s", contract.label, contract.dashboardPath))
-	} else if !dashboardRequired && dashboardExists {
-		reason := "the component is disabled"
-		if enabled {
-			reason = "Grafana is disabled"
+	if contract.dashboardPath != "" {
+		dashboardRequired := enabled && grafanaEnabled
+		dashboardExists, err := renderedPathExists(root, contract.dashboardPath)
+		if err != nil {
+			violations = append(violations, fmt.Sprintf("%s cannot inspect dashboard %s: %v", contract.label, contract.dashboardPath, err))
+		} else if dashboardRequired && !dashboardExists {
+			violations = append(violations, fmt.Sprintf("%s requires dashboard %s", contract.label, contract.dashboardPath))
+		} else if !dashboardRequired && dashboardExists {
+			reason := "the component is disabled"
+			if enabled {
+				reason = "Grafana is disabled"
+			}
+			violations = append(violations, fmt.Sprintf("%s dashboard %s exists while %s", contract.label, contract.dashboardPath, reason))
 		}
-		violations = append(violations, fmt.Sprintf("%s dashboard %s exists while %s", contract.label, contract.dashboardPath, reason))
+
 	}
 
 	for path, assignments := range environments {

@@ -21,6 +21,7 @@ type moduleTidyRunner func(projectDir string) error
 
 // GenerationSelection names the project-owned surfaces that should be regenerated.
 type GenerationSelection struct {
+	Feature       bool
 	Storage       bool
 	Cache         bool
 	Mail          bool
@@ -41,6 +42,7 @@ type GenerationResult struct {
 // GenerationSelectionFromComponents translates durable component intent into generator participation.
 func GenerationSelectionFromComponents(components project.Components) GenerationSelection {
 	return GenerationSelection{
+		Feature:       components.Feature,
 		Storage:       components.Storage,
 		Cache:         components.Cache,
 		Mail:          components.Mail,
@@ -53,7 +55,7 @@ func GenerationSelectionFromComponents(components project.Components) Generation
 
 // any reports whether the caller selected at least one generated surface explicitly.
 func (s GenerationSelection) any() bool {
-	return s.Storage || s.Cache || s.Mail || s.Queue || s.Events || s.Database || s.Observability
+	return s.Feature || s.Storage || s.Cache || s.Mail || s.Queue || s.Events || s.Database || s.Observability
 }
 
 // generationTask keeps ordering, file accounting, and dependency behavior in one inventory.
@@ -75,6 +77,7 @@ type generationRun struct {
 
 // Cmd selects generated resource packages and derived project files.
 type Cmd struct {
+	Feature       bool `help:"Generate feature evaluator managers and named accessors"`
 	Storage       bool `help:"Generate storage code"`
 	Cache         bool `help:"Generate cache code"`
 	Mail          bool `help:"Generate mail code"`
@@ -225,6 +228,7 @@ func generationEnvironmentExample(projectDir string) ([]byte, error) {
 // generationSelection returns the command-line flags as one named selection value.
 func (c Cmd) generationSelection() GenerationSelection {
 	return GenerationSelection{
+		Feature:       c.Feature,
 		Storage:       c.Storage,
 		Cache:         c.Cache,
 		Mail:          c.Mail,
@@ -291,6 +295,7 @@ func generationTasksFor(selection GenerationSelection) []generationTask {
 		eventFiles++
 	}
 	return []generationTask{
+		{selected: selection.Feature, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Feature: the Feature component is disabled in .goforj.yml", generate: generateFeatureFiles},
 		{selected: selection.Storage, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Storage: the Storage component is disabled in .goforj.yml", generate: generateStorageFiles},
 		{selected: selection.Cache, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Cache: the Cache component is disabled in .goforj.yml", generate: generateCacheFiles},
 		{selected: selection.Mail, generatedFiles: 2, updatesDependencies: true, disabledRequestError: "cannot generate Mail: the Mail component is disabled in .goforj.yml", generate: generateMailFiles},
