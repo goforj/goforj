@@ -8,6 +8,7 @@ import (
 
 	"github.com/goforj/str/v2"
 
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 )
@@ -70,7 +71,12 @@ func prepareNewProjectTargetResources(
 	if configErr != nil && !os.IsNotExist(configErr) {
 		return newProjectResourcePreparation{}, fmt.Errorf("read existing target Apps: %w", configErr)
 	}
-	consumers, err := resourceenv.ResolveConsumers(source, effective, components, targetConfig)
+	knownApps := projectlayout.RuntimeApps(targetPath, targetConfig)
+	knownAppNames := make([]string, 0, len(knownApps))
+	for _, app := range knownApps {
+		knownAppNames = append(knownAppNames, app.Name)
+	}
+	consumers, err := resourceenv.ResolveConsumers(source, effective, components, targetConfig, knownAppNames...)
 	if err != nil {
 		return newProjectResourcePreparation{}, fmt.Errorf("discover existing target resource consumers: %w", err)
 	}

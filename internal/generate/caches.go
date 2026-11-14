@@ -302,6 +302,7 @@ func renderCacheAccessors(names []string) ([]byte, error) {
 
 // renderCacheConfig snapshots cache driver choices once so imports and the compiled manifest cannot diverge.
 func renderCacheConfig(input generationInput) ([]byte, error) {
+	input = legacyResourceGenerationInput(input, "CACHE")
 	names := discoverCacheStoreNames(input)
 	driverSet := map[string]struct{}{}
 	defaultDriver := effectivePrimitiveDriver(input.environment.Get("CACHE_DRIVER", "memory"), "memory")

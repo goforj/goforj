@@ -56,6 +56,7 @@ func generationEnvironmentResources() []generationEnvironmentResource {
 
 // discoverPrimitiveChildNames unions resource-first names with names declared only inside configured App overlays.
 func discoverPrimitiveChildNames(input generationInput, resourcePrefix string, rootKeys []string) []string {
+	input = legacyResourceGenerationInput(input, resourcePrefix)
 	resourcePrefix = str.Of(resourcePrefix).ToUpper().Trim().String()
 	if resourcePrefix == "" {
 		return nil
@@ -113,6 +114,7 @@ type primitiveEnvValidator struct {
 
 // validatePrimitiveEnv rejects environment shapes that cannot be represented by the generated driver manifest.
 func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) error {
+	input = legacyResourceGenerationInput(input, contract.Prefix)
 	appPrefixes := generationKnownAppEnvPrefixes(input)
 	rootKeySet := makeSet(contract.RootKeys...)
 	childNames := contract.ChildNames(input.environment)
@@ -388,6 +390,7 @@ func effectiveRawOverlayDriver(environment generationEnvironment, basePrefix, re
 
 // appPrefixedActiveDrivers resolves root and additional-app overlays with the same blank-driver fallbacks used at runtime.
 func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defaultDriver string, inheritRootDriver bool) []generationActiveDriver {
+	input = legacyResourceGenerationInput(input, resourcePrefix)
 	resourcePrefix = str.Of(resourcePrefix).ToUpper().Trim().String()
 	if resourcePrefix == "" {
 		return nil
