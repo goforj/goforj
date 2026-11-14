@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
@@ -65,6 +66,9 @@ func generateFeatureFiles(input generationInput) (int, error) {
 	methods := makeSet("Default", "Instances", "ReadinessChecks", "Start", "Close", "Refresh")
 	for _, name := range discoverFeatureNames(input) {
 		method := str.Of(name).Pascal().String()
+		if !token.IsIdentifier(method) || !token.IsExported(method) {
+			return 0, fmt.Errorf("feature resource %q cannot produce an exported Go accessor", name)
+		}
 		if _, exists := methods[method]; exists {
 			return 0, fmt.Errorf("feature resource %q conflicts with generated method %s", name, method)
 		}
@@ -93,21 +97,31 @@ func generateFeatureFiles(input generationInput) (int, error) {
 		}
 		data.Scopes = append(data.Scopes, featureScope{Prefix: prefix, Names: sortStrings(names)})
 	}
-	written := 0
+	var prepared []struct {
+		path   string
+		source []byte
+	}
 	for _, artifact := range []struct{ path, source string }{{FeatureManagerPath, featureManagerSourceTemplate}, {FeatureAccessorsPath, featureAccessorsSourceTemplate}} {
 		parsed, err := template.New(artifact.path).Parse(artifact.source)
 		if err != nil {
-			return written, err
+			return 0, err
 		}
 		var body bytes.Buffer
 		if err := parsed.Execute(&body, data); err != nil {
-			return written, err
+			return 0, err
 		}
 		formatted, err := format.Source(body.Bytes())
 		if err != nil {
-			return written, fmt.Errorf("format generated feature resource: %w", err)
+			return 0, fmt.Errorf("format generated feature resource: %w", err)
 		}
-		changed, err := writeGeneratedSource(filepath.Join(input.projectDir, artifact.path), formatted)
+		prepared = append(prepared, struct {
+			path   string
+			source []byte
+		}{artifact.path, formatted})
+	}
+	written := 0
+	for _, artifact := range prepared {
+		changed, err := writeGeneratedSource(filepath.Join(input.projectDir, artifact.path), artifact.source)
 		if err != nil {
 			return written, err
 		}
@@ -140,7 +154,9 @@ import (
     "context"
     "errors"
     "fmt"
+    "os"
     "path/filepath"
+    "runtime"
     "strings"
     "sync"
     "time"
@@ -280,13 +296,73 @@ func (manager *Manager) Start(ctx context.Context) error {
     return nil
 }
 
-// watchFeatureDirectory watches the parent so atomic file replacement does not detach the watch.
-// A missing or unsupported watch activates fallback polling until setup succeeds.
+// featureWatchDirectories resolves symlink chains while retaining each replaceable link's control directory.
+// Watching the resolved file parent also covers direct writes and replacements outside the configured directory.
+func featureWatchDirectories(path string) ([]string, error) {
+    path, err := filepath.Abs(path)
+    if err != nil { return nil, err }
+    volume := filepath.VolumeName(path)
+    remaining := strings.Split(strings.TrimPrefix(filepath.Clean(path), volume), string(filepath.Separator))
+    resolved := volume + string(filepath.Separator)
+    directories := map[string]bool{}
+    links := 0
+    for len(remaining) > 0 {
+        part := remaining[0]
+        remaining = remaining[1:]
+        if part == "" || part == "." { continue }
+        next := filepath.Join(resolved, part)
+        info, err := os.Lstat(next)
+        if err != nil {
+            if os.IsNotExist(err) && len(remaining) == 0 { resolved = next; break }
+            return nil, err
+        }
+        if info.Mode() & os.ModeSymlink == 0 { resolved = next; continue }
+        // Kqueue follows link targets and can miss replacement of an existing directory entry.
+        if runtime.GOOS != "linux" && runtime.GOOS != "windows" { return nil, errors.New("feature symlink replacement requires polling on this platform") }
+        links++
+        if links > 255 { return nil, errors.New("too many feature path symlinks") }
+        directories[resolved] = true
+        target, err := os.Readlink(next)
+        if err != nil { return nil, err }
+        if filepath.IsAbs(target) {
+            volume = filepath.VolumeName(target)
+            resolved = volume + string(filepath.Separator)
+            target = strings.TrimPrefix(target, volume)
+        }
+        remaining = append(strings.Split(target, string(filepath.Separator)), remaining...)
+    }
+    directories[filepath.Dir(resolved)] = true
+    result := make([]string, 0, len(directories))
+    for directory := range directories { result = append(result, directory) }
+    return result, nil
+}
+
+// watchFeatureDirectory watches resolved file parents and symlink controls without periodic healthy polling.
+// Missing or unsupported paths activate fallback polling until every required watch can be established.
 func watchFeatureDirectory(path string) *fsnotify.Watcher {
+    directories, err := featureWatchDirectories(path)
+    if err != nil { return nil }
     watcher, err := fsnotify.NewWatcher()
     if err != nil { return nil }
-    if err := watcher.Add(filepath.Dir(path)); err != nil { _ = watcher.Close(); return nil }
+    for _, directory := range directories {
+        if err := watcher.Add(directory); err != nil { _ = watcher.Close(); return nil }
+    }
+    // A link may have changed before its control directory was registered.
+    if !featureWatchMatches(path, watcher) { _ = watcher.Close(); return nil }
     return watcher
+}
+
+// featureWatchMatches avoids rebuilding healthy directory watches during unrelated entry churn.
+func featureWatchMatches(path string, watcher *fsnotify.Watcher) bool {
+    if watcher == nil { return false }
+    directories, err := featureWatchDirectories(path)
+    if err != nil { return false }
+    watched := watcher.WatchList()
+    if len(watched) != len(directories) { return false }
+    names := make(map[string]bool, len(watched))
+    for _, directory := range watched { names[directory] = true }
+    for _, directory := range directories { if !names[directory] { return false } }
+    return true
 }
 
 // runFeatureFileRefresh watches available filesystems and polls only while a watch is unavailable.
@@ -301,6 +377,7 @@ func runFeatureFileRefresh(ctx context.Context, resource managedEvaluator, watch
     debounce.Stop()
     defer debounce.Stop()
     var pending <-chan time.Time
+    rebind, invalidated := false, false
     var events <-chan fsnotify.Event
     var failures <-chan error
     defer func() { if watcher != nil { _ = watcher.Close() } }()
@@ -323,19 +400,36 @@ func runFeatureFileRefresh(ctx context.Context, resource managedEvaluator, watch
             _ = resource.client.Refresh(ctx)
         case event, ok := <-events:
             if !ok { _ = watcher.Close(); watcher = nil; continue }
-            // Directory entry changes also cover symlink swaps used by mounted configuration.
-            if event.Has(fsnotify.Create|fsnotify.Remove|fsnotify.Rename) || (event.Has(fsnotify.Write) && (filepath.Clean(event.Name) == resource.path || filepath.Clean(event.Name) == filepath.Dir(resource.path))) {
-                debounce.Reset(50*time.Millisecond)
-                pending = debounce.C
+            // A fixed flush deadline prevents unrelated directory churn from starving valid updates.
+            structural := event.Has(fsnotify.Create|fsnotify.Remove|fsnotify.Rename)
+            if event.Has(fsnotify.Remove|fsnotify.Rename) {
+                for _, directory := range watcher.WatchList() { if filepath.Clean(event.Name) == directory { invalidated = true } }
             }
-            if filepath.Clean(event.Name) == filepath.Dir(resource.path) && event.Has(fsnotify.Remove|fsnotify.Rename) { _ = watcher.Close(); watcher = nil }
+            target, _ := filepath.EvalSymlinks(resource.path)
+            if structural || (event.Has(fsnotify.Write) && (filepath.Clean(event.Name) == resource.path || filepath.Clean(event.Name) == target || filepath.Clean(event.Name) == filepath.Dir(resource.path))) {
+                rebind = rebind || structural
+                if pending == nil { debounce.Reset(50*time.Millisecond); pending = debounce.C }
+            }
         case err, ok := <-failures:
-            if ok && errors.Is(err, fsnotify.ErrEventOverflow) { _ = resource.client.Refresh(ctx); continue }
+            if ok && errors.Is(err, fsnotify.ErrEventOverflow) {
+                // Lost events may include a symlink swap, so reconcile topology before publishing recovery.
+                replacement := watchFeatureDirectory(resource.path)
+                _ = watcher.Close()
+                watcher = replacement
+                _ = resource.client.Refresh(ctx)
+                continue
+            }
             _ = watcher.Close()
             watcher = nil
             _ = resource.client.Refresh(ctx)
         case <-pending:
             pending = nil
+            if rebind && (invalidated || !featureWatchMatches(resource.path, watcher)) {
+                replacement := watchFeatureDirectory(resource.path)
+                if watcher != nil { _ = watcher.Close() }
+                watcher = replacement
+            }
+            rebind, invalidated = false, false
             _ = resource.client.Refresh(ctx)
         }
     }
