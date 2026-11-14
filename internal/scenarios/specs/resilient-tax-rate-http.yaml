@@ -16,7 +16,7 @@ markdown:
   intro: |
     Tolerate temporary tax-service 502 and 503 responses with no more than three total GET attempts.
   prerequisites: |
-    Start with the prepared tax-rate integration and its existing httpx/v2 v2.0.1 pin. Inspect the Project's go.mod before choosing APIs: framework-generated App defaults may still use httpx v1.1.0, and this scenario does not authorize upgrading those Projects. No real tax-service credentials or external destination are required.
+    Start with the prepared tax-rate integration and its existing httpx/v2 v2.0.1 pin. Inspect the Project's go.mod before choosing APIs: App defaults in generated go.mod files may still use httpx v1.1.0, and this scenario does not authorize upgrading those Projects. No real tax-service credentials or external destination are required.
   before: |
     The existing typed client performs one request and already owns URL-path escaping and App configuration.
   after: |
