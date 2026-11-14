@@ -1002,7 +1002,7 @@ func TestProtectRouteWithAuthVerifierCalibration(t *testing.T) {
 }
 
 // testMajorSurfaceVerifierCalibration exercises one contract independently so the integration runner can shard the complete portfolio.
-func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifierCase) {
+func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifierCase) eval.VerificationResult {
 	t.Helper()
 	t.Parallel()
 	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
@@ -1133,6 +1133,7 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		}
 		verifyEvaluationBehaviorMutant(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, *test.behavior, environment)
 	}
+	return result
 }
 
 // verifyDisconnectedNamedResourceProvider proves an otherwise compiling Wire edit cannot detach the provider that selects a named resource.
@@ -1519,4 +1520,25 @@ func evaluationCheckHasStatus(checks []eval.EndpointResult, id string, status ev
 		}
 	}
 	return false
+}
+
+// TestCheckoutBusinessMetricsVerifierCalibration rejects compiling registration-only, unbounded-label, and detached-registry implementations.
+func TestCheckoutBusinessMetricsVerifierCalibration(t *testing.T) {
+	for _, mutation := range []struct {
+		name, path, old, replacement, failed string
+		additional                           []evaluationMutation
+	}{
+		{name: "registration-only", path: "internal/checkout/service.go", old: "service.completed.WithLabelValues(\"success\").Inc()", replacement: "_ = start", failed: "business-metrics-behavior", additional: []evaluationMutation{{old: "service.duration.WithLabelValues(\"success\").ObserveDuration(service.now().Sub(start))", mutant: "_ = start"}}},
+		{name: "unbounded-label", path: "internal/checkout/service.go", old: "service.completed.WithLabelValues(\"success\").Inc()", replacement: "service.completed.WithLabelValues(tenantID).Inc()", failed: "business-metrics-behavior"},
+		{name: "detached-registry", path: "app/wire/inject_services_app.go", old: "manager.Registry()", replacement: "metrics.NewManagerWithConfig(metrics.Config{}).Registry()", failed: "business-metrics-app-registry"},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "instrument-checkout-metrics", scenario: "checkout-business-metrics", path: mutation.path, old: mutation.old, mutant: mutation.replacement, additional: mutation.additional, wantFailed: mutation.failed, wantCompile: true})
+			for _, id := range []string{"metrics-library-adoption", "test-function-added"} {
+				if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
+					t.Fatalf("golden quality %s did not pass: %#v", id, result.Checks)
+				}
+			}
+		})
+	}
 }
