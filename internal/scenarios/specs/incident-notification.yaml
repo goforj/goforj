@@ -7,11 +7,28 @@ app:
   doc_module_name: your/module
   components:
     web_api: true
+    notification: true
 prepare:
   steps:
-    - id: pin-notification
-      title: Prepare the released notification API
-      command: [go, get, github.com/goforj/notification@v0.1.0]
+    - id: compile-webhook-senders
+      title: Prepare the supported transport manifest
+      replace:
+        path: .env
+        language: dotenv
+        old: "NOTIFICATION_SUPPORTED_DRIVERS=log"
+        new: "NOTIFICATION_SUPPORTED_DRIVERS=log,webhook"
+    - id: configure-named-senders
+      title: Prepare explicit local sender names
+      append:
+        path: .env
+        language: dotenv
+        content: |
+
+          NOTIFICATION_PRIMARY_DRIVER=log
+          NOTIFICATION_SECONDARY_DRIVER=log
+    - id: generate-notification-accessors
+      title: Compile generated sender accessors before candidate execution
+      command: [forj, generate, --notification]
     - id: add-incident-boundary
       title: Establish the incident and sender boundary
       write:
@@ -54,6 +71,7 @@ steps:
         import (
             "context"
             "github.com/goforj/notification"
+            "example.com/invoiceeval/internal/notifications"
         )
 
         // AlertService keeps conservative acceptance policy behind injected senders.
@@ -62,6 +80,11 @@ steps:
         // NewAlertService advances only after a classified definitive rejection.
         func NewAlertService(primary, fallback notification.Sender) *AlertService {
             return &AlertService{sender: notification.Fallback(primary, fallback)}
+        }
+
+        // NewConfiguredAlertService selects App-configured senders while keeping fallback policy explicit.
+        func NewConfiguredAlertService(manager *notifications.Manager) *AlertService {
+            return NewAlertService(manager.Primary(), manager.Secondary())
         }
 
         // Notify preserves caller context and reports acceptance without claiming receipt.
@@ -141,6 +164,20 @@ steps:
                 })
             }
         }
+  - id: import-incident-provider
+    title: Import the incident feature for App composition
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\t\"example.com/invoiceeval/internal/runtime\"\n"
+      new: "\t\"example.com/invoiceeval/internal/runtime\"\n\t\"example.com/invoiceeval/internal/incidents\"\n"
+  - id: register-incident-provider
+    title: Register configured sender selection with App Wire
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tapp.NewLifecycleRegistry,\n"
+      new: "\tincidents.NewConfiguredAlertService,\n\tapp.NewLifecycleRegistry,\n"
 checks:
   - command: [go, test, ./internal/incidents]
   - command: [forj, build]

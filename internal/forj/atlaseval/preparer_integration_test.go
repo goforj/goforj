@@ -1532,5 +1532,12 @@ func TestIncidentNotificationVerifierCalibration(t *testing.T) {
 		additional:  []evaluationMutation{{old: "\n\t})", mutant: "\n\t}; return nil"}},
 		wantFailed:  "incident-notification-behavior",
 		wantCompile: true,
+		behavior: &evaluationBehaviorMutation{
+			path:        "internal/incidents/alert_service.go",
+			old:         "return NewAlertService(manager.Primary(), manager.Secondary())",
+			mutant:      "_ = manager.Primary(); return NewAlertService(manager.Default(), manager.Secondary())",
+			wantFailed:  "incident-notification-behavior",
+			wantCompile: true,
+		},
 	})
 }
