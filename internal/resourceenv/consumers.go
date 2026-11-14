@@ -411,8 +411,8 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if !set || strings.TrimSpace(driver) == "" {
 			driver = definition.NamedDriverDefault(rootDriver)
 		}
-		if resource == project.ResourceFeature {
-			driver = resolver.featureDriver(scope, driverKey, definition.DefaultDriver)
+		if resource == project.ResourceFeature || resource == project.ResourceNotification {
+			driver = resolver.rawScopedDriver(scope, driverKey, definition.DefaultDriver)
 		}
 		drivers[strings.ToLower(name)] = str.Of(driver).Trim().ToLower().String()
 	}
@@ -482,8 +482,8 @@ func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerS
 		key += "_" + strings.ToUpper(connection.name)
 	}
 	key += "_DRIVER"
-	if connection.definition.Key == project.ResourceFeature {
-		return resolver.featureDriver(scope, key, connection.definition.DefaultDriver)
+	if connection.definition.Key == project.ResourceFeature || connection.definition.Key == project.ResourceNotification {
+		return resolver.rawScopedDriver(scope, key, connection.definition.DefaultDriver)
 	}
 	value, set := resolver.overlayValue(scope, key)
 	if !set {
@@ -499,8 +499,8 @@ func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerS
 	return connection.definition.NamedDriverDefault(fallback)
 }
 
-// featureDriver preserves raw empty-value inheritance before normalizing the selected Feature driver.
-func (resolver resourceConsumerResolver) featureDriver(scope resourceConsumerScope, key, fallback string) string {
+// rawScopedDriver preserves raw empty-value inheritance for resources whose App resolvers fall back before normalization.
+func (resolver resourceConsumerResolver) rawScopedDriver(scope resourceConsumerScope, key, fallback string) string {
 	value := fallback
 	if project.AppResourceKeyOwner(key, resolver.appPrefixes) == "" {
 		if base := resolver.rawValues[key]; base != "" {
