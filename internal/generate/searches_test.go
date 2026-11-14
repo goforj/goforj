@@ -10,7 +10,7 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestGenerateSearchFilesValidatesBeforeWriting covers disabled selections, unsupported drivers, invalid settings, and conflicting accessor names.
+// TestGenerateSearchFilesValidatesBeforeWriting covers disabled selections, unsupported drivers, and invalid accessor names.
 func TestGenerateSearchFilesValidatesBeforeWriting(t *testing.T) {
 	if err := validateRequestedGenerationSelection(GenerationSelection{Search: true}, GenerationSelection{}); err == nil {
 		t.Fatal("disabled Search accepted generation")
@@ -22,7 +22,6 @@ func TestGenerateSearchFilesValidatesBeforeWriting(t *testing.T) {
 	}{
 		{"unknown", map[string]string{"SEARCH_DRIVER": "unknown"}, "unsupported driver"},
 		{"not-compiled", map[string]string{"SEARCH_DRIVER": "meilisearch", "SEARCH_SUPPORTED_DRIVERS": "bleve"}, "not enabled"},
-		{"wrong-setting", map[string]string{"SEARCH_DRIVER": "bleve", "SEARCH_CATALOG_URL": "https://example.invalid"}, "URL"},
 		{"reserved-accessor", map[string]string{"SEARCH_INDEX_PATH": "index"}, "conflicts"},
 		{"numeric-accessor", map[string]string{"SEARCH_123_PATH": "index"}, "accessor"},
 		{"normalized-collision", map[string]string{"SEARCH_FOO_BAR_PATH": "first", "SEARCH_FOO__BAR_PATH": "second"}, "conflicts"},
@@ -92,12 +91,11 @@ func TestGenerateSearchFilesKeepsAppNamesAndDriversScoped(t *testing.T) {
 func TestSearchAppRootDriverPrecedence(t *testing.T) {
 	for _, test := range []struct {
 		name, named, appNamed, option, want string
-		invalid                             bool
 	}{
 		{name: "App root inherited", option: "URL", want: "meilisearch"},
 		{name: "global named overrides App root", named: "bleve", option: "PATH", want: "bleve"},
 		{name: "App named overrides global named", named: "meilisearch", appNamed: "bleve", option: "PATH", want: "bleve"},
-		{name: "App root rejects Bleve option", option: "PATH", want: "meilisearch", invalid: true},
+		{name: "App root retains Bleve option", option: "PATH", want: "meilisearch"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -112,13 +110,8 @@ func TestSearchAppRootDriverPrecedence(t *testing.T) {
 				values["ADMIN_SEARCH_CATALOG_DRIVER"] = test.appNamed
 			}
 			input := fixtureGenerationInput(root, values)
-			if _, err := generateSearchFiles(input); (err != nil) != test.invalid {
+			if _, err := generateSearchFiles(input); err != nil {
 				t.Fatalf("generate = %v", err)
-			}
-			if test.invalid {
-				if _, err := os.Stat(filepath.Join(root, SearchManagerPath)); !os.IsNotExist(err) {
-					t.Fatal("invalid driver option published output")
-				}
 			}
 			found := false
 			for _, choice := range appPrefixedActiveDrivers(input, "SEARCH", "bleve", true) {
@@ -522,3 +515,47 @@ func TestSearchManagerRejectsAmbiguousAliases(t *testing.T) {
 }
 
 `
+
+// TestSearchGenerationCanonicalAliasPrecedence keeps duplicate raw ambient aliases aligned with runtime selection.
+func TestSearchGenerationCanonicalAliasPrecedence(t *testing.T) {
+	root := t.TempDir()
+	values := map[string]string{"SEARCH_CATALOG_V2_PATH": "canonical", "SEARCH_CATALOG-V2_PATH": "legacy", "SEARCH_CATALOG_V2_DRIVER": "bleve", "SEARCH_CATALOG-V2_DRIVER": "unknown"}
+	input := generationInput{projectDir: root, environment: generationEnvironment{values: values}}
+	if _, err := generateSearchFiles(input); err != nil {
+		t.Fatal(err)
+	}
+	accessors, err := os.ReadFile(filepath.Join(root, SearchAccessorsPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(accessors), "CatalogV2()") != 1 {
+		t.Fatalf("canonical alias duplicated accessor: %s", accessors)
+	}
+	manager, err := os.ReadFile(filepath.Join(root, SearchManagerPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(manager), "driver/meilisearch") {
+		t.Fatal("shadowed driver widened compiled inventory")
+	}
+	delete(values, "SEARCH_CATALOG_V2_PATH")
+	if changed, err := generateSearchFiles(input); err != nil || changed != 0 {
+		t.Fatalf("mixed suffix aliases duplicated output: %d %v", changed, err)
+	}
+	values["SEARCH_CATALOG-V2_DRIVER"] = "meilisearch"
+	if changed, err := generateSearchFiles(input); err != nil || changed != 0 {
+		t.Fatalf("shadowed alias changed files: %d %v", changed, err)
+	}
+	if values["SEARCH_CATALOG-V2_PATH"] != "legacy" {
+		t.Fatal("generation mutated captured input")
+	}
+}
+
+// TestSearchAliasShadowingPreservesAppOwnership prevents a canonical spelling owned by a longer App from hiding an exact-name setting.
+func TestSearchAliasShadowingPreservesAppOwnership(t *testing.T) {
+	input := generationInput{environment: generationEnvironment{values: map[string]string{"SEARCH_SEARCH_CACHE-FOO_DRIVER": "bleve", "SEARCH_SEARCH_CACHE_FOO_DRIVER": "redis"}}, appPrefixes: []string{"SEARCH", "SEARCH_SEARCH"}}
+	canonical := canonicalSearchGenerationInput(input)
+	if value, present := canonical.environment.Lookup("SEARCH_SEARCH_CACHE-FOO_DRIVER"); !present || value != "bleve" {
+		t.Fatal("another App's setting shadowed a declared Search alias")
+	}
+}

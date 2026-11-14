@@ -745,12 +745,16 @@ func (p *ProjectRenderer) validateSearchRenderTransition(components project.Comp
 func searchManagerAccessor(file *ast.File) bool {
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Recv == nil || function.Name.Name != "Searches" {
+		if !ok || function.Recv == nil || function.Name.Name != "Searches" || function.Type.Params.NumFields() != 0 || function.Type.Results == nil || function.Type.Results.NumFields() != 1 {
+			continue
+		}
+		pointer, ok := function.Type.Results.List[0].Type.(*ast.StarExpr)
+		if !ok {
 			continue
 		}
 		for _, specification := range file.Imports {
 			path, err := strconv.Unquote(specification.Path.Value)
-			if err == nil && strings.HasSuffix(path, "/internal/searches") && searchTypeReference(file, function.Type, path, "Manager") {
+			if err == nil && strings.HasSuffix(path, "/internal/searches") && searchTypeReference(file, pointer.X, path, "Manager") {
 				return true
 			}
 		}
@@ -762,7 +766,7 @@ func searchManagerAccessor(file *ast.File) bool {
 func searchSchemaDeclaration(file *ast.File) bool {
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Recv != nil || function.Name.Name != "SearchDefinitions" || function.Type.Results == nil {
+		if !ok || function.Recv != nil || function.Name.Name != "SearchDefinitions" || function.Type.Results == nil || function.Type.Results.NumFields() != 1 || function.Type.Params.NumFields() != 0 {
 			continue
 		}
 		for _, result := range function.Type.Results.List {
@@ -780,7 +784,7 @@ func searchSchemaDeclaration(file *ast.File) bool {
 }
 
 // searchTypeReference resolves import aliases so transition checks require actual Search types instead of common filenames.
-func searchTypeReference(file *ast.File, node ast.Node, importPath, typeName string) bool {
+func searchTypeReference(file *ast.File, expression ast.Expr, importPath, typeName string) bool {
 	qualifier := ""
 	for _, specification := range file.Imports {
 		path, err := strconv.Unquote(specification.Path.Value)
@@ -796,17 +800,14 @@ func searchTypeReference(file *ast.File, node ast.Node, importPath, typeName str
 	if qualifier == "" || qualifier == "_" {
 		return false
 	}
-	found := false
-	ast.Inspect(node, func(current ast.Node) bool {
-		if expression, ok := current.(ast.Expr); ok && selectorExpressionMatches(expression, qualifier, typeName) {
-			found = true
-			return false
-		}
-		if identifier, ok := current.(*ast.Ident); qualifier == "." && ok && identifier.Name == typeName {
-			found = true
-			return false
-		}
-		return !found
-	})
-	return found
+	if qualifier == "." {
+		identifier, ok := expression.(*ast.Ident)
+		return ok && identifier.Name == typeName
+	}
+	selector, ok := expression.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != typeName {
+		return false
+	}
+	identifier, ok := selector.X.(*ast.Ident)
+	return ok && identifier.Name == qualifier
 }

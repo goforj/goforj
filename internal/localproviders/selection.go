@@ -10,7 +10,10 @@ import (
 )
 
 // resourceSetting follows named-to-root inheritance and App overlays for one resource family.
-func resourceSetting(values map[string]string, key, suffix, app string, definition project.ResourceDefinition) string {
+func (s *Session) resourceSetting(values map[string]string, key, suffix, app string, definition project.ResourceDefinition) string {
+	if definition.Key == project.ResourceSearch {
+		return s.searchResourceSetting(values, key, suffix, app, definition)
+	}
 	if definition.Key == project.ResourceDatabase {
 		_, value := databaseSettingInScope(values, key, suffix, app)
 		if suffix == "DRIVER" && value == "" {
@@ -20,9 +23,22 @@ func resourceSetting(values map[string]string, key, suffix, app string, definiti
 	}
 	base := strings.TrimPrefix(key, app)
 	for _, prefix := range []string{strings.TrimSuffix(base, "DRIVER"), definition.EnvironmentPrefix + "_"} {
-		value := values[prefix+suffix]
-		if overlay, present := values[app+prefix+suffix]; app != "" && present {
-			value = overlay
+		source := prefix + suffix
+		value := ""
+		if resourceScopeAllowed(s.config, source, definition, "") {
+			value = values[source]
+		}
+		if overlay, present := values[app+source]; app != "" && present && resourceScopeAllowed(s.config, app+source, definition, app) {
+			if (definition.Key != project.ResourceFeature && definition.Key != project.ResourceNotification) || overlay != "" {
+				value = overlay
+			}
+		}
+		if (definition.Key == project.ResourceFeature || definition.Key == project.ResourceNotification) && suffix == "DRIVER" {
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value == "" {
+				return definition.DefaultDriver
+			}
+			return value
 		}
 		if strings.TrimSpace(value) != "" {
 			return value
@@ -37,16 +53,76 @@ func resourceSetting(values map[string]string, key, suffix, app string, definiti
 	return ""
 }
 
+// searchResourceSetting mirrors Search's App-root defaults, named overrides, and explicit blank driver fallbacks.
+func (s *Session) searchResourceSetting(values map[string]string, key, suffix, app string, definition project.ResourceDefinition) string {
+	base := strings.TrimPrefix(key, app)
+	namedPrefix := strings.TrimSuffix(base, "DRIVER")
+	lookup := func(source, scope string) (string, bool) {
+		if !resourceScopeAllowed(s.config, source, definition, scope) {
+			return "", false
+		}
+		value, present := values[source]
+		return value, present
+	}
+	if suffix == "DRIVER" {
+		normalize := func(value, fallback string) string {
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value == "" {
+				return fallback
+			}
+			return value
+		}
+		rootValue, _ := lookup("SEARCH_DRIVER", "")
+		root := normalize(rootValue, definition.DefaultDriver)
+		appRoot := root
+		if app != "" {
+			if value, present := lookup(app+"SEARCH_DRIVER", app); present {
+				appRoot = normalize(value, definition.DefaultDriver)
+			}
+		}
+		if namedPrefix == "SEARCH_" {
+			return appRoot
+		}
+		driver := appRoot
+		if value, present := lookup(base, ""); present {
+			driver = normalize(value, root)
+		}
+		if app != "" {
+			if value, present := lookup(app+base, app); present {
+				driver = normalize(value, appRoot)
+			}
+		}
+		return driver
+	}
+	value := ""
+	apply := func(source, scope string) {
+		if current, present := lookup(source, scope); present && current != "" {
+			value = current
+		}
+	}
+	apply("SEARCH_"+suffix, "")
+	if app != "" {
+		apply(app+"SEARCH_"+suffix, app)
+	}
+	if namedPrefix != "SEARCH_" {
+		apply(namedPrefix+suffix, "")
+		if app != "" {
+			apply(app+namedPrefix+suffix, app)
+		}
+	}
+	return value
+}
+
 // resourceScopes enumerates every live interpretation of a potentially shared environment key.
 func (s *Session) resourceScopes(key string, definition project.ResourceDefinition) []string {
 	scopes := map[string]bool{}
 	prefix := definition.EnvironmentPrefix + "_"
-	if strings.HasPrefix(key, prefix) && definition.AppliesTo(project.ProjectComponents(s.config)) {
+	if strings.HasPrefix(key, prefix) && definition.AppliesTo(project.ProjectComponents(s.config)) && resourceScopeAllowed(s.config, key, definition, "") {
 		scopes[""] = true
 	}
 	for name, app := range s.config.Apps {
 		scope := project.AppEnvironmentPrefix(name) + "_"
-		if name != project.DefaultAppName && strings.HasPrefix(key, scope+prefix) && definition.AppliesTo(project.NormalizeConfiguredAppComponents(s.config, app.Components)) {
+		if name != project.DefaultAppName && strings.HasPrefix(key, scope+prefix) && definition.AppliesTo(project.NormalizeConfiguredAppComponents(s.config, app.Components)) && resourceScopeAllowed(s.config, key, definition, scope) {
 			scopes[scope] = true
 		}
 	}
@@ -62,8 +138,8 @@ func (s *Session) preserveExcluded(values map[string]string, excluded map[string
 		needsPin := false
 		for _, definition := range resourceDefinitions(s.config, resource.Key) {
 			for _, app := range s.resourceScopes(resource.Key, definition) {
-				before := resourceSetting(s.Current, resource.Key, "DRIVER", app, definition)
-				after := resourceSetting(values, resource.Key, "DRIVER", app, definition)
+				before := s.resourceSetting(s.Current, resource.Key, "DRIVER", app, definition)
+				after := s.resourceSetting(values, resource.Key, "DRIVER", app, definition)
 				needsPin = needsPin || project.CanonicalResourceDriver(definition.Key, before) != project.CanonicalResourceDriver(definition.Key, after)
 				if definition.Key == project.ResourceDatabase {
 					needsPin = needsPin || databaseTargetInScope(s.Current, resource.Key, app) != databaseTargetInScope(values, resource.Key, app)
@@ -76,20 +152,20 @@ func (s *Session) preserveExcluded(values map[string]string, excluded map[string
 		selected := ""
 		for _, definition := range resourceDefinitions(s.config, resource.Key) {
 			for _, app := range s.resourceScopes(resource.Key, definition) {
-				before := project.CanonicalResourceDriver(definition.Key, resourceSetting(s.Current, resource.Key, "DRIVER", app, definition))
+				before := project.CanonicalResourceDriver(definition.Key, s.resourceSetting(s.Current, resource.Key, "DRIVER", app, definition))
 				if selected != "" && selected != before {
 					return fmt.Errorf("%s has conflicting inherited drivers; exclude its parent resources as well", resource.Key)
 				}
 				selected = before
-				after := project.CanonicalResourceDriver(definition.Key, resourceSetting(values, resource.Key, "DRIVER", app, definition))
+				after := project.CanonicalResourceDriver(definition.Key, s.resourceSetting(values, resource.Key, "DRIVER", app, definition))
 				if before != after {
 					values[resource.Key] = before
 					s.retainDriverSupport(values, resource.Key, s.Current[resource.Key], before)
 				}
 				if definition.Key == project.ResourceDatabase {
 					for _, suffix := range []string{"DSN", "SQLITE_DATABASE", "DATABASE", "HOST", "PORT", "USERNAME", "PASSWORD"} {
-						before := resourceSetting(s.Current, resource.Key, suffix, app, definition)
-						after := resourceSetting(values, resource.Key, suffix, app, definition)
+						before := s.resourceSetting(s.Current, resource.Key, suffix, app, definition)
+						after := s.resourceSetting(values, resource.Key, suffix, app, definition)
 						if before != after {
 							values[strings.TrimSuffix(resource.Key, "DRIVER")+suffix] = before
 						}
@@ -137,7 +213,7 @@ func (s *Session) usedProfiles(values map[string]string) map[string]bool {
 	for _, resource := range s.Resources {
 		for _, definition := range resourceDefinitions(s.config, resource.Key) {
 			for _, app := range s.resourceScopes(resource.Key, definition) {
-				driver := resourceSetting(values, resource.Key, "DRIVER", app, definition)
+				driver := s.resourceSetting(values, resource.Key, "DRIVER", app, definition)
 				selected, ok := definition.Driver(driver)
 				if !ok {
 					continue
