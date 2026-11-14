@@ -1,0 +1,248 @@
+schema_version: 2
+id: customer-settings-validation
+title: Customer Settings Validation
+description: Update preferences without collapsing omitted, null, zero, or false.
+depends_on:
+- invoice-http-route
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+prepare:
+  steps:
+  - id: scaffold-settings-controller
+    title: Register the prepared settings boundary
+    command:
+    - forj
+    - make:controller
+    - settings
+  - id: prepare-settings-model
+    title: Establish customer preference state
+    write:
+      path: internal/settings/service.go
+      language: go
+      content: |
+        // Package settings owns customer preferences independently from HTTP.
+        package settings
+
+        import "context"
+
+        // Settings is the persisted customer preference snapshot.
+        type Settings struct {
+         Name string `json:"name"`
+         Limit int `json:"limit"`
+         Enabled bool `json:"enabled"`
+         Note *string `json:"note"`
+        }
+
+        // NameCheck checks policy using the caller's cancellation boundary.
+        type NameCheck func(context.Context, string) error
+
+        // NewNameCheck supplies the local fixture policy without a remote dependency.
+        func NewNameCheck() NameCheck { return func(context.Context, string) error { return nil } }
+
+        // Service owns preference updates and their reusable validation policy.
+        type Service struct { check NameCheck; current Settings }
+
+        // NewService composes policy and deterministic fixture state.
+        func NewService(check NameCheck) *Service {
+         note := "keep me"
+         return &Service{check: check, current: Settings{Name: "Existing", Limit: 25, Enabled: true, Note: &note}}
+        }
+  - id: prepare-settings-controller
+    title: Reserve the PATCH boundary
+    write:
+      path: internal/settings/controller.go
+      language: go
+      content: |
+        // Package settings owns customer preferences independently from HTTP.
+        package settings
+
+        import (
+         "net/http"
+         "github.com/goforj/web"
+        )
+
+        // Controller exposes the prepared settings boundary.
+        type Controller struct { service *Service }
+
+        // NewController exposes the service dependency to Wire.
+        func NewController(service *Service) *Controller { return &Controller{service: service} }
+
+        // Routes reserves the settings endpoint before update behavior is implemented.
+        func (controller *Controller) Routes() []web.Route { return []web.Route{web.NewRoute(http.MethodPatch, "/customers/settings", controller.Patch)} }
+
+        // Patch marks the unimplemented target behavior.
+        func (controller *Controller) Patch(request web.Context) error { return request.JSON(http.StatusNotImplemented, map[string]string{"error":"not_implemented"}) }
+  - id: import-settings-services
+    title: Import settings providers
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\t\"example.com/invoiceeval/internal/runtime\"\n"
+      new: "\t\"example.com/invoiceeval/internal/runtime\"\n\t\"example.com/invoiceeval/internal/settings\"\n"
+  - id: provide-settings-services
+    title: Compose settings policy and state
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tapp.NewLifecycleRegistry,\n"
+      new: "\tsettings.NewNameCheck,\n\tsettings.NewService,\n\tapp.NewLifecycleRegistry,\n"
+  checks:
+  - command:
+    - forj
+    - build
+  - command:
+    - go
+    - get
+    - github.com/goforj/validation@v0.2.0
+  - command:
+    - go
+    - mod
+    - download
+  - command:
+    - go
+    - test
+    - ./...
+markdown:
+  intro: Implement a presence-aware customer settings PATCH with reusable typed validation.
+  before: The registered settings endpoint returns 501; the prepared module already pins validation v0.2.0.
+  after: Updates preserve omission, permit nullable notes, and distinguish client issues from operational policy
+    errors.
+  files:
+  - internal/settings/controller.go
+  - internal/settings/policy.go
+  - internal/settings/policy_test.go
+  prerequisites: Start from the prepared invoice HTTP application. Keep validation v0.2.0 staged before the network-disabled
+    task, and inspect the existing settings controller, service, and fake initial state.
+  troubleshooting: If omission and null behave identically, inspect the JSON input shape and presence rules before
+    changing update logic. Map only structured validation issues to 422 field codes; keep ordinary rule errors and
+    cancellation operational.
+  next_steps:
+  - Replace fixture state with an application-owned repository while preserving atomic patch behavior.
+  - Extend presence and field-code regression cases when adding settings.
+steps:
+- id: implement-settings-policy
+  title: Share normalized application validation
+  write:
+    path: internal/settings/policy.go
+    language: go
+    content: |
+      // Package settings owns customer preferences independently from HTTP.
+      package settings
+
+      import (
+       "context"
+       "strings"
+       "github.com/goforj/validation"
+      )
+
+      // PatchInput preserves omission, null, and supplied zero values across transports.
+      type PatchInput struct {
+       Name validation.Input[string] `json:"name"`
+       Limit validation.Input[int] `json:"limit"`
+       Enabled validation.Input[bool] `json:"enabled"`
+       Note validation.Input[string] `json:"note"`
+      }
+
+      // ValidatePatch centralizes rules so HTTP and direct application calls share policy.
+      func (service *Service) ValidatePatch(ctx context.Context, input PatchInput) error {
+       return validation.ValidateContext(ctx,
+        validation.Presence("name", input.Name, func(value string) validation.Field { return validation.String("", value).Required().Check(service.check) }),
+        validation.Presence("limit", input.Limit, func(value int) validation.Field { return validation.Number("", value).Min(0).Max(100) }),
+        validation.Presence("enabled", input.Enabled, func(value bool) validation.Field { return validation.Bool("", value) }),
+        validation.Presence("note", input.Note, func(value string) validation.Field { return validation.String("", value).Max(80) }).Nullable(),
+       )
+      }
+
+      // Update validates before changing state so failed patches cannot partially apply.
+      func (service *Service) Update(ctx context.Context, input PatchInput) (Settings, error) {
+       if value, ok := input.Name.Get(); ok { input.Name = validation.Provided(strings.TrimSpace(value)) }
+       if err := service.ValidatePatch(ctx, input); err != nil { return Settings{}, err }
+       if value, ok := input.Name.Get(); ok { service.current.Name = value }
+       if value, ok := input.Limit.Get(); ok { service.current.Limit = value }
+       if value, ok := input.Enabled.Get(); ok { service.current.Enabled = value }
+       if input.Note.IsNull() { service.current.Note = nil } else if value, ok := input.Note.Get(); ok { service.current.Note = &value }
+       return service.current, nil
+      }
+- id: implement-settings-patch
+  title: Translate stable HTTP errors
+  write:
+    path: internal/settings/controller.go
+    language: go
+    content: |
+      // Package settings owns customer preferences independently from HTTP.
+      package settings
+
+      import (
+       "errors"
+       "net/http"
+       "github.com/goforj/web"
+       "github.com/goforj/validation"
+      )
+
+      // Controller translates the settings HTTP contract into service calls.
+      type Controller struct { service *Service }
+
+      // NewController exposes the service dependency to Wire.
+      func NewController(service *Service) *Controller { return &Controller{service: service} }
+
+      // Routes declares customer preference updates.
+      func (controller *Controller) Routes() []web.Route {
+       return []web.Route{web.NewRoute(http.MethodPatch, "/customers/settings", controller.Patch)}
+      }
+
+      // Patch preserves stable public field codes while operational errors retain their identity.
+      func (controller *Controller) Patch(request web.Context) error {
+       var input PatchInput
+       if err := request.Bind(&input); err != nil { return request.JSON(http.StatusBadRequest, map[string]string{"error":"invalid_payload"}) }
+       result, err := controller.service.Update(request.Context(), input)
+       if err != nil {
+        var failures *validation.Errors
+        if errors.As(err, &failures) {
+         fields := map[string]string{}
+         for _, issue := range failures.Issues() { if _, exists := fields[issue.Path]; !exists { fields[issue.Path] = issue.Code } }
+         return request.JSON(http.StatusUnprocessableEntity, struct { Error string `json:"error"`; Fields map[string]string `json:"fields"` }{"validation_failed", fields})
+        }
+        return err
+       }
+       return request.JSON(http.StatusOK, result)
+      }
+- id: test-settings-presence
+  title: Exercise supplied zero and false
+  write:
+    path: internal/settings/policy_test.go
+    language: go
+    content: |
+      // Package settings owns customer preferences independently from HTTP.
+      package settings
+
+      import (
+       "context"
+       "encoding/json"
+       "testing"
+      )
+
+      // TestUpdatePreservesPresence proves zero and false update rather than disappear.
+      func TestUpdatePreservesPresence(t *testing.T) {
+       service := NewService(NewNameCheck())
+       var input PatchInput
+       if err := json.Unmarshal([]byte(`{"limit":0,"enabled":false,"note":null}`), &input); err != nil { t.Fatal(err) }
+       result, err := service.Update(context.Background(), input)
+       if err != nil || result.Name != "Existing" || result.Limit != 0 || result.Enabled || result.Note != nil { t.Fatalf("result = %#v, error = %v", result, err) }
+      }
+checks:
+- command:
+  - go
+  - test
+  - ./internal/settings
+- command:
+  - forj
+  - build
+- command:
+  - forj
+  - route:list
+  contains:
+  - PATCH
+  - /api/v1/customers/settings

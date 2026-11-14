@@ -323,3 +323,16 @@ Before replacing this page:
 Do not run another complete matrix merely to improve the headline percentage.
 Use repeated paired trials to answer a specific reliability, regression, or
 guidance-attribution question, and preserve previous scorecards in Git history.
+
+## Additional contracts awaiting live measurement
+
+`patch-customer-settings` is a new, independently versioned presence-aware PATCH
+contract. Its `customer-settings-validation` scenario stages validation v0.2.0
+before candidate execution and keeps candidate shell networking disabled.
+Golden and compiling semantic mutant calibration cover omission, explicit null,
+zero/false, normalization, shared application rules, stable client codes, and
+operational failures. Actual library adoption is reported as separate quality
+observations rather than changing the behavior score.
+
+This contract has no retained live provider attempts. The historical 32-task
+matrix and `add-validated-write-endpoint/v1` results above remain unchanged.
