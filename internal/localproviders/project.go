@@ -179,7 +179,7 @@ func managedAppResourceOwner(config *project.Config, key string) (string, bool) 
 	}
 	owner := project.AppResourceKeyOwner(key, prefixes)
 	relative := strings.TrimPrefix(key, owner+"_")
-	if owner == "" || !(strings.HasPrefix(relative, "FEATURE_") || strings.HasPrefix(relative, "NOTIFICATION_")) {
+	if owner == "" || !(strings.HasPrefix(relative, "FEATURE_") || strings.HasPrefix(relative, "NOTIFICATION_") || strings.HasPrefix(relative, "SEARCH_")) {
 		return "", false
 	}
 	for name, app := range config.Apps {
