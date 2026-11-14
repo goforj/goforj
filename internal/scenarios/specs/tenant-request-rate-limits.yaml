@@ -1,0 +1,169 @@
+schema_version: 2
+id: tenant-request-rate-limits
+title: Tenant Request Rate Limits
+description: Limit authenticated exports across App instances with a shared cache and explicit failure policy.
+depends_on: [tenant-request-domain]
+prepare:
+  checks:
+    - command: [forj, build]
+    - command: [go, test, ./internal/requests]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+    cache: true
+markdown:
+  intro: |
+    Limit each authenticated tenant to two exports per UTC minute across App replicas. Use one shared atomic counter per tenant and time bucket; local middleware counters cannot enforce this deployment policy.
+  before: |
+    authenticated exports have no budget and health is independent.
+  after: |
+    the third export returns 429 with Retry-After, a new minute resets the budget, and backend failure returns 503 without executing the export.
+  prerequisites: |
+    Complete Authenticated Tenant Request Boundary. Keep the requests resource on Redis for multiple replicas. Both instances must share its endpoint and prefix. The existing injectable clock permits boundary tests without sleeping; the root Cache.RateLimit helper uses wall time, so this policy uses atomic Increment with an explicit time bucket.
+  common_mistakes:
+    - Do not create one global bucket for all tenants or allocate a process-local replacement cache.
+    - Do not read unverified tenant headers or silently fail open after backend failure.
+    - Do not apply the export policy globally to health or authentication.
+  troubleshooting: |
+    A 503 means the shared counter could not be checked, not that the tenant exhausted its quota. Investigate Redis readiness and preserve the fail-closed policy. Retry-After is the positive number of seconds until the next UTC minute, rounded up.
+  next_steps:
+    - Add deployment-specific Redis availability monitoring and choose a different documented failure policy only through an explicit product decision.
+    - Use a process-local policy only for an explicitly single-instance budget; cache locks require a separate ownership design.
+  files:
+    - internal/requests/limiter.go
+    - internal/requests/limiter_test.go
+steps:
+  - id: implement-tenant-budget
+    title: Enforce the shared tenant and UTC-minute budget
+    write:
+      path: internal/requests/limiter.go
+      language: go
+      content: |
+        // Package requests owns authenticated request identity and route policy.
+        package requests
+
+        import (
+                "encoding/base64"
+                "github.com/goforj/cache"
+                "github.com/goforj/web"
+                "net/http"
+                "strconv"
+                "time"
+        )
+
+        // Limiter owns a shared fixed-window export budget while borrowing the App cache.
+        type Limiter struct {
+                client *cache.Cache
+                now    func() time.Time
+        }
+
+        // NewLimiter accepts shared storage and a clock so policy can be tested without sleeps.
+        func NewLimiter(client *cache.Cache, now func() time.Time) *Limiter {
+                return &Limiter{client: client, now: now}
+        }
+
+        // Middleware fails closed when the shared budget cannot be checked and never trusts client tenant assertions.
+        func (limiter *Limiter) Middleware(next web.Handler) web.Handler {
+                return func(request web.Context) error {
+                        tenant, ok := Tenant(request.Context())
+                        if !ok {
+                                return request.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+                        }
+                        now := limiter.now()
+                        bucket := now.Unix() / 60
+                        key := "exports:" + base64.RawURLEncoding.EncodeToString([]byte(tenant)) + ":" + strconv.FormatInt(bucket, 10)
+                        count, err := limiter.client.WithContext(request.Context()).Increment(key, 1, 2*time.Minute)
+                        if err != nil {
+                                return request.JSON(http.StatusServiceUnavailable, map[string]string{"error": "rate limit unavailable"})
+                        }
+                        if count > 2 {
+                                retry := (time.Unix((bucket+1)*60, 0).Sub(now) + time.Second - 1) / time.Second
+                                request.Response().Header().Set("Retry-After", strconv.FormatInt(int64(retry), 10))
+                                return request.JSON(http.StatusTooManyRequests, map[string]string{"error": "rate limit exceeded"})
+                        }
+                        return next(request)
+                }
+        }
+  - id: test-shared-tenant-budget
+    title: Test shared instances and controlled reset
+    write:
+      path: internal/requests/limiter_test.go
+      language: go
+      content: |
+        // Package requests owns authenticated request identity and route policy.
+        package requests
+
+        import (
+                "net/http"
+                "net/http/httptest"
+                "testing"
+                "time"
+
+                "example.com/invoiceeval/internal/caches"
+                "github.com/alicebob/miniredis/v2"
+                "github.com/goforj/web/webtest"
+        )
+
+        // TestSharedTenantBudget proves separate resource owners consume one tenant budget and reset without sleeping.
+        func TestSharedTenantBudget(t *testing.T) {
+                server := miniredis.RunT(t)
+                t.Setenv("CACHE_REQUESTS_DRIVER", "redis")
+                t.Setenv("CACHE_REQUESTS_ADDR", server.Addr())
+                first, err := caches.NewManager()
+                if err != nil {
+                        t.Fatal(err)
+                }
+                second, err := caches.NewManager()
+                if err != nil {
+                        t.Fatal(err)
+                }
+                now := time.Date(2030, 1, 2, 3, 4, 10, 0, time.UTC)
+                controllers := []*Controller{
+                        NewController(NewLimiter(first.Requests(), func() time.Time { return now })),
+                        NewController(NewLimiter(second.Requests(), func() time.Time { return now })),
+                }
+                for index, want := range []int{200, 200, 429} {
+                        if status := requestStatus(t, controllers[index%2], "/exports", "Bearer tenant-a-token"); status != want {
+                                t.Fatalf("request %d: %d, want %d", index, status, want)
+                        }
+                }
+                if status := requestStatus(t, controllers[0], "/exports", "Bearer tenant-b-token"); status != 200 {
+                        t.Fatalf("tenant isolation: %d", status)
+                }
+                if status := requestStatus(t, controllers[0], "/health", ""); status != 200 {
+                        t.Fatalf("health: %d", status)
+                }
+                now = now.Add(time.Minute)
+                if status := requestStatus(t, controllers[1], "/exports", "Bearer tenant-a-token"); status != 200 {
+                        t.Fatalf("reset: %d", status)
+                }
+        }
+
+        // requestStatus runs the declared route middleware in its production order.
+        func requestStatus(t *testing.T, controller *Controller, path, token string) int {
+                t.Helper()
+                for _, route := range controller.Routes() {
+                        if route.Path() != path {
+                                continue
+                        }
+                        request := httptest.NewRequest(http.MethodGet, path, nil)
+                        request.Header.Set("Authorization", token)
+                        response := httptest.NewRecorder()
+                        handler := route.Handler()
+                        middleware := route.Middlewares()
+                        for index := len(middleware) - 1; index >= 0; index-- {
+                                handler = middleware[index](handler)
+                        }
+                        if err := handler(webtest.NewContext(request, response, path, nil)); err != nil {
+                                t.Fatal(err)
+                        }
+                        return response.Code
+                }
+                t.Fatalf("missing route %s", path)
+                return 0
+        }
+checks:
+  - command: [forj, build]
+  - command: [go, test, ./internal/requests]
