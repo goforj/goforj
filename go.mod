@@ -14,7 +14,7 @@ require (
 	github.com/glebarez/go-sqlite v1.23.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/go-sql-driver/mysql v1.10.1
-	github.com/goforj/atlas v0.4.14-0.20261114051721-a5ae9552c6cf
+	github.com/goforj/atlas v0.4.14-0.20261114052434-07de5a903d83
 	github.com/goforj/cache v0.4.0
 	github.com/goforj/cache/cachecore v0.4.3
 	github.com/goforj/console v0.2.0
