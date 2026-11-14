@@ -23,7 +23,7 @@ Search is lexical, not vector or semantic search. Preserve typed filters, total 
 
 ## First-time provisioning
 
-Create the App-owned `cmd/search-provision/main.go` below after declaring your schemas. Stop the Bleve owner process before provisioning its physical indexes. This program loads configuration but never initializes the App runtime or a manager that requires those indexes to exist.
+Create the App-owned `tools/search-provision/main.go` below after declaring your schemas. Keep this tool outside `cmd/` so it is not discovered as a runtime App. Stop the Bleve owner process before provisioning its physical indexes. This program loads configuration but never initializes the App runtime or a manager that requires those indexes to exist.
 
 ```go
 package main
@@ -52,7 +52,7 @@ func main() {
 Run from the Project root:
 
 ```console
-$ go run ./cmd/search-provision
+$ go run ./tools/search-provision
 Search schemas provisioned
 ```
 
