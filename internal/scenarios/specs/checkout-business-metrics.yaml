@@ -1,0 +1,231 @@
+schema_version: 2
+id: checkout-business-metrics
+title: Checkout Business Metrics
+description: Record successful checkout counts and duration through the existing App registry.
+depends_on: [invoice-domain]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+    metrics: true
+markdown:
+  intro: |
+    Add useful checkout instrumentation through the owning App's existing metrics registry.
+  prerequisites: |
+    Start from Invoice Domain with the metrics component enabled for the owning App. The fixture supplies the generated metrics manager and pinned metrics dependency before application changes. This scenario measures integration and execution within that existing boundary.
+  troubleshooting: |
+    If metrics do not appear on the App scrape, verify the service provider borrows manager.Registry() rather than constructing a separate registry. Check actual completed operations before diagnosing HTTP exposure. Register instruments once during startup, and use forj build to regenerate Wire. Keep duration observations as time.Duration so exposition converts them to seconds.
+  common_mistakes:
+    - Registering definitions without updating handles at the business operation boundary.
+    - Adding tenant IDs, request IDs, or arbitrary error messages as labels.
+    - Counting declined or canceled checkout attempts as successful completions.
+    - Constructing a parallel registry that the App scrape never reads.
+  next_steps:
+    - Add a transport adapter that preserves the instrumented service operation.
+    - Query the exported checkout completion and duration families alongside existing runtime metrics.
+  before: |
+    Checkout preserves operation errors but exposes no business counter or duration observations.
+  after: |
+    Successful checkout operations update bounded metrics in the registry already owned by the App.
+  files:
+    - internal/checkout/service.go
+    - internal/checkout/service_test.go
+    - app/wire/inject_services_app.go
+prepare:
+  steps:
+    - id: prepare-checkout-operation
+      title: Prepare the existing checkout operation
+      write:
+        path: internal/checkout/processor.go
+        language: go
+        content: |
+          // Package checkout owns checkout operations and their business instrumentation.
+          package checkout
+
+          import (
+              "context"
+              "errors"
+          )
+
+          // ErrDeclined identifies a rejected checkout without losing its domain error.
+          var ErrDeclined = errors.New("checkout declined")
+
+          // Processor defines the existing checkout boundary without metrics concerns.
+          type Processor interface {
+              // Complete preserves the caller context and checkout identities.
+              Complete(context.Context, string, string) error
+          }
+
+          // localProcessor supplies a deterministic local operation for the fixture.
+          type localProcessor struct{}
+
+          // NewProcessor constructs the existing checkout operation.
+          func NewProcessor() Processor { return localProcessor{} }
+
+          // Complete preserves cancellation and the existing decline behavior.
+          func (localProcessor) Complete(ctx context.Context, tenant, request string) error {
+              if err := ctx.Err(); err != nil {
+                  return err
+              }
+              if tenant == "declined" {
+                  return ErrDeclined
+              }
+              return nil
+          }
+    - id: prepare-checkout-boundary
+      title: Prepare the uninstrumented service boundary
+      write:
+        path: internal/checkout/service.go
+        language: go
+        content: |
+          // Package checkout owns checkout operations and their business instrumentation.
+          package checkout
+
+          import (
+              "context"
+              "github.com/goforj/metrics"
+              "time"
+          )
+
+          // Service retains the existing operation and deterministic clock.
+          type Service struct {
+              processor Processor
+              now       func() time.Time
+          }
+
+          // NewService preserves the App registry injection boundary before instrumentation is added.
+          func NewService(registry *metrics.Registry, processor Processor, now func() time.Time) *Service {
+              return &Service{processor: processor, now: now}
+          }
+
+          // Complete preserves operation results before business instrumentation is added.
+          func (service *Service) Complete(ctx context.Context, tenantID, requestID string) error {
+              return service.processor.Complete(ctx, tenantID, requestID)
+          }
+  checks:
+    - command: [go, test, ./internal/checkout]
+    - command: [forj, build]
+steps:
+  - id: instrument-checkout
+    title: Register bounded handles and record successful operation results
+    write:
+      path: internal/checkout/service.go
+      language: go
+      content: |
+        // Package checkout owns checkout operations and their business instrumentation.
+        package checkout
+
+        import (
+            "context"
+            "github.com/goforj/metrics"
+            "time"
+        )
+
+        // Service borrows startup-registered handles from the owning App registry.
+        type Service struct {
+            processor Processor
+            now       func() time.Time
+            completed *metrics.CounterVec
+            duration  *metrics.HistogramVec
+        }
+
+        // NewService registers bounded instrument handles once during App composition.
+        func NewService(registry *metrics.Registry, processor Processor, now func() time.Time) *Service {
+            completed := registry.MustCounterVec(metrics.Descriptor{Name: "checkout.completed", Help: "Successful checkout operations."}, []string{"outcome"})
+            duration := registry.MustDurationHistogramVec(metrics.Descriptor{Name: "checkout.duration", Help: "Successful checkout operation duration."}, []string{"outcome"}, metrics.DefaultDurationBounds())
+            completed.WithLabelValues("success")
+            duration.WithLabelValues("success")
+            return &Service{processor: processor, now: now, completed: completed, duration: duration}
+        }
+
+        // Complete records successful operations while preserving the caller's error and context boundary.
+        func (service *Service) Complete(ctx context.Context, tenantID, requestID string) error {
+            start := service.now()
+            if err := service.processor.Complete(ctx, tenantID, requestID); err != nil {
+                return err
+            }
+            service.completed.WithLabelValues("success").Inc()
+            service.duration.WithLabelValues("success").ObserveDuration(service.now().Sub(start))
+            return nil
+        }
+  - id: test-checkout-metrics
+    title: Verify actual counter and duration observations
+    write:
+      path: internal/checkout/service_test.go
+      language: go
+      content: |
+        // Package checkout owns checkout operations and their business instrumentation.
+        package checkout
+
+        import (
+            "context"
+            "errors"
+            "github.com/goforj/metrics"
+            "testing"
+            "time"
+        )
+
+        // timedProcessor permits exact elapsed durations without sleeping.
+        type timedProcessor struct {
+            clock *time.Time
+            err   error
+        }
+
+        // Complete advances the injected clock while preserving explicit operation errors.
+        func (processor timedProcessor) Complete(ctx context.Context, tenant, request string) error {
+            *processor.clock = processor.clock.Add(250 * time.Millisecond)
+            if err := ctx.Err(); err != nil {
+                return err
+            }
+            return processor.err
+        }
+
+        // TestServiceRecordsOnlySuccessfulCheckout verifies observable updates and unchanged failure totals.
+        func TestServiceRecordsOnlySuccessfulCheckout(t *testing.T) {
+            registry := metrics.NewRegistry()
+            clock := time.Unix(0, 0)
+            failure := errors.New("declined")
+            service := NewService(registry, timedProcessor{clock: &clock}, func() time.Time { return clock })
+            if err := service.Complete(context.Background(), "tenant:a", "request:a"); err != nil {
+                t.Fatal(err)
+            }
+            failed := NewService(registry, timedProcessor{clock: &clock, err: failure}, func() time.Time { return clock })
+            if err := failed.Complete(context.Background(), "tenant:b", "request:b"); !errors.Is(err, failure) {
+                t.Fatal(err)
+            }
+            snapshot := registry.Snapshot()
+            if len(snapshot.Counters) != 1 || snapshot.Counters[0].Value != 1 {
+                t.Fatalf("counters=%#v", snapshot.Counters)
+            }
+            if len(snapshot.Histograms) != 1 || snapshot.Histograms[0].Count != 1 || snapshot.Histograms[0].Sum != float64(250*time.Millisecond) {
+                t.Fatalf("histograms=%#v", snapshot.Histograms)
+            }
+        }
+  - id: import-checkout-service
+    title: Import the checkout provider dependencies into the owning App
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\t\"example.com/invoiceeval/internal/runtime\"\n"
+      new: "\t\"example.com/invoiceeval/internal/runtime\"\n\t\"example.com/invoiceeval/internal/checkout\"\n\t\"example.com/invoiceeval/internal/metrics\"\n\t\"time\"\n"
+  - id: define-checkout-provider
+    title: Borrow the existing App registry in the service factory
+    append:
+      path: app/wire/inject_services_app.go
+      language: go
+      content: |
+        // provideCheckoutService connects business instrumentation to the owning App registry.
+        func provideCheckoutService(manager *metrics.Manager) *checkout.Service {
+            return checkout.NewService(manager.Registry(), checkout.NewProcessor(), time.Now)
+        }
+  - id: register-checkout-provider
+    title: Register the registry-consuming service provider
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tapp.NewLifecycleRegistry,\n"
+      new: "\tprovideCheckoutService,\n\tapp.NewLifecycleRegistry,\n"
+checks:
+  - command: [go, test, ./internal/checkout]
+  - command: [forj, build]
