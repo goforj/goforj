@@ -84,6 +84,9 @@ func resources(root string, config *project.Config, values map[string]string) []
 		if !strings.HasSuffix(key, "_DRIVER") {
 			continue
 		}
+		if owner, enabled := featureResourceOwner(config, key); owner != "" && !enabled {
+			continue
+		}
 		for _, definition := range project.ResourceCatalog() {
 			base := resourceKey(config, key)
 			if !definition.AppliesTo(components) || !strings.HasPrefix(base, definition.EnvironmentPrefix+"_") {
@@ -130,8 +133,11 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 	return names
 }
 
-// resourceKey prefers participating resource scopes so an App without cache cannot claim a root database named cache.
+// resourceKey gives Feature keys their known App owner while preserving participation-based legacy resource scopes.
 func resourceKey(config *project.Config, key string) string {
+	if owner, _ := featureResourceOwner(config, key); owner != "" {
+		return strings.TrimPrefix(key, owner+"_")
+	}
 	longest := ""
 	participating := ""
 	for name, app := range config.Apps {
@@ -161,6 +167,26 @@ func resourceKey(config *project.Config, key string) string {
 		return strings.TrimPrefix(key, longest)
 	}
 	return key
+}
+
+// featureResourceOwner preserves the longest known App boundary even when that App has disabled Feature.
+func featureResourceOwner(config *project.Config, key string) (string, bool) {
+	prefixes := make([]string, 0, len(config.Apps))
+	for name := range config.Apps {
+		if prefix := project.AppEnvironmentPrefix(name); prefix != "" {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	owner := project.AppResourceKeyOwner(key, prefixes)
+	if owner == "" || !strings.HasPrefix(strings.TrimPrefix(key, owner+"_"), "FEATURE_") {
+		return "", false
+	}
+	for name, app := range config.Apps {
+		if project.AppEnvironmentPrefix(name) == owner {
+			return owner, project.NormalizeConfiguredAppComponents(config, app.Components).Feature
+		}
+	}
+	return "", false
 }
 
 // resourceAppliesTo distinguishes live resource scopes while allowing definitions for future components to retain their fallback interpretation.
