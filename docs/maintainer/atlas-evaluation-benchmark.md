@@ -323,3 +323,13 @@ Before replacing this page:
 Do not run another complete matrix merely to improve the headline percentage.
 Use repeated paired trials to answer a specific reliability, regression, or
 guidance-attribution question, and preserve previous scorecards in Git history.
+
+## Payload encryption contract awaiting live measurement
+
+`encrypt-partner-payloads` adds authenticated storage and key rotation with the
+Project's existing crypt v1.2.0 dependency. The prepared fake-key vector makes
+stored-format compatibility reviewable. Golden and compiling semantic mutant
+calibration verify tamper rejection, previous-key reads, current-key writes,
+immutable key snapshots, safe failure boundaries, and invalid-key rejection by
+real Wire initialization. Source API attribution remains separate from behavior.
+No provider attempts are added and the historical benchmark matrix is unchanged.
