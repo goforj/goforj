@@ -118,6 +118,7 @@ import (
  "context"
  "errors"
  "fmt"
+ "os"
  {{if .Bleve}}"path/filepath"{{end}}
  "sort"
  "strings"
@@ -153,21 +154,34 @@ type Instance struct { Name string; Driver string }
 // NewManager validates provisioned schemas without creating or altering them.
 // An empty definition map creates an inert manager. Named environment settings require matching App definitions.
 func NewManager(ctx context.Context, definitions map[string]search.Definition) (*Manager, error) {
- return openManager(ctx, definitions, false)
+ return NewManagerForApp(ctx, "", definitions)
+}
+
+// NewManagerForApp validates only the named App's declarations using explicit backend overrides.
+// Prefix is the existing environment prefix, for example ADMIN; unrelated default-App indexes remain untouched.
+func NewManagerForApp(ctx context.Context, prefix string, definitions map[string]search.Definition) (*Manager, error) {
+ return openManager(ctx, prefix, definitions, false)
 }
 
 // Provision explicitly creates declared schemas and releases all backend ownership before returning.
 // Existing incompatible schemas are rejected; changing a schema requires an application-owned rebuild into a new location.
 func Provision(ctx context.Context, definitions map[string]search.Definition) error {
- manager, err := openManager(ctx, definitions, true)
+ return ProvisionForApp(ctx, "", definitions)
+}
+
+// ProvisionForApp explicitly provisions one named App without initializing any App runtime.
+func ProvisionForApp(ctx context.Context, prefix string, definitions map[string]search.Definition) error {
+ manager, err := openManager(ctx, prefix, definitions, true)
  if err != nil { return err }
  return manager.Close()
 }
 
 // openManager validates all definitions before opening independently owned backend instances.
-func openManager(ctx context.Context, definitions map[string]search.Definition, provision bool) (*Manager, error) {
+func openManager(ctx context.Context, prefix string, definitions map[string]search.Definition, provision bool) (*Manager, error) {
  if err := ctx.Err(); err != nil { return nil, err }
+ prefix = strings.ToUpper(strings.TrimSpace(prefix))
  scope := env.WithPrefix("SEARCH")
+ if prefix != "" { scope = env.WithPrefix(prefix).Child("SEARCH") }
  for _, child := range scope.ChildNames([]string{"DRIVER", "PATH", "URL", "API_KEY", "PREFIX", "SUPPORTED_DRIVERS"}) {
   name := strings.ToLower(child)
   if _, exists := definitions[name]; !exists { return nil, fmt.Errorf("search: environment index %q has no App definition", name) }
@@ -181,9 +195,8 @@ func openManager(ctx context.Context, definitions map[string]search.Definition, 
  sort.Strings(names)
  manager := &Manager{indexes: make(map[string]indexResource, len(names))}
  for _, name := range names {
-  child := scope.Child(strings.ToUpper(name))
-  driverName := strings.ToLower(strings.TrimSpace(child.Get("DRIVER", scope.Get("DRIVER", "bleve"))))
-  backend, err := openBackend(ctx, name, driverName, scope, child)
+  driverName := searchDriverName(prefix, name)
+  backend, err := openBackend(ctx, name, driverName, prefix)
   if err != nil { return nil, errors.Join(fmt.Errorf("search: open index %q: %w", name, err), manager.Close()) }
   index, err := search.NewIndex(backend, definitions[name])
   if err != nil { return nil, errors.Join(err, backend.Close(), manager.Close()) }
@@ -195,19 +208,54 @@ func openManager(ctx context.Context, definitions map[string]search.Definition, 
 }
 
 // openBackend separates compiled capability from runtime driver selection and physical index identity.
-func openBackend(ctx context.Context, name, driver string, scope, child env.Scope) (indexBackend, error) {
+func openBackend(ctx context.Context, name, driver, prefix string) (indexBackend, error) {
  switch driver {
  {{if .Bleve}}case "bleve":
-  root := scope.Get("PATH", "storage/search")
-  path := child.Get("PATH", filepath.Join(root, name))
+  root := searchValue(prefix, "", "PATH", "storage/search")
+  path := namedSearchValue(prefix, name, "PATH", filepath.Join(root, name))
   return blevesearch.Open(ctx, blevesearch.Config{Path: path})
  {{end}}
  {{if .Meilisearch}}case "meilisearch":
-  return meilisearch.New(meilisearch.Config{URL: child.Get("URL", scope.Get("URL", "")), APIKey: child.Get("API_KEY", scope.Get("API_KEY", "")), Prefix: child.Get("PREFIX", scope.Get("PREFIX", ""))})
+  return meilisearch.New(meilisearch.Config{URL: searchValue(prefix, name, "URL", ""), APIKey: searchValue(prefix, name, "API_KEY", ""), Prefix: searchValue(prefix, name, "PREFIX", "")})
  {{end}}
  default:
   return nil, fmt.Errorf("search: driver %q is not compiled; update SEARCH_SUPPORTED_DRIVERS and run forj generate --search", driver)
  }
+}
+
+// normalizedSearchDriver preserves the generator's fallback for empty or whitespace-only selections.
+func normalizedSearchDriver(value, fallback string) string {
+ driver := strings.ToLower(strings.TrimSpace(value))
+ if driver == "" { return fallback }
+ return driver
+}
+
+// searchDriverName mirrors generated root, named, and App selection without rewriting process environment.
+func searchDriverName(prefix, name string) string {
+ root := normalizedSearchDriver(env.Get("SEARCH_DRIVER", ""), "bleve")
+ driver := root
+ if value, exists := os.LookupEnv("SEARCH_"+strings.ToUpper(name)+"_DRIVER"); exists { driver = normalizedSearchDriver(value, root) }
+ if prefix != "" {
+  appRoot := root
+  if value, exists := os.LookupEnv(prefix+"_SEARCH_DRIVER"); exists { appRoot = normalizedSearchDriver(value, "bleve") }
+  if value, exists := os.LookupEnv(prefix+"_SEARCH_"+strings.ToUpper(name)+"_DRIVER"); exists { driver = normalizedSearchDriver(value, appRoot) }
+ }
+ return driver
+}
+
+// searchValue resolves App root defaults before any more-specific named resource settings.
+func searchValue(prefix, name, key, fallback string) string {
+ value := env.WithPrefix("SEARCH").Get(key, fallback)
+ if prefix != "" { value = env.WithPrefix(prefix).Child("SEARCH").Get(key, value) }
+ if name == "" { return value }
+ return namedSearchValue(prefix, name, key, value)
+}
+
+// namedSearchValue preserves explicit named overrides without conflating a root directory with one index path.
+func namedSearchValue(prefix, name, key, fallback string) string {
+ value := env.WithPrefix("SEARCH").Child(strings.ToUpper(name)).Get(key, fallback)
+ if prefix != "" { value = env.WithPrefix(prefix).Child("SEARCH").Child(strings.ToUpper(name)).Get(key, value) }
+ return value
 }
 
 // Instances returns deterministic identity metadata for inspection.
