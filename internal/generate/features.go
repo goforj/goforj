@@ -30,9 +30,10 @@ type featureScope struct {
 
 // featureTemplateData captures build capabilities independently from runtime source selection.
 type featureTemplateData struct {
-	Drivers []string
-	Names   []featureAccessor
-	Scopes  []featureScope
+	Drivers     []string
+	Names       []featureAccessor
+	Scopes      []featureScope
+	AppPrefixes []string
 }
 
 // GenerateFeatureFiles generates managed native evaluators from the environment build contract.
@@ -56,13 +57,13 @@ func generateFeatureFiles(input generationInput) (int, error) {
 		Prefix: "FEATURE", DefaultDriver: "memory", LocalDrivers: featureLocalDrivers,
 		RootKeys: featureRootKeys, CommonKeys: makeSet("DRIVER", "REFRESH_INTERVAL", "INITIALIZATION_TIMEOUT"), DriverKeys: featureDriverKeys,
 		ChildNames: func(environment generationEnvironment) []string {
-			return exactScopedChildNames(environment, "FEATURE", featureRootKeys)
+			return appScopedChildNames(input, "FEATURE", "", featureRootKeys)
 		},
 		AllowInactiveRootKeys: true, EagerNamedResources: true,
 	}); err != nil {
 		return 0, err
 	}
-	data := featureTemplateData{}
+	data := featureTemplateData{AppPrefixes: generationKnownAppEnvPrefixes(input)}
 	methods := makeSet("Default", "Instances", "ReadinessChecks", "Start", "Close", "Refresh")
 	for _, name := range discoverFeatureNames(input) {
 		method := str.Of(name).Pascal().String()
@@ -80,7 +81,7 @@ func generateFeatureFiles(input generationInput) (int, error) {
 		return 0, err
 	}
 	data.Drivers = drivers
-	rootNames := exactScopedChildNames(input.environment, "FEATURE", featureRootKeys)
+	rootNames := appScopedChildNames(input, "FEATURE", "", featureRootKeys)
 	defaultEnabled := true
 	if config, err := project.LoadProjectConfigAt(input.projectDir); err == nil {
 		defaultEnabled = config.Render.Components.Feature
@@ -92,7 +93,7 @@ func generateFeatureFiles(input generationInput) (int, error) {
 	}
 	for _, prefix := range generationAppEnvPrefixesForResource(input, "FEATURE") {
 		names := makeSet(rootNames...)
-		for _, name := range exactScopedChildNames(input.environment, prefix+"_FEATURE", featureRootKeys) {
+		for _, name := range appScopedChildNames(input, "FEATURE", prefix, featureRootKeys) {
 			names[name] = struct{}{}
 		}
 		data.Scopes = append(data.Scopes, featureScope{Prefix: prefix, Names: sortStrings(names)})
@@ -169,6 +170,7 @@ import (
 )
 
 var compiledFeatureDrivers = map[string]bool{ {{range .Drivers}} "{{.}}": true, {{end}} }
+var featureAppPrefixes = []string{ {{range .AppPrefixes}} "{{.}}", {{end}} }
 var featureAppResources = map[string][]string{
 {{range .Scopes}} "{{.Prefix}}": { {{range .Names}} "{{.}}", {{end}} }, {{end}}
 }
@@ -212,13 +214,26 @@ func NewManagerForApp(prefix string) (*Manager, error) {
 func featureValue(prefix, name, key, fallback string) string {
     scope := env.WithPrefix("FEATURE")
     if name != "default" { scope = scope.Child(strings.ToUpper(name)) }
-    value := scope.Get(key, fallback)
+    baseKey := "FEATURE_" + key
+    if name != "default" { baseKey = "FEATURE_" + strings.ToUpper(name) + "_" + key }
+    value := fallback
+    if featureEnvironmentOwner(baseKey) == "" { value = scope.Get(key, fallback) }
     if prefix != "" {
         appScope := env.WithPrefix(prefix).Child("FEATURE")
         if name != "default" { appScope = appScope.Child(strings.ToUpper(name)) }
-        value = appScope.Get(key, value)
+        appKey := prefix + "_" + baseKey
+        if featureEnvironmentOwner(appKey) == prefix { value = appScope.Get(key, value) }
     }
     return value
+}
+
+// featureEnvironmentOwner assigns ambiguous keys to the longest compiled App prefix.
+func featureEnvironmentOwner(key string) string {
+    owner := ""
+    for _, prefix := range featureAppPrefixes {
+        if strings.HasPrefix(key, prefix+"_FEATURE_") && len(prefix) > len(owner) { owner = prefix }
+    }
+    return owner
 }
 
 // openEvaluator validates startup policy and publishes only a complete native document.
