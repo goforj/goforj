@@ -1665,3 +1665,24 @@ func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
 		})
 	}
 }
+
+// TestPatchCustomerSettingsVerifierCalibration proves the new contract rejects compiling presence loss independently from historic write validation.
+func TestPatchCustomerSettingsVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		requiredQuality: []string{"settings-library-path", "settings-library-runtime"},
+		evaluation:      "patch-customer-settings",
+		scenario:        "customer-settings-validation",
+		path:            "internal/settings/policy.go",
+		old:             "service.ValidatePatch(ctx, input)",
+		mutant:          "service.ValidatePatch(context.Background(), input)",
+		wantFailed:      "settings-library-path",
+		wantCompile:     true,
+		behavior: &evaluationBehaviorMutation{
+			path:        "internal/settings/policy.go",
+			old:         "if value, ok := input.Enabled.Get(); ok {",
+			mutant:      "if value, ok := input.Enabled.Get(); ok && value {",
+			wantFailed:  "settings-validation-behavior",
+			wantCompile: true,
+		},
+	})
+}
