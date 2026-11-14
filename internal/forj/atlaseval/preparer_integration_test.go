@@ -412,6 +412,7 @@ func prepareInvoiceHTTPVerifierFixture(t *testing.T) invoiceHTTPVerifierFixture 
 
 // majorSurfaceVerifierCase binds one promoted contract to its executable golden Project and a targeted semantic defect.
 type majorSurfaceVerifierCase struct {
+	requiredQuality      []string
 	evaluation           string
 	scenario             string
 	path                 string
@@ -1051,6 +1052,11 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 	if result.FrameworkOutcome.Status != eval.EndpointPassed {
 		t.Fatalf("golden outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
 	}
+	for _, id := range test.requiredQuality {
+		if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
+			t.Fatalf("golden quality check %q did not pass: %#v", id, result.Checks)
+		}
+	}
 	if len(test.alternates) > 0 {
 		originals := applyEvaluationAlternates(t, projectRoot, test.alternates)
 		alternateChanges := evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)
@@ -1519,4 +1525,25 @@ func evaluationCheckHasStatus(checks []eval.EndpointResult, id string, status ev
 		}
 	}
 	return false
+}
+
+// TestEncryptPartnerPayloadsVerifierCalibration proves authenticated storage and old-key reads survive compiling semantic defects.
+func TestEncryptPartnerPayloadsVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		requiredQuality: []string{"payload-crypt-api"},
+		evaluation:      "encrypt-partner-payloads",
+		scenario:        "partner-payload-rotation",
+		path:            "internal/partnerpayloads/service.go",
+		old:             "return service.repository.Put(ctx, id, ciphertext)",
+		mutant:          "return service.repository.Put(ctx, id, payload+ciphertext[:0])",
+		wantFailed:      "payload-encryption-behavior",
+		wantCompile:     true,
+		behavior: &evaluationBehaviorMutation{
+			path:        "internal/partnerpayloads/cipher.go",
+			old:         "cipher, err := crypt.NewFromEnv()",
+			mutant:      "cipher, err := func() (*crypt.Cipher, error) { key, err := crypt.GetAppKey(); if err != nil { return nil, err }; return crypt.New(key) }()",
+			wantFailed:  "payload-encryption-behavior",
+			wantCompile: true,
+		},
+	})
 }
