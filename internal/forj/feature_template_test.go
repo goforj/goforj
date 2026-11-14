@@ -29,6 +29,8 @@ func TestFeatureTemplatesRespectAppParticipation(t *testing.T) {
 		assertTemplateMarker(t, ".env.tmpl", source, "FEATURE_DRIVER=", enabled)
 		assertTemplateMarker(t, ".env.tmpl", source, "BILLING_FEATURE_DRIVER=", enabled)
 		assertTemplateMarker(t, ".env.tmpl", source, "FEATURE_DOCUMENT=", false)
+		assertTemplateMarker(t, ".env.tmpl", source, "FEATURE_REFRESH_INTERVAL=", false)
+		assertTemplateMarker(t, ".env.tmpl", source, "FEATURE_CHECKOUT_REFRESH_INTERVAL=", false)
 	}
 }
 
