@@ -268,6 +268,8 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 		}
 		if v.contract.Prefix == "FEATURE" {
 			appRootDriver = effectiveFeatureOverlayDriver(v.input.environment, resourcePrefix, "", v.contract.DefaultDriver, v.appPrefixes)
+		} else if v.contract.Prefix == "NOTIFICATION" {
+			appRootDriver = effectiveRawOverlayDriver(v.input.environment, v.contract.Prefix, resourcePrefix, "", v.contract.DefaultDriver)
 		}
 		knownChildren := map[string]struct{}{}
 		for _, child := range v.baseChildren {
@@ -351,6 +353,9 @@ func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope a
 	if scope.contract.Prefix == "FEATURE" {
 		return effectiveFeatureOverlayDriver(environment, scope.resourcePrefix, child, scope.contract.DefaultDriver, scope.appPrefixes)
 	}
+	if scope.contract.Prefix == "NOTIFICATION" {
+		return effectiveRawOverlayDriver(environment, scope.contract.Prefix, scope.resourcePrefix, child, scope.contract.DefaultDriver)
+	}
 	baseFallback := scope.contract.DefaultDriver
 	appFallback := scope.contract.DefaultDriver
 	if scope.contract.InheritRootDriver {
@@ -420,12 +425,16 @@ func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defa
 				fallback = appRootDriver
 			}
 			driver := effectivePrimitiveDriver(value, fallback)
-			if resourcePrefix == "FEATURE" {
+			if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" {
 				child := ""
 				if relative != "DRIVER" {
 					child = strings.TrimSuffix(relative, "_DRIVER")
 				}
-				driver = effectiveFeatureOverlayDriver(input.environment, strings.TrimSuffix(keyPrefix, "_"), child, defaultDriver, appPrefixes)
+				if resourcePrefix == "FEATURE" {
+					driver = effectiveFeatureOverlayDriver(input.environment, strings.TrimSuffix(keyPrefix, "_"), child, defaultDriver, appPrefixes)
+				} else {
+					driver = effectiveRawOverlayDriver(input.environment, resourcePrefix, strings.TrimSuffix(keyPrefix, "_"), child, defaultDriver)
+				}
 			}
 			identity := key + "\x00" + driver
 			if _, exists := seen[identity]; exists {
@@ -794,4 +803,15 @@ func sortStrings(set map[string]struct{}) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// effectiveRawOverlayDriver mirrors Feature and Notification App Get(key, baseValue) lookups.
+// Empty overrides inherit the raw base value while whitespace selects the default driver.
+func effectiveRawOverlayDriver(environment generationEnvironment, basePrefix, resourcePrefix, child, defaultDriver string) string {
+	suffix := "_DRIVER"
+	if child != "" {
+		suffix = "_" + child + suffix
+	}
+	base := environment.Get(basePrefix+suffix, defaultDriver)
+	return effectivePrimitiveDriver(environment.Get(resourcePrefix+suffix, base), defaultDriver)
 }

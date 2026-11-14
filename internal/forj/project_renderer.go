@@ -1377,9 +1377,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.renderApp(app); err != nil {
 		return err
 	}
-	if appConfigChanged && !projectCapabilitiesChanged && p.projectRenderComponents().Feature {
-		// App Feature scopes can also claim keys previously interpreted as another resource family's named resources.
-		if err := p.runGenerateAll(); err != nil {
+	if appConfigChanged && !projectCapabilitiesChanged {
+		// App ownership changes even when adding an App leaves the project capability union unchanged.
+		if _, err := p.runGenerateAppResources(); err != nil {
 			return err
 		}
 	}
@@ -1514,12 +1514,11 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (removeResult makeapp.Remov
 	if err := p.publishPendingResourceEnvironment(); err != nil {
 		return result, err
 	}
-	if afterProjectComponents.Feature {
-		if err := p.runGenerateAll(); err != nil {
-			return result, err
-		}
-		result.Updated = append(result.Updated, generate.OutputPaths(generate.GenerationSelectionFromComponents(afterProjectComponents))...)
+	updated, err := p.runGenerateAppResources()
+	if err != nil {
+		return result, err
 	}
+	result.Updated = append(result.Updated, updated...)
 	if err := p.writeTemplates([]string{
 		"internal/runtime/apps.go.tmpl",
 		"internal/runtime/apps_test.go.tmpl",
@@ -3448,6 +3447,18 @@ func (p *ProjectRenderer) runGenerateAll() error {
 	}
 	p.lines = append(p.lines, renderCountsLine("forj generate", result.TotalFiles, 0, "files"))
 	return nil
+}
+
+// runGenerateAppResources reconciles managers whose names can change with App ownership.
+func (p *ProjectRenderer) runGenerateAppResources() ([]string, error) {
+	components := p.projectRenderComponents()
+	if !components.Feature && !components.Notification {
+		return nil, nil
+	}
+	if err := p.runGenerateAll(); err != nil {
+		return nil, err
+	}
+	return generate.OutputPaths(generate.GenerationSelectionFromComponents(components)), nil
 }
 
 // scaffoldDemoFrontend centralizes scaffold demo frontend behavior so callers follow the same contract.
