@@ -75,6 +75,14 @@ markdown:
   - internal/dispatch/config_test.go
   - app/lifecycle.go
   - app/wire/inject_services_app.go
+  prerequisites: Start from the prepared invoice-domain application with its existing env/v2 v2.6.1 dependency.
+    The fixture supplies fake DISPATCH_TOKEN and DISPATCH_WORKERS values; use no real deployment credentials.
+  troubleshooting: If bad required settings do not stop startup, verify that the Config provider and dispatch service
+    are rooted in the App Wire graph. Typed getter fallbacks for malformed optional values are intentional; missing
+    required integers must still fail application range checks.
+  next_steps:
+  - Inject the validated snapshot into a real dispatch client instead of reading process variables per request.
+  - Document deployment-specific settings with fake values and preserve process-over-file precedence.
 steps:
 - id: implement-dispatch-config
   title: Load and validate the startup snapshot
