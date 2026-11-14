@@ -28,6 +28,7 @@ func TestFeatureTemplatesRespectAppParticipation(t *testing.T) {
 		source := renderSharedTemplate(t, ".env.tmpl", data)
 		assertTemplateMarker(t, ".env.tmpl", source, "FEATURE_DRIVER=", enabled)
 		assertTemplateMarker(t, ".env.tmpl", source, "BILLING_FEATURE_DRIVER=", enabled)
+		assertTemplateMarker(t, ".env.tmpl", source, "FEATURE_DOCUMENT=", false)
 	}
 }
 
