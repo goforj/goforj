@@ -311,6 +311,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 }
 
 // effectiveAppPrimitiveChildDriver mirrors runtime overlay precedence for one App-scoped named resource.
+// Search applies App root defaults before named overrides because it has no default index; legacy resource families retain their established fallback.
 func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope appPrimitiveDriverScope, child string) string {
 	baseFallback := scope.contract.DefaultDriver
 	appFallback := scope.contract.DefaultDriver
@@ -320,6 +321,9 @@ func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope a
 	}
 	baseKey := scope.contract.Prefix + "_" + child + "_DRIVER"
 	driver := baseFallback
+	if scope.contract.Prefix == "SEARCH" {
+		driver = scope.appRootDriver
+	}
 	if value, set := environment.Lookup(baseKey); set {
 		driver = effectivePrimitiveDriver(value, baseFallback)
 	}
@@ -343,6 +347,22 @@ func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defa
 		appRootDriver := baseRootDriver
 		if value, ok := input.environment.Lookup(keyPrefix + "DRIVER"); ok {
 			appRootDriver = effectivePrimitiveDriver(value, defaultDriver)
+		}
+		if resourcePrefix == "SEARCH" {
+			names := makeSet(exactScopedChildNames(input.environment, resourcePrefix, searchRootKeys)...)
+			for _, child := range exactScopedChildNames(input.environment, appPrefix+"_"+resourcePrefix, searchRootKeys) {
+				names[child] = struct{}{}
+			}
+			for _, child := range sortStrings(names) {
+				key := keyPrefix + child + "_DRIVER"
+				driver := effectiveAppPrimitiveChildDriver(input.environment, appPrimitiveDriverScope{
+					resourcePrefix: appPrefix + "_" + resourcePrefix,
+					contract:       primitiveEnvContract{Prefix: resourcePrefix, DefaultDriver: defaultDriver, InheritRootDriver: inheritRootDriver},
+					rootDriver:     baseRootDriver, appRootDriver: appRootDriver,
+				}, child)
+				seen[key+"\x00"+driver] = struct{}{}
+				drivers = append(drivers, generationActiveDriver{key: key, driver: driver})
+			}
 		}
 		for _, entry := range input.environment.Entries() {
 			key, value := entry.key, entry.value

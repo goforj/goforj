@@ -73,6 +73,54 @@ func TestGenerateSearchFilesKeepsAppNamesAndDriversScoped(t *testing.T) {
 	}
 }
 
+// TestSearchAppRootDriverPrecedence keeps validation and compiled inventory aligned when named driver assignments are absent.
+func TestSearchAppRootDriverPrecedence(t *testing.T) {
+	for _, test := range []struct {
+		name, named, appNamed, option, want string
+		invalid                             bool
+	}{
+		{name: "App root inherited", option: "URL", want: "meilisearch"},
+		{name: "global named overrides App root", named: "bleve", option: "PATH", want: "bleve"},
+		{name: "App named overrides global named", named: "meilisearch", appNamed: "bleve", option: "PATH", want: "bleve"},
+		{name: "App root rejects Bleve option", option: "PATH", want: "meilisearch", invalid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, ".goforj.yml"), []byte("render:\n  components: [cli, search]\napps:\n  admin:\n    components: [cli, search]\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			values := map[string]string{"SEARCH_DRIVER": "bleve", "ADMIN_SEARCH_DRIVER": "meilisearch", "SEARCH_SUPPORTED_DRIVERS": "bleve,meilisearch", "ADMIN_SEARCH_CATALOG_" + test.option: "configured"}
+			if test.named != "" {
+				values["SEARCH_CATALOG_DRIVER"] = test.named
+			}
+			if test.appNamed != "" {
+				values["ADMIN_SEARCH_CATALOG_DRIVER"] = test.appNamed
+			}
+			input := fixtureGenerationInput(root, values)
+			if _, err := generateSearchFiles(input); (err != nil) != test.invalid {
+				t.Fatalf("generate = %v", err)
+			}
+			if test.invalid {
+				if _, err := os.Stat(filepath.Join(root, SearchManagerPath)); !os.IsNotExist(err) {
+					t.Fatal("invalid driver option published output")
+				}
+			}
+			found := false
+			for _, choice := range appPrefixedActiveDrivers(input, "SEARCH", "bleve", true) {
+				if choice.key == "ADMIN_SEARCH_CATALOG_DRIVER" {
+					found = true
+					if choice.driver != test.want {
+						t.Fatalf("effective driver = %s, want %s", choice.driver, test.want)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("inherited driver missing from active inventory")
+			}
+		})
+	}
+}
+
 // TestGeneratedSearchManagerBehavior exercises real Bleve schemas and explicit provisioning in an independent consumer module.
 func TestGeneratedSearchManagerBehavior(t *testing.T) {
 	root := mustTempGeneratedModuleRoot(t, "forj-search-generation-*", filepath.Join("internal", "searches"))
@@ -121,9 +169,12 @@ package searches
 import (
  "context"
  "errors"
+ "net/http"
+ "net/http/httptest"
  "os"
  "path/filepath"
  "strings"
+ "sync/atomic"
  "testing"
 
  "github.com/goforj/search"
@@ -252,5 +303,43 @@ func TestSearchManagerDriverFallback(t *testing.T) {
  if driver:=searchDriverName("ADMIN","catalog");driver!="meilisearch"{t.Fatalf("App named blank lost App root driver: %s",driver)}
  t.Setenv("ADMIN_SEARCH_DRIVER","   ")
  if driver:=searchDriverName("ADMIN","catalog");driver!="bleve"{t.Fatalf("App root blank lost baseline: %s",driver)}
+}
+
+// unsetSearchDriver preserves cleanup while testing absence rather than a blank explicit selection.
+func unsetSearchDriver(t *testing.T, key string) {
+ t.Helper()
+ t.Setenv(key, "")
+ if err := os.Unsetenv(key); err != nil { t.Fatal(err) }
+}
+
+// TestSearchManagerAppRootSelection dispatches provisioning and startup through an inherited remote driver.
+func TestSearchManagerAppRootSelection(t *testing.T) {
+ t.Setenv("SEARCH_DRIVER", "bleve")
+ t.Setenv("ADMIN_SEARCH_DRIVER", "meilisearch")
+ unsetSearchDriver(t, "SEARCH_CATALOG_DRIVER")
+ unsetSearchDriver(t, "ADMIN_SEARCH_CATALOG_DRIVER")
+ if got := searchDriverName("ADMIN", "catalog"); got != "meilisearch" { t.Fatalf("App root driver = %s", got) }
+ t.Setenv("SEARCH_CATALOG_DRIVER", "bleve")
+ if got := searchDriverName("ADMIN", "catalog"); got != "bleve" { t.Fatalf("global named driver = %s", got) }
+ t.Setenv("SEARCH_CATALOG_DRIVER", "meilisearch")
+ t.Setenv("ADMIN_SEARCH_CATALOG_DRIVER", "bleve")
+ if got := searchDriverName("ADMIN", "catalog"); got != "bleve" { t.Fatalf("App named driver = %s", got) }
+ unsetSearchDriver(t, "SEARCH_CATALOG_DRIVER")
+ unsetSearchDriver(t, "ADMIN_SEARCH_CATALOG_DRIVER")
+ var requests atomic.Int64
+ server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+  requests.Add(1)
+  if request.Method != http.MethodGet || !strings.HasPrefix(request.URL.Path, "/indexes/") { t.Errorf("unexpected Meilisearch request: %s %s", request.Method, request.URL.Path) }
+  response.WriteHeader(http.StatusServiceUnavailable)
+ }))
+ defer server.Close()
+ t.Setenv("ADMIN_SEARCH_URL", server.URL)
+ t.Setenv("SEARCH_CATALOG_PATH", filepath.Join(t.TempDir(), "catalog"))
+ defs := map[string]search.Definition{"catalog": definitions()["catalog"]}
+ if err := ProvisionForApp(context.Background(), "ADMIN", defs); err == nil || requests.Load() == 0 { t.Fatalf("provision did not reach App root backend: %v (%d requests)", err, requests.Load()) }
+ before := requests.Load()
+ manager, err := NewManagerForApp(context.Background(), "ADMIN", defs)
+ if err == nil { _ = manager.Close(); t.Fatal("remote validation failure was hidden") }
+ if requests.Load() <= before { t.Fatal("runtime validation did not reach App root backend") }
 }
 `
