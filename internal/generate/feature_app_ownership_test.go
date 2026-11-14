@@ -67,8 +67,8 @@ func TestFeatureResourceWordAppValidation(t *testing.T) {
 
 // TestGeneratedFeatureResourceWordAppRuntime verifies default isolation and distinct native source selection in compiled managers.
 func TestGeneratedFeatureResourceWordAppRuntime(t *testing.T) {
-	root := featureInventoryProject(t, "apps:\n  feature-disabled:\n    components: [cli]\n", "feature", "feature-feature", "feature-disabled", "billing")
-	writeGenerationEnvironmentFile(t, root, ".env", "FEATURE_FEATURE_DRIVER=file\nFEATURE_FEATURE_PATH=feature.json\nFEATURE_FEATURE_FEATURE_DRIVER=memory\nFEATURE_DISABLED_FEATURE_DRIVER=hosted\nBILLING_FEATURE_FEATURE_DOCUMENT={\"schema\":1,\"flags\":{}}\n")
+	root := featureInventoryProject(t, "apps:\n  feature-disabled:\n    components: [cli]\n", "feature", "feature-feature", "feature-disabled", "billing", "feature-child")
+	writeGenerationEnvironmentFile(t, root, ".env", "FEATURE_FEATURE_DRIVER=file\nFEATURE_FEATURE_PATH=feature.json\nFEATURE_FEATURE_FEATURE_DRIVER=memory\nFEATURE_DISABLED_FEATURE_DRIVER=hosted\nFEATURE_CACHE_DRIVER=redis\nFEATURE_CHILD_CACHE_DRIVER=redis\nBILLING_FEATURE_FEATURE_DOCUMENT={\"schema\":1,\"flags\":{}}\n")
 	input, err := loadProjectGenerationInput(root)
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +100,8 @@ func TestAppOwnership(t *testing.T) {
  t.Setenv("FEATURE_FEATURE_FEATURE_DRIVER","memory")
  t.Setenv("FEATURE_FEATURE_FEATURE_DOCUMENT","{\"schema\":1,\"flags\":{}}")
  t.Setenv("FEATURE_DISABLED_FEATURE_DRIVER","hosted")
+ t.Setenv("FEATURE_CACHE_DRIVER","redis")
+ t.Setenv("FEATURE_CHILD_CACHE_DRIVER","redis")
  t.Setenv("BILLING_FEATURE_FEATURE_DOCUMENT","{\"schema\":1,\"flags\":{}}")
  for _,test := range []struct{prefix,driver string}{{"","memory"},{"FEATURE","file"},{"FEATURE_FEATURE","memory"}} {
   manager,err := NewManagerForApp(test.prefix);if err != nil { t.Fatal(err) }
@@ -109,7 +111,7 @@ func TestAppOwnership(t *testing.T) {
  billing,err := NewManagerForApp("BILLING");if err != nil { t.Fatal(err) }
  if len(billing.Instances())!=2 || billing.Instances()[1].Name!="feature" || billing.Instances()[1].Driver!="memory" { t.Fatalf("billing named fallback = %#v",billing.Instances()) }
  if err := billing.Close();err != nil { t.Fatal(err) }
- for _,name := range []string{"feature","disabled_feature","feature_feature"} {
+ for _,name := range []string{"feature","disabled_feature","feature_feature","cache","child_cache"} {
   resource,err := openEvaluator("",name);if err != nil { t.Fatalf("default %s: %v",name,err) }
   if resource.driver!="memory" || resource.path!="" { t.Fatalf("default %s inherited App source",name) }
  }

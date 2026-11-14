@@ -71,30 +71,35 @@ func TestSearchRemoveAppRefreshesOwnership(t *testing.T) {
 	}
 }
 
-// TestSearchEnvironmentRemovalOwnership preserves exact default and sibling settings while removing the App's own keys.
+// TestSearchEnvironmentRemovalOwnership exercises the shared removal policy against default, removed, and sibling App settings.
 func TestSearchEnvironmentRemovalOwnership(t *testing.T) {
-	prefixes := []string{"SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"}
-	for _, test := range []struct {
-		key, removed string
-		preserve     bool
-	}{
-		{"SEARCH_DRIVER", "SEARCH", true},
-		{"SEARCH_SHARED_PATH", "SEARCH", true},
-		{"SEARCH_SHARED_API_KEY", "SEARCH", true},
-		{"SEARCH_BUSINESS_KEY", "SEARCH", false},
-		{"SEARCH_SEARCH_PATH", "SEARCH", false},
-		{"SEARCH_SEARCH_ONLY_PATH", "SEARCH", false},
-		{"SEARCH_WORKER_SEARCH_PATH", "SEARCH", true},
-		{"SEARCH_WORKER_SEARCH_BUSINESS_KEY", "SEARCH", false},
-		{"SEARCH_SEARCH_SEARCH_PATH", "SEARCH", true},
-		{"SEARCH_SEARCH_ONLY_PATH", "SEARCH_SEARCH", true},
-		{"SEARCH_SEARCH_SEARCH_PATH", "SEARCH_SEARCH", false},
-		{"BILLING_SEARCH_PATH", "BILLING", false},
-	} {
-		t.Run(test.removed+"/"+test.key, func(t *testing.T) {
-			if got := preserveSearchEnvForAppRemoval(test.key, test.removed, prefixes); got != test.preserve {
-				t.Fatalf("preserve=%v want=%v", got, test.preserve)
+	usePrimitiveRendererRoot(t)
+	components := project.Components{CLI: true, Search: true}
+	config := &project.Config{ProjectName: "Search Removal", GoModuleName: "example.com/removal", Render: project.RenderConfig{Components: components}, Apps: map[string]project.AppConfig{"search": {Components: components}, "search-worker": {Components: components}, "search-search": {Components: components}}}
+	if err := writeProjectConfig(".goforj.yml", config); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"search", "search-worker", "search-search"} {
+		writePrimitiveRendererFile(t, project.DefaultNamedApp(name).Entrypoint, "package main\n")
+	}
+	contents := "SEARCH_DRIVER=bleve\nSEARCH_SHARED_PATH=shared\nSEARCH_SEARCH_DRIVER=bleve\nSEARCH_SEARCH_ONLY_PATH=only\nSEARCH_WORKER_SEARCH_PATH=worker\nSEARCH_SEARCH_SEARCH_PATH=nested\nSEARCH_WORKER_CUSTOM_VALUE=keep\nSEARCH_CUSTOM_SETTING=remove\nUNRELATED=keep\n"
+	for _, path := range []string{".env", ".env.host", ".env.example"} {
+		writePrimitiveRendererFile(t, path, contents)
+	}
+	if _, err := unitProjectRenderer(t).RemoveApp(project.DefaultNamedApp("search")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{".env", ".env.host", ".env.example"} {
+		body := readPrimitiveRendererFile(t, path)
+		for _, key := range []string{"SEARCH_DRIVER=bleve", "SEARCH_SHARED_PATH=shared", "SEARCH_WORKER_SEARCH_PATH=worker", "SEARCH_SEARCH_SEARCH_PATH=nested", "SEARCH_WORKER_CUSTOM_VALUE=keep", "UNRELATED=keep"} {
+			if !strings.Contains(body, key) {
+				t.Fatalf("%s lost %s: %s", path, key, body)
 			}
-		})
+		}
+		for _, key := range []string{"SEARCH_SEARCH_DRIVER=", "SEARCH_SEARCH_ONLY_PATH=", "SEARCH_CUSTOM_SETTING="} {
+			if strings.Contains(body, key) {
+				t.Fatalf("%s retained %s: %s", path, key, body)
+			}
+		}
 	}
 }

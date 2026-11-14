@@ -25,10 +25,12 @@ type notificationScope struct {
 
 // notificationTemplateData limits imports to the supported provider manifest.
 type notificationTemplateData struct {
-	Scopes  []notificationScope
-	Names   []notificationAccessorName
-	Drivers []string
-	Webhook bool
+	Scopes           []notificationScope
+	Names            []notificationAccessorName
+	Drivers          []string
+	Webhook          bool
+	AppPrefixes      []string
+	ResourcePrefixes []string
 }
 
 var notificationRootKeys = []string{"DRIVER", "WEBHOOK_URL", "WEBHOOK_FORMAT", "WEBHOOK_TIMEOUT", "WEBHOOK_BEARER_TOKEN", "WEBHOOK_ALLOW_PRIVATE"}
@@ -59,7 +61,7 @@ func generateNotificationFiles(input generationInput) (int, error) {
 		Prefix: "NOTIFICATION", DefaultDriver: "log", LocalDrivers: notificationLocalDrivers,
 		RootKeys: notificationRootKeys, CommonKeys: notificationCommonKeys, DriverKeys: notificationDriverKeys,
 		ChildNames: func(environment generationEnvironment) []string {
-			return exactScopedChildNames(environment, "NOTIFICATION", notificationRootKeys)
+			return appScopedChildNames(input, "NOTIFICATION", "", notificationRootKeys)
 		},
 		AllowInactiveRootKeys: true, AllowInactiveNamedKeys: true, EagerNamedResources: true,
 	}); err != nil {
@@ -67,7 +69,7 @@ func generateNotificationFiles(input generationInput) (int, error) {
 	}
 	active := map[string]struct{}{effectivePrimitiveDriver(input.environment.Get("NOTIFICATION_DRIVER", "log"), "log"): {}}
 	names := discoverPrimitiveChildNames(input, "NOTIFICATION", notificationRootKeys)
-	data := notificationTemplateData{}
+	data := notificationTemplateData{AppPrefixes: generationKnownAppEnvPrefixes(input), ResourcePrefixes: generationResourceEnvPrefixes()}
 	reserved := makeSet("Default", "Named", "Names", "Instances", "Close")
 	for _, name := range names {
 		method := str.Of(name).Pascal().String()
@@ -76,6 +78,8 @@ func generateNotificationFiles(input generationInput) (int, error) {
 		}
 		reserved[method] = struct{}{}
 		data.Names = append(data.Names, notificationAccessorName{Name: strings.ToLower(name), Method: method})
+	}
+	for _, name := range appScopedChildNames(input, "NOTIFICATION", "", notificationRootKeys) {
 		active[effectivePrimitiveDriver(input.environment.Get("NOTIFICATION_"+name+"_DRIVER", "log"), "log")] = struct{}{}
 	}
 	for _, driver := range appPrefixedActiveDrivers(input, "NOTIFICATION", "log", false) {
@@ -85,7 +89,7 @@ func generateNotificationFiles(input generationInput) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	rootNames := exactScopedChildNames(input.environment, "NOTIFICATION", notificationRootKeys)
+	rootNames := appScopedChildNames(input, "NOTIFICATION", "", notificationRootKeys)
 	defaultEnabled := true
 	if config, err := project.LoadProjectConfigAt(input.projectDir); err == nil {
 		defaultEnabled = config.Render.Components.Notification
@@ -97,7 +101,7 @@ func generateNotificationFiles(input generationInput) (int, error) {
 	}
 	for _, prefix := range generationAppEnvPrefixesForResource(input, "NOTIFICATION") {
 		names := makeSet(rootNames...)
-		for _, name := range exactScopedChildNames(input.environment, prefix+"_NOTIFICATION", notificationRootKeys) {
+		for _, name := range appScopedChildNames(input, "NOTIFICATION", prefix, notificationRootKeys) {
 			names[name] = struct{}{}
 		}
 		data.Scopes = append(data.Scopes, notificationScope{Prefix: prefix, Names: sortStrings(names)})
@@ -162,6 +166,9 @@ var compiledNotificationDrivers = []string{
 {{range .Drivers}}    "{{.}}",
 {{end}}}
 
+var notificationAppPrefixes = []string{ {{range .AppPrefixes}} "{{.}}", {{end}} }
+var notificationResourcePrefixes = []string{ {{range .ResourcePrefixes}} "{{.}}", {{end}} }
+
 var notificationAppResources = map[string][]string{
 {{range .Scopes}} "{{.Prefix}}": { {{range .Names}} "{{.}}", {{end}} }, {{end}}
 }
@@ -204,17 +211,32 @@ func NewManagerForApp(prefix string) (*Manager, error) {
     return manager, nil
 }
 
-// notificationValue resolves existing App overlays without mutating process configuration.
+// notificationValue resolves App overrides without constructing providers or changing process configuration.
 func notificationValue(prefix, name, key, fallback string) string {
     scope := env.WithPrefix("NOTIFICATION")
     if name != "default" { scope = scope.Child(strings.ToUpper(name)) }
-    value := scope.Get(key, fallback)
+    baseKey := "NOTIFICATION_" + key
+    if name != "default" { baseKey = "NOTIFICATION_" + strings.ToUpper(name) + "_" + key }
+    value := fallback
+    if notificationEnvironmentOwner(baseKey) == "" { value = scope.Get(key, fallback) }
     if prefix != "" {
         appScope := env.WithPrefix(prefix).Child("NOTIFICATION")
         if name != "default" { appScope = appScope.Child(strings.ToUpper(name)) }
-        value = appScope.Get(key, value)
+        appKey := prefix + "_" + baseKey
+        if notificationEnvironmentOwner(appKey) == prefix { value = appScope.Get(key, value) }
     }
     return value
+}
+
+// notificationEnvironmentOwner assigns ambiguous keys to the longest compiled App prefix.
+func notificationEnvironmentOwner(key string) string {
+    owner := ""
+    for _, prefix := range notificationAppPrefixes {
+        for _, resourcePrefix := range notificationResourcePrefixes {
+            if strings.HasPrefix(key, prefix+"_"+resourcePrefix+"_") && len(prefix) > len(owner) { owner = prefix }
+        }
+    }
+    return owner
 }
 
 // sender fails fast if App wiring requests a typed accessor owned by another App.

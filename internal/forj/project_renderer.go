@@ -1430,6 +1430,32 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		return makeapp.RemoveResult{}, err
 	}
 
+	removedPrefix := project.AppEnvironmentPrefix(app.Name)
+	knownAppPrefixes := []string{removedPrefix}
+	for _, knownApp := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
+		if prefix := project.AppEnvironmentPrefix(knownApp.Name); prefix != "" {
+			knownAppPrefixes = append(knownAppPrefixes, prefix)
+		}
+	}
+	for name := range p.config.Dev.Apps {
+		knownAppPrefixes = append(knownAppPrefixes, project.AppEnvironmentPrefix(name))
+	}
+	for name := range p.config.Dev.Run {
+		knownAppPrefixes = append(knownAppPrefixes, project.AppEnvironmentPrefix(name))
+	}
+	preserveResourceSetting := func(key string) bool {
+		owner, managed := generate.AppResourceEnvironmentOwner(key, knownAppPrefixes, beforeProjectComponents)
+		if managed {
+			return owner != removedPrefix
+		}
+		for _, prefix := range knownAppPrefixes {
+			if len(prefix) > len(removedPrefix) && strings.HasPrefix(key, prefix+"_") {
+				return true
+			}
+		}
+		return false
+	}
+
 	var result makeapp.RemoveResult
 	for _, path := range []string{
 		projectlayout.AppDir(".", app),
@@ -1464,14 +1490,8 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	if removed {
 		result.Removed = append(result.Removed, cmdDir)
 	}
-	knownAppPrefixes := []string{project.AppEnvironmentPrefix(app.Name)}
-	for _, knownApp := range projectlayout.RuntimeApps(p.workspace.path(), p.config) {
-		if prefix := project.AppEnvironmentPrefix(knownApp.Name); prefix != "" {
-			knownAppPrefixes = append(knownAppPrefixes, prefix)
-		}
-	}
 	for _, path := range []string{".env", ".env.host", ".env.example"} {
-		updated, err := p.workspace.removeAppEnvDefaults(path, app.Name, knownAppPrefixes...)
+		updated, err := p.workspace.removeAppEnvDefaults(path, app.Name, preserveResourceSetting)
 		if err != nil {
 			return result, err
 		}
@@ -2119,33 +2139,8 @@ func removeEnvSectionHeader(lines []string, appName string) []string {
 	return out
 }
 
-// preserveSearchEnvForAppRemoval keeps default and sibling Search settings when App names overlap their resource prefixes.
-func preserveSearchEnvForAppRemoval(key, removedPrefix string, knownAppPrefixes []string) bool {
-	relative, searchKey := strings.CutPrefix(key, "SEARCH_")
-	if !searchKey {
-		return false
-	}
-	managed := false
-	for _, suffix := range []string{"DRIVER", "PATH", "URL", "API_KEY", "PREFIX", "SUPPORTED_DRIVERS"} {
-		if relative == suffix || strings.HasSuffix(relative, "_"+suffix) {
-			managed = true
-			break
-		}
-	}
-	if !managed {
-		return false
-	}
-	owner := ""
-	for _, prefix := range knownAppPrefixes {
-		if strings.HasPrefix(key, prefix+"_SEARCH_") && len(prefix) > len(owner) {
-			owner = prefix
-		}
-	}
-	return owner != removedPrefix
-}
-
-// removeAppEnvDefaults deletes app-prefixed overrides when an app is removed.
-func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string, knownAppPrefixes ...string) (bool, error) {
+// removeAppEnvDefaults removes an App section while optional ownership predicates protect shared settings.
+func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string, preserve ...func(string) bool) (bool, error) {
 	prefix := project.AppEnvironmentPrefix(appName)
 	if prefix == "" {
 		return false, nil
@@ -2166,8 +2161,17 @@ func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string
 	appPrefix := prefix + "_"
 	for _, line := range lines {
 		key, _, ok := envfile.ParseAssignment(line)
-		if ok && strings.HasPrefix(key, appPrefix) && !preserveSearchEnvForAppRemoval(key, prefix, knownAppPrefixes) {
-			continue
+		if ok && strings.HasPrefix(key, appPrefix) {
+			keep := false
+			for _, predicate := range preserve {
+				if predicate(key) {
+					keep = true
+					break
+				}
+			}
+			if !keep {
+				continue
+			}
 		}
 		if isEnvSectionHeader(line, appName) {
 			continue
