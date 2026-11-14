@@ -204,6 +204,7 @@ func featureValue(prefix, name, key, fallback string) string {
 // openEvaluator validates startup policy and publishes only a complete native document.
 func openEvaluator(prefix, name string) (managedEvaluator, error) {
     driver := strings.ToLower(strings.TrimSpace(featureValue(prefix, name, "DRIVER", "memory")))
+    if driver == "" { driver = "memory" }
     if !compiledFeatureDrivers[driver] { return managedEvaluator{}, fmt.Errorf("feature driver %q is not compiled; update FEATURE_SUPPORTED_DRIVERS and regenerate", driver) }
     interval, err := time.ParseDuration(featureValue(prefix, name, "REFRESH_INTERVAL", "30s"))
     if err != nil || interval < 10*time.Millisecond { return managedEvaluator{}, errors.New("FEATURE_REFRESH_INTERVAL must be at least 10ms") }
