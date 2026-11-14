@@ -281,7 +281,7 @@ func (manager *Manager) Start(ctx context.Context) error {
 }
 
 // watchFeatureDirectory watches the parent so atomic file replacement does not detach the watch.
-// A missing or unsupported watch is optional: periodic refresh remains available and retries setup.
+// A missing or unsupported watch activates fallback polling until setup succeeds.
 func watchFeatureDirectory(path string) *fsnotify.Watcher {
     watcher, err := fsnotify.NewWatcher()
     if err != nil { return nil }
@@ -289,12 +289,14 @@ func watchFeatureDirectory(path string) *fsnotify.Watcher {
     return watcher
 }
 
-// runFeatureFileRefresh debounces filesystem changes and retains periodic reconciliation for missed events.
+// runFeatureFileRefresh watches available filesystems and polls only while a watch is unavailable.
 func runFeatureFileRefresh(ctx context.Context, resource managedEvaluator, watcher *fsnotify.Watcher) {
     // Reconcile after watch registration to cover changes since synchronous initialization.
     _ = resource.client.Refresh(ctx)
-    ticker := time.NewTicker(resource.interval)
-    defer ticker.Stop()
+    retry := time.NewTimer(resource.interval)
+    retry.Stop()
+    defer retry.Stop()
+    var polling <-chan time.Time
     debounce := time.NewTimer(time.Hour)
     debounce.Stop()
     defer debounce.Stop()
@@ -303,12 +305,21 @@ func runFeatureFileRefresh(ctx context.Context, resource managedEvaluator, watch
     var failures <-chan error
     defer func() { if watcher != nil { _ = watcher.Close() } }()
     for {
-        if watcher != nil { events, failures = watcher.Events, watcher.Errors } else { events, failures = nil, nil }
+        if watcher != nil {
+            events, failures = watcher.Events, watcher.Errors
+            retry.Stop()
+            polling = nil
+        } else {
+            events, failures = nil, nil
+            if polling == nil { retry.Reset(resource.interval); polling = retry.C }
+        }
         select {
         case <-ctx.Done():
             return
-        case <-ticker.C:
-            if watcher == nil { watcher = watchFeatureDirectory(resource.path) }
+        case <-polling:
+            polling = nil
+            watcher = watchFeatureDirectory(resource.path)
+            // Reconcile on recovery before returning to event-only refresh.
             _ = resource.client.Refresh(ctx)
         case event, ok := <-events:
             if !ok { _ = watcher.Close(); watcher = nil; continue }
@@ -318,10 +329,11 @@ func runFeatureFileRefresh(ctx context.Context, resource managedEvaluator, watch
                 pending = debounce.C
             }
             if filepath.Clean(event.Name) == filepath.Dir(resource.path) && event.Has(fsnotify.Remove|fsnotify.Rename) { _ = watcher.Close(); watcher = nil }
-        case _, ok := <-failures:
+        case err, ok := <-failures:
+            if ok && errors.Is(err, fsnotify.ErrEventOverflow) { _ = resource.client.Refresh(ctx); continue }
             _ = watcher.Close()
             watcher = nil
-            if ok { _ = resource.client.Refresh(ctx) }
+            _ = resource.client.Refresh(ctx)
         case <-pending:
             pending = nil
             _ = resource.client.Refresh(ctx)
