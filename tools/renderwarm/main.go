@@ -18,6 +18,7 @@ import (
 	_ "github.com/goforj/env/v2"
 	_ "github.com/goforj/events"
 	_ "github.com/goforj/events/eventscore"
+	_ "github.com/goforj/feature"
 	_ "github.com/goforj/httpx"
 	_ "github.com/goforj/mail"
 	_ "github.com/goforj/metrics"

@@ -4,6 +4,8 @@ package project
 type ComponentKey string
 
 const (
+	// ComponentFeature enables application-owned feature evaluation resources.
+	ComponentFeature ComponentKey = "feature"
 	// ComponentCLI enables generated CLI command support.
 	ComponentCLI ComponentKey = "cli"
 	// ComponentDemoApp enables the generated demo application surface.
@@ -58,6 +60,7 @@ type ComponentDefinition struct {
 }
 
 var componentCatalog = []ComponentDefinition{
+	{Key: ComponentFeature, Label: "Feature Flags", Description: "Evaluate targeted rollouts with managed configuration snapshots"},
 	{Key: ComponentCLI, Label: "CLI", Description: "Add commands to run and manage your app", DefaultSelected: true},
 	{Key: ComponentDocker, Label: "Docker", Description: "Run databases and tools locally", DefaultSelected: true},
 	{Key: ComponentNotification, Label: "Notifications", Description: "Send synchronous messages through configured channels"},
