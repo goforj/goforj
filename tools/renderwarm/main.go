@@ -9,6 +9,7 @@ import (
 	_ "github.com/a-h/templ"
 	_ "github.com/alecthomas/kong"
 	_ "github.com/charmbracelet/x/ansi"
+	_ "github.com/fsnotify/fsnotify"
 	_ "github.com/glebarez/sqlite"
 	_ "github.com/goforj/cache"
 	_ "github.com/goforj/cache/cachecore"
