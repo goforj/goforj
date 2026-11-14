@@ -241,8 +241,7 @@ func frameworkSnapshotForConfig(config *frameworkRenderIntent) (projectupgrade.S
 // frameworkDerivedPaths lists actual generator contracts independently of a particular component's runtime implementation.
 func frameworkDerivedPaths(config *frameworkRenderIntent) []string {
 	components := project.ProjectComponents(config.Config)
-	paths := generate.OutputPaths(generate.GenerationSelection{Cache: components.Cache, Queue: components.Jobs, Storage: components.Storage,
-		Events: components.Events, Mail: components.Mail, Database: components.HasDatabase(), Observability: components.Observability})
+	paths := generate.OutputPaths(generate.GenerationSelectionFromComponents(components))
 	paths = append(paths, "app/wire/wire_gen.go")
 	if appRenderComponents(config.Config, project.DefaultApp()).WebAPI || appRenderComponents(config.Config, project.DefaultApp()).WebUI {
 		paths = append(paths, apiindex.OutputPaths(project.DefaultApp())...)

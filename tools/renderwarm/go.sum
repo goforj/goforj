@@ -87,6 +87,8 @@ github.com/ebitengine/purego v0.10.1 h1:dewVBCBT2GaMu1SrNTYxQhgQBethzfhiwvZiLGP/
 github.com/ebitengine/purego v0.10.1/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
 github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeORc=
 github.com/felixge/httpsnoop v1.1.0/go.mod h1:Zqxgdd+1Rkcz8euOqdr7lqgCRJztwr5hp9vDSi5UZCE=
+github.com/fsnotify/fsnotify v1.10.1 h1:b0/UzAf9yR5rhf3RPm9gf3ehBPpf0oZKIjtpKrx59Ho=
+github.com/fsnotify/fsnotify v1.10.1/go.mod h1:TLheqan6HD6GBK6PrDWyDPBaEV8LspOxvPSjC+bVfgo=
 github.com/glebarez/go-sqlite v1.21.2 h1:3a6LFC4sKahUunAmynQKLZceZCOzUthkRkEAl9gAXWo=
 github.com/glebarez/go-sqlite v1.21.2/go.mod h1:sfxdZyhQjTM2Wry3gVYWaW072Ri1WMdWJi0k6+3382k=
 github.com/glebarez/sqlite v1.11.0 h1:wSG0irqzP6VurnMEpFGer5Li19RpIRi2qvQz++w0GMw=
@@ -121,6 +123,8 @@ github.com/goforj/events v0.2.2 h1:IS27C/n5GL5pxDj0qifBz4giAKC7NXn1hLP7CwAbiiA=
 github.com/goforj/events v0.2.2/go.mod h1:yUZ5G0rTjDsSXDuQS2B/esI38ZMjANDMWZtuaAs5RwY=
 github.com/goforj/events/eventscore v0.2.2 h1:3Vqwx5H19pr4bNdwfDlGKeTbJmY8LWeiZO1CgPDjsLg=
 github.com/goforj/events/eventscore v0.2.2/go.mod h1:1yO6x8Ior7p4UCIckJmKZ9/TcFUEKVOwBP6MT9oEbcM=
+github.com/goforj/feature v0.1.0 h1:Oh52Ts25EY5ybh21d1DdJ1Xiaxj2YLGjwtf5uMBLEpw=
+github.com/goforj/feature v0.1.0/go.mod h1:HY8Npg5uenuKiQ2FaHLYrh5HHadXjMxu0ReUbuikI9E=
 github.com/goforj/godump v1.9.1 h1:9OGpb978Ytz3B59d5Yi2PzRYYLid6UkmhYDIDNiF15Y=
 github.com/goforj/godump v1.9.1/go.mod h1:JsuL6AEZfKIU+iR5ewL6iQ2fIuhvLtPmJDH47M9Ptrc=
 github.com/goforj/httpx v1.1.0 h1:9YMKQjK6pVtq5iogpsAFgBUr2BwLXe0J5aCjM5NBeYQ=

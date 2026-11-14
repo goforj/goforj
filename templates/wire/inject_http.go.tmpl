@@ -6,6 +6,9 @@ package wire
 import (
 	"github.com/goforj/wire"
 	"{{.GoModuleName}}/{{.AppImportPath}}"
+{{- if .Components.Feature }}
+	"{{.GoModuleName}}/internal/features"
+{{- end }}
 {{- if .Components.Cache }}
 	"{{.GoModuleName}}/internal/caches"
 {{- end }}
@@ -49,6 +52,9 @@ var httpServerSet = wire.NewSet(
 
 // provideReadinessChecks projects only this App's enabled resource managers into HTTP readiness checks.
 func provideReadinessChecks(
+{{- if .Components.Feature }}
+	featureManager *features.Manager,
+{{- end }}
 {{- if .Components.Cache }}
 	cacheManager *caches.Manager,
 {{- end }}
@@ -66,6 +72,11 @@ func provideReadinessChecks(
 {{- end }}
 ) []http.ReadinessCheck {
 	checks := make([]http.ReadinessCheck, 0)
+{{- if .Components.Feature }}
+    for _, check := range featureManager.ReadinessChecks() {
+        checks = append(checks, http.ReadinessCheck{Name: check.Name, Check: check.Check})
+    }
+{{- end }}
 {{- if .Components.Cache }}
 	for _, check := range cacheManager.ReadinessChecks() {
 		checks = append(checks, http.ReadinessCheck{

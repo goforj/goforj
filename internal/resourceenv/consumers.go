@@ -16,6 +16,9 @@ import (
 // resourceConsumerResolver keeps the project-wide inputs together because every App scope must use the same plan and service placement policy.
 type resourceConsumerResolver struct {
 	values                map[string]string
+	rawValues             map[string]string
+	appPrefixes           []string
+	featureAppPrefixes    map[string]bool
 	plan                  project.ResourcePlan
 	projectComponents     project.Components
 	projectDatabaseDriver string
@@ -45,10 +48,10 @@ type resourceEndpointResolution struct {
 	local    bool
 }
 
-// ResolveConsumers applies each configured App's actual participation to resource discovery.
-func ResolveConsumers(source []byte, plan project.ResourcePlan, projectComponents project.Components, config *project.Config) ([]project.EffectiveResourceConsumer, error) {
+// ResolveConsumers applies App participation and optional conventional App names to resource discovery.
+func ResolveConsumers(source []byte, plan project.ResourcePlan, projectComponents project.Components, config *project.Config, knownAppNames ...string) ([]project.EffectiveResourceConsumer, error) {
 	defaultComponents := projectComponents
-	appNames := configuredResourceAppNames(config)
+	appNames := append(configuredResourceAppNames(config), knownAppNames...)
 	appComponents := make(map[string]project.Components, len(appNames))
 	if config != nil {
 		defaultComponents = config.Render.Components.WithResolvedDependencies()
@@ -69,13 +72,21 @@ func ResolveConsumers(source []byte, plan project.ResourcePlan, projectComponent
 
 // newResourceConsumerResolver parses the owner environment once so every App scope observes the same resolved dotenv assignments.
 func newResourceConsumerResolver(source []byte, plan project.ResourcePlan, projectComponents project.Components) (resourceConsumerResolver, error) {
-	values, err := resourceEnvironmentAssignments(source)
+	parsed, err := godotenv.Unmarshal(string(source))
 	if err != nil {
 		return resourceConsumerResolver{}, fmt.Errorf("parse effective resource environment: %w", err)
+	}
+	values := make(map[string]string, len(parsed))
+	rawValues := make(map[string]string, len(parsed))
+	for key, value := range parsed {
+		key = strings.ToUpper(strings.TrimSpace(key))
+		values[key] = strings.TrimSpace(value)
+		rawValues[key] = value
 	}
 	databaseSelection, _ := plan.Selection(project.ResourceDatabase)
 	return resourceConsumerResolver{
 		values:                values,
+		rawValues:             rawValues,
 		plan:                  plan,
 		projectComponents:     projectComponents,
 		projectDatabaseDriver: databaseSelection.Active,
@@ -85,6 +96,15 @@ func newResourceConsumerResolver(source []byte, plan project.ResourcePlan, proje
 // resolve keeps applicability App-local while retaining project-wide service placement.
 func (resolver resourceConsumerResolver) resolve(defaultComponents project.Components, appNames []string, appComponents map[string]project.Components) ([]project.EffectiveResourceConsumer, error) {
 	appPrefixes := resourceAppPrefixes(resolver.values, appNames)
+	resolver.featureAppPrefixes = map[string]bool{}
+	for _, app := range appPrefixes {
+		resolver.appPrefixes = append(resolver.appPrefixes, app.prefix)
+		components, ok := appComponents[app.name]
+		if !ok {
+			components = defaultComponents
+		}
+		resolver.featureAppPrefixes[app.prefix] = components.Feature
+	}
 	consumers := []project.EffectiveResourceConsumer{}
 	seen := map[string]bool{}
 
@@ -304,6 +324,9 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if named.Resource != resource {
 			continue
 		}
+		if (resource == project.ResourceFeature && project.AppResourceKeyOwner(named.EnvironmentKey, resolver.appPrefixes) != "") || resolver.enabledFeatureAppOwns(named.EnvironmentKey) {
+			continue
+		}
 		fallback := named.Active
 		if value, set := resolver.overlayValue(scope, named.EnvironmentKey); set && strings.TrimSpace(value) != "" {
 			fallback = value
@@ -317,6 +340,10 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		appMarker = scope.app.prefix + "_"
 	}
 	for key := range resolver.values {
+		owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
+		if (resource == project.ResourceFeature && owner != "" && owner != scope.app.prefix) || (resource != project.ResourceFeature && resolver.enabledFeatureAppOwns(key)) {
+			continue
+		}
 		baseKey := key
 		if appMarker != "" && strings.HasPrefix(baseKey, appMarker) {
 			baseKey = strings.TrimPrefix(baseKey, appMarker)
@@ -347,6 +374,9 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		driver, set := resolver.overlayValue(scope, driverKey)
 		if !set || strings.TrimSpace(driver) == "" {
 			driver = definition.NamedDriverDefault(rootDriver)
+		}
+		if resource == project.ResourceFeature {
+			driver = resolver.featureDriver(scope, driverKey, definition.DefaultDriver)
 		}
 		drivers[strings.ToLower(name)] = str.Of(driver).Trim().ToLower().String()
 	}
@@ -411,6 +441,9 @@ func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerS
 		key += "_" + strings.ToUpper(connection.name)
 	}
 	key += "_DRIVER"
+	if connection.definition.Key == project.ResourceFeature {
+		return resolver.featureDriver(scope, key, connection.definition.DefaultDriver)
+	}
 	value, set := resolver.overlayValue(scope, key)
 	if !set {
 		return str.Of(fallback).Trim().ToLower().String()
@@ -423,6 +456,27 @@ func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerS
 		return connection.definition.DefaultDriver
 	}
 	return connection.definition.NamedDriverDefault(fallback)
+}
+
+// featureDriver preserves raw empty-value inheritance before normalizing the selected Feature driver.
+func (resolver resourceConsumerResolver) featureDriver(scope resourceConsumerScope, key, fallback string) string {
+	value := fallback
+	if project.AppResourceKeyOwner(key, resolver.appPrefixes) == "" {
+		if base := resolver.rawValues[key]; base != "" {
+			value = base
+		}
+	}
+	appKey := scope.app.prefix + "_" + key
+	if scope.app.prefix != "" && project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix {
+		if overlay := resolver.rawValues[appKey]; overlay != "" {
+			value = overlay
+		}
+	}
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 // resolveConsumer derives catalog service metadata and a credential-safe endpoint identity for one App-local connection.
@@ -701,16 +755,29 @@ func (resolver resourceConsumerResolver) scopedValue(scope resourceConsumerScope
 	return strings.TrimSpace(value)
 }
 
-// overlayValue applies the generated runtime's App-prefixed override precedence.
+// overlayValue applies runtime overlay precedence, retaining resource-first lookup for legacy managers.
 func (resolver resourceConsumerResolver) overlayValue(scope resourceConsumerScope, key string) (string, bool) {
 	key = str.Of(key).Trim().ToUpper().String()
+	appAware := strings.HasPrefix(key, "FEATURE_")
 	if scope.app.prefix != "" {
-		if value, ok := resolver.values[scope.app.prefix+"_"+key]; ok {
-			return value, true
+		appKey := scope.app.prefix + "_" + key
+		if (appAware && project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix) || (!appAware && !resolver.enabledFeatureAppOwns(appKey)) {
+			if value, ok := resolver.values[appKey]; ok {
+				return value, true
+			}
 		}
+	}
+	if (appAware && project.AppResourceKeyOwner(key, resolver.appPrefixes) != "") || (!appAware && resolver.enabledFeatureAppOwns(key)) {
+		return "", false
 	}
 	value, ok := resolver.values[key]
 	return value, ok
+}
+
+// enabledFeatureAppOwns protects active Feature overlays while retaining legacy interpretation for disabled Apps.
+func (resolver resourceConsumerResolver) enabledFeatureAppOwns(key string) bool {
+	owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
+	return owner != "" && resolver.featureAppPrefixes[owner] && strings.HasPrefix(key, owner+"_FEATURE_")
 }
 
 // consumerName formats the stable identity shared with the pure service planner.

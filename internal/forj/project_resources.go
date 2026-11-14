@@ -30,6 +30,9 @@ func normalizeQueueDriver(value string) string {
 
 // resourceRenderValues is the template-facing projection of a validated transient resource plan.
 type resourceRenderValues struct {
+	FeatureDriver                  string
+	FeatureSupportedDrivers        string
+	FeatureAvailableDrivers        string
 	DatabaseDriver                 string
 	DatabaseSupportedDrivers       string
 	DatabaseAvailableDrivers       string
@@ -219,7 +222,12 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 		return err
 	}
 	p.resources.plan = reconciled.EffectivePlan
-	consumers, err := resourceenv.ResolveConsumers(reconciled.Source, reconciled.EffectivePlan, projectComponents, p.config)
+	knownApps := projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config)
+	knownAppNames := make([]string, 0, len(knownApps))
+	for _, app := range knownApps {
+		knownAppNames = append(knownAppNames, app.Name)
+	}
+	consumers, err := resourceenv.ResolveConsumers(reconciled.Source, reconciled.EffectivePlan, projectComponents, p.config, knownAppNames...)
 	if err != nil {
 		return fmt.Errorf("discover effective resource consumers: %w", err)
 	}
@@ -385,6 +393,7 @@ func resourceRenderValuesForPlanWithConsumers(plan project.ResourcePlan, compone
 		*available = availableDrivers[key]
 	}
 	set(project.ResourceDatabase, &values.DatabaseDriver, &values.DatabaseSupportedDrivers, &values.DatabaseAvailableDrivers)
+	set(project.ResourceFeature, &values.FeatureDriver, &values.FeatureSupportedDrivers, &values.FeatureAvailableDrivers)
 	set(project.ResourceCache, &values.CacheDriver, &values.CacheSupportedDrivers, &values.CacheAvailableDrivers)
 	set(project.ResourceQueue, &values.QueueDriver, &values.QueueSupportedDrivers, &values.QueueAvailableDrivers)
 	set(project.ResourceEvents, &values.EventsDriver, &values.EventsSupportedDrivers, &values.EventsAvailableDrivers)
@@ -516,6 +525,7 @@ func activeDevelopmentServiceProfiles(servicePlan project.ServicePlan, component
 func (v resourceRenderValues) DriverEnvironmentPlaceholders() string {
 	selections := map[project.ResourceKey]project.DriverSelection{
 		project.ResourceDatabase: {Active: v.DatabaseDriver, Supported: splitDriverList(v.DatabaseSupportedDrivers)},
+		project.ResourceFeature:  {Active: v.FeatureDriver, Supported: splitDriverList(v.FeatureSupportedDrivers)},
 		project.ResourceCache:    {Active: v.CacheDriver, Supported: splitDriverList(v.CacheSupportedDrivers)},
 		project.ResourceQueue:    {Active: v.QueueDriver, Supported: splitDriverList(v.QueueSupportedDrivers)},
 		project.ResourceEvents:   {Active: v.EventsDriver, Supported: splitDriverList(v.EventsSupportedDrivers)},

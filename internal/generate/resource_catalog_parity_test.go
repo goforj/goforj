@@ -14,6 +14,7 @@ func TestResourceCatalogMatchesGeneratorInventories(t *testing.T) {
 		resource  project.ResourceKey
 		inventory map[string]map[string]struct{}
 	}{
+		{resource: project.ResourceFeature, inventory: featureDriverKeys},
 		{resource: project.ResourceCache, inventory: cacheDriverKeys},
 		{resource: project.ResourceQueue, inventory: queueDriverKeys},
 		{resource: project.ResourceEvents, inventory: eventDriverKeys},

@@ -1,0 +1,555 @@
+package generate
+
+import (
+	"bytes"
+	"fmt"
+	"go/format"
+	"go/token"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"text/template"
+
+	"github.com/goforj/goforj/project"
+	"github.com/goforj/str/v2"
+)
+
+var featureRootKeys = []string{"DRIVER", "SUPPORTED_DRIVERS", "PATH", "DOCUMENT", "REFRESH_INTERVAL", "INITIALIZATION_TIMEOUT"}
+var featureLocalDrivers = []string{"memory", "file"}
+var featureDriverKeys = map[string]map[string]struct{}{"memory": makeSet("DOCUMENT"), "file": makeSet("PATH")}
+
+// featureAccessor describes a configured evaluator rather than an individual dynamic flag.
+type featureAccessor struct{ Method, Name string }
+
+// featureScope keeps named evaluator ownership within the App that declared it.
+type featureScope struct {
+	Prefix string
+	Names  []string
+}
+
+// featureTemplateData captures build capabilities independently from runtime source selection.
+type featureTemplateData struct {
+	Drivers          []string
+	Names            []featureAccessor
+	Scopes           []featureScope
+	AppPrefixes      []string
+	ResourcePrefixes []string
+}
+
+// GenerateFeatureFiles generates managed native evaluators from the environment build contract.
+func GenerateFeatureFiles(projectDir string) (int, error) {
+	return generateFeatureFiles(ambientGenerationInput(projectDir))
+}
+
+// discoverFeatureNames includes evaluator resources declared only in enabled App overlays.
+func discoverFeatureNames(input generationInput) []string {
+	names := discoverPrimitiveChildNames(input, "FEATURE", featureRootKeys)
+	for i := range names {
+		names[i] = strings.ToLower(names[i])
+	}
+	sort.Strings(names)
+	return names
+}
+
+// generateFeatureFiles validates source configuration before publishing either generated artifact.
+func generateFeatureFiles(input generationInput) (int, error) {
+	if err := validatePrimitiveEnv(input, primitiveEnvContract{
+		Prefix: "FEATURE", DefaultDriver: "memory", LocalDrivers: featureLocalDrivers,
+		RootKeys: featureRootKeys, CommonKeys: makeSet("DRIVER", "REFRESH_INTERVAL", "INITIALIZATION_TIMEOUT"), DriverKeys: featureDriverKeys,
+		ChildNames: func(environment generationEnvironment) []string {
+			return appScopedChildNames(input, "FEATURE", "", featureRootKeys)
+		},
+		AllowInactiveRootKeys: true, EagerNamedResources: true,
+	}); err != nil {
+		return 0, err
+	}
+	data := featureTemplateData{AppPrefixes: generationKnownAppEnvPrefixes(input), ResourcePrefixes: generationResourceEnvPrefixes()}
+	methods := makeSet("Default", "Instances", "ReadinessChecks", "Start", "Close", "Refresh")
+	for _, name := range discoverFeatureNames(input) {
+		method := str.Of(name).Pascal().String()
+		if !token.IsIdentifier(method) || !token.IsExported(method) {
+			return 0, fmt.Errorf("feature resource %q cannot produce an exported Go accessor", name)
+		}
+		if _, exists := methods[method]; exists {
+			return 0, fmt.Errorf("feature resource %q conflicts with generated method %s", name, method)
+		}
+		methods[method] = struct{}{}
+		data.Names = append(data.Names, featureAccessor{Method: method, Name: name})
+	}
+	drivers, err := supportedDrivers(input.environment, "FEATURE", featureDriverKeys, []string{"memory", "file"}, featureLocalDrivers)
+	if err != nil {
+		return 0, err
+	}
+	data.Drivers = drivers
+	rootNames := appScopedChildNames(input, "FEATURE", "", featureRootKeys)
+	defaultEnabled := true
+	if config, err := project.LoadProjectConfigAt(input.projectDir); err == nil {
+		defaultEnabled = config.Render.Components.Feature
+	} else if !os.IsNotExist(err) {
+		return 0, fmt.Errorf("load feature App ownership: %w", err)
+	}
+	if defaultEnabled {
+		data.Scopes = append(data.Scopes, featureScope{Names: rootNames})
+	}
+	for _, prefix := range generationAppEnvPrefixesForResource(input, "FEATURE") {
+		names := makeSet(rootNames...)
+		for _, name := range appScopedChildNames(input, "FEATURE", prefix, featureRootKeys) {
+			names[name] = struct{}{}
+		}
+		data.Scopes = append(data.Scopes, featureScope{Prefix: prefix, Names: sortStrings(names)})
+	}
+	var prepared []struct {
+		path   string
+		source []byte
+	}
+	for _, artifact := range []struct{ path, source string }{{FeatureManagerPath, featureManagerSourceTemplate}, {FeatureAccessorsPath, featureAccessorsSourceTemplate}} {
+		parsed, err := template.New(artifact.path).Parse(artifact.source)
+		if err != nil {
+			return 0, err
+		}
+		var body bytes.Buffer
+		if err := parsed.Execute(&body, data); err != nil {
+			return 0, err
+		}
+		formatted, err := format.Source(body.Bytes())
+		if err != nil {
+			return 0, fmt.Errorf("format generated feature resource: %w", err)
+		}
+		prepared = append(prepared, struct {
+			path   string
+			source []byte
+		}{artifact.path, formatted})
+	}
+	written := 0
+	for _, artifact := range prepared {
+		changed, err := writeGeneratedSource(filepath.Join(input.projectDir, artifact.path), artifact.source)
+		if err != nil {
+			return written, err
+		}
+		if changed {
+			written++
+		}
+	}
+	return written, nil
+}
+
+const featureAccessorsSourceTemplate = `// Code generated by forj generate --feature. DO NOT EDIT.
+// Package features owns configured evaluators and their refresh lifecycle.
+package features
+
+import "github.com/goforj/feature"
+
+// Default returns the live default evaluator for flag checks and optional consistent snapshots.
+func (manager *Manager) Default() *feature.Features { return manager.evaluator("default") }
+{{range .Names}}
+// {{.Method}} returns the configured {{.Name}} evaluator, independently from its dynamic flag inventory.
+func (manager *Manager) {{.Method}}() *feature.Features { return manager.evaluator("{{.Name}}") }
+{{end}}
+`
+
+const featureManagerSourceTemplate = `// Code generated by forj generate --feature. DO NOT EDIT.
+// Package features owns configured evaluators and their refresh lifecycle.
+package features
+
+import (
+    "context"
+    "errors"
+    "fmt"
+    "os"
+    "path/filepath"
+    "runtime"
+    "sort"
+    "strings"
+    "sync"
+    "time"
+
+    "github.com/fsnotify/fsnotify"
+    "github.com/goforj/env/v2"
+    "github.com/goforj/feature"
+    "golang.org/x/text/unicode/norm"
+)
+
+var compiledFeatureDrivers = map[string]bool{ {{range .Drivers}} "{{.}}": true, {{end}} }
+var featureAppPrefixes = []string{ {{range .AppPrefixes}} "{{.}}", {{end}} }
+var featureResourcePrefixes = []string{ {{range .ResourcePrefixes}} "{{.}}", {{end}} }
+var featureAppResources = map[string][]string{
+{{range .Scopes}} "{{.Prefix}}": { {{range .Names}} "{{.}}", {{end}} }, {{end}}
+}
+
+// managedEvaluator retains source lifecycle without exposing it through request accessors.
+type managedEvaluator struct { name, driver, path string; client *feature.Client; flags *feature.Features; interval time.Duration }
+
+// Manager owns this App's initialized native evaluators and joins every refresh worker on close.
+type Manager struct {
+    resources []managedEvaluator
+    mu sync.Mutex
+    started, closed bool
+    cancel context.CancelFunc
+    workers sync.WaitGroup
+}
+
+// Instance reports detached health alongside a live evaluator facade.
+type Instance struct { Name, Driver string; Features *feature.Features; Status feature.Status }
+
+// ReadinessCheck associates source refresh health with a stable resource name.
+type ReadinessCheck struct { Name string; Check func(context.Context) error }
+
+// NewManager loads default App sources synchronously without starting workers.
+func NewManager() (*Manager, error) { return NewManagerForApp("") }
+
+// NewManagerForApp loads only evaluator resources declared for the selected App environment prefix.
+func NewManagerForApp(prefix string) (*Manager, error) {
+    prefix = strings.ToUpper(strings.TrimSpace(prefix))
+    names, enabled := featureAppResources[prefix]
+    if !enabled { return nil, fmt.Errorf("feature resources are not enabled for App prefix %q", prefix) }
+    manager := &Manager{}
+    for _, name := range append([]string{"default"}, names...) {
+        resource, err := openEvaluator(prefix, strings.ToLower(name))
+        if err != nil { return nil, fmt.Errorf("initialize feature resource %s: %w", strings.ToLower(name), err) }
+        manager.resources = append(manager.resources, resource)
+    }
+    return manager, nil
+}
+
+// featureValue resolves App overrides without constructing providers or changing process configuration.
+func featureValue(prefix, name, key, fallback string) string {
+    scope := env.WithPrefix("FEATURE")
+    if name != "default" { scope = scope.Child(strings.ToUpper(name)) }
+    baseKey := "FEATURE_" + key
+    if name != "default" { baseKey = "FEATURE_" + strings.ToUpper(name) + "_" + key }
+    value := fallback
+    if featureEnvironmentOwner(baseKey) == "" { value = scope.Get(key, fallback) }
+    if prefix != "" {
+        appScope := env.WithPrefix(prefix).Child("FEATURE")
+        if name != "default" { appScope = appScope.Child(strings.ToUpper(name)) }
+        appKey := prefix + "_" + baseKey
+        if featureEnvironmentOwner(appKey) == prefix { value = appScope.Get(key, value) }
+    }
+    return value
+}
+
+// featureEnvironmentOwner assigns ambiguous keys to the longest compiled App prefix.
+func featureEnvironmentOwner(key string) string {
+    owner := ""
+    for _, prefix := range featureAppPrefixes {
+        for _, resourcePrefix := range featureResourcePrefixes {
+            if strings.HasPrefix(key, prefix+"_"+resourcePrefix+"_") && len(prefix) > len(owner) { owner = prefix }
+        }
+    }
+    return owner
+}
+
+// openEvaluator validates startup policy and publishes only a complete native document.
+func openEvaluator(prefix, name string) (managedEvaluator, error) {
+    driver := strings.ToLower(strings.TrimSpace(featureValue(prefix, name, "DRIVER", "memory")))
+    if driver == "" { driver = "memory" }
+    if !compiledFeatureDrivers[driver] { return managedEvaluator{}, fmt.Errorf("feature driver %q is not compiled; update FEATURE_SUPPORTED_DRIVERS and regenerate", driver) }
+    interval, err := time.ParseDuration(featureValue(prefix, name, "REFRESH_INTERVAL", "30s"))
+    if err != nil || interval < 10*time.Millisecond { return managedEvaluator{}, errors.New("FEATURE_REFRESH_INTERVAL must be at least 10ms") }
+    timeout, err := time.ParseDuration(featureValue(prefix, name, "INITIALIZATION_TIMEOUT", "5s"))
+    if err != nil || timeout <= 0 { return managedEvaluator{}, errors.New("FEATURE_INITIALIZATION_TIMEOUT must be positive") }
+    var source feature.Source
+    var path string
+    switch driver {
+    case "memory":
+        document, err := feature.Decode([]byte(featureValue(prefix, name, "DOCUMENT", "{\"schema\":1,\"flags\":{}}")))
+        if err != nil { return managedEvaluator{}, err }
+        source, err = feature.NewMemorySource(document)
+        if err != nil { return managedEvaluator{}, err }
+    case "file":
+        path = strings.TrimSpace(featureValue(prefix, name, "PATH", ""))
+        if path == "" { return managedEvaluator{}, errors.New("file feature source requires FEATURE_PATH") }
+        path, err = filepath.Abs(path)
+        if err != nil { return managedEvaluator{}, err }
+        source = feature.NewFileSource(path)
+    default:
+        return managedEvaluator{}, errors.New("unsupported native feature source")
+    }
+    ctx, cancel := context.WithTimeout(context.Background(), timeout)
+    defer cancel()
+    client, err := feature.Open(ctx, source)
+    if err != nil { return managedEvaluator{}, err }
+    return managedEvaluator{name: name, driver: driver, path: path, client: client, flags: feature.New(client), interval: interval}, nil
+}
+
+// evaluator fails fast if application wiring requests another App's named resource.
+func (manager *Manager) evaluator(name string) *feature.Features {
+    for _, resource := range manager.resources { if resource.name == name { return resource.flags } }
+    panic("feature evaluator is not configured for this App: " + name)
+}
+
+// Instances returns fresh health records without exposing mutable manager state.
+func (manager *Manager) Instances() []Instance {
+    instances := make([]Instance, 0, len(manager.resources))
+    for _, resource := range manager.resources { instances = append(instances, Instance{Name: resource.name, Driver: resource.driver, Features: resource.flags, Status: resource.client.Status()}) }
+    return instances
+}
+
+// Refresh retains each client's last valid snapshot when a source fails validation or loading.
+func (manager *Manager) Refresh(ctx context.Context) error {
+    manager.mu.Lock()
+    defer manager.mu.Unlock()
+    if manager.closed { return errors.New("feature manager is closed") }
+    var result error
+    for _, resource := range manager.resources { result = errors.Join(result, resource.client.Refresh(ctx)) }
+    return result
+}
+
+// Start starts at most one file refresh worker per resource until Close joins it.
+// The callback context admits startup; worker lifetime belongs to the App's shutdown hook.
+func (manager *Manager) Start(ctx context.Context) error {
+    if ctx == nil { ctx = context.Background() }
+    if err := ctx.Err(); err != nil { return err }
+    manager.mu.Lock()
+    defer manager.mu.Unlock()
+    if manager.closed { return errors.New("feature manager is closed") }
+    if manager.started { return nil }
+    runCtx, cancel := context.WithCancel(context.Background())
+    manager.cancel = cancel
+    manager.started = true
+    for _, resource := range manager.resources {
+        if resource.driver != "file" { continue }
+        manager.workers.Add(1)
+        watcher := watchFeatureDirectory(resource.path)
+        go func() { defer manager.workers.Done(); runFeatureFileRefresh(runCtx, resource, watcher) }()
+    }
+    return nil
+}
+
+// featureWatchEquivalent narrows native alias candidates before identity checks on case- or normalization-sensitive filesystems.
+func featureWatchEquivalent(left, right string) bool {
+    return strings.EqualFold(norm.NFC.String(left),norm.NFC.String(right))
+}
+
+// featureWatchComponent preserves filesystem entry spelling so notifications match native alias lookups.
+// Exact names take precedence, since case-sensitive filesystems may contain distinct case-folded names.
+func featureWatchComponent(directory, part string, info os.FileInfo) (string, error) {
+    if part == ".." { return filepath.Dir(directory), nil }
+    entries, err := os.ReadDir(directory)
+    if err != nil { return "", err }
+    for _, entry := range entries { if entry.Name() == part { return filepath.Join(directory,part), nil } }
+    for _, entry := range entries {
+        if !featureWatchEquivalent(entry.Name(),part) { continue }
+        candidate := filepath.Join(directory,entry.Name())
+        actual, err := os.Lstat(candidate)
+        if err == nil && os.SameFile(info,actual) { return candidate, nil }
+    }
+    return "", os.ErrNotExist
+}
+
+// featureWatchTopology covers every replaceable ancestor and retains exact event paths to exclude unrelated churn.
+// Resolved symlink targets need the same ancestor coverage as the configured path.
+func featureWatchTopology(path string) ([]string, map[string]bool, error) {
+    path, err := filepath.Abs(path)
+    if err != nil { return nil, nil, err }
+    volume := filepath.VolumeName(path)
+    remaining := strings.Split(strings.TrimPrefix(filepath.Clean(path), volume), string(filepath.Separator))
+    resolved := volume + string(filepath.Separator)
+    directories := map[string]bool{}
+    controls := map[string]bool{}
+    links := 0
+    for len(remaining) > 0 {
+        part := remaining[0]
+        remaining = remaining[1:]
+        if part == "" || part == "." { continue }
+        next := filepath.Join(resolved, part)
+        directories[resolved] = true
+        info, err := os.Lstat(next)
+        if err != nil {
+            if os.IsNotExist(err) && len(remaining) == 0 { controls[next] = true; resolved = next; break }
+            return nil, nil, err
+        }
+        next, err = featureWatchComponent(resolved,part,info)
+        if err != nil { return nil, nil, err }
+        controls[next] = controls[next] || len(remaining) == 0
+        if info.Mode() & os.ModeSymlink == 0 { resolved = next; continue }
+        // Kqueue follows link targets and can miss replacement of an existing directory entry.
+        if runtime.GOOS != "linux" && runtime.GOOS != "windows" { return nil, nil, errors.New("feature symlink replacement requires polling on this platform") }
+        links++
+        if links > 255 { return nil, nil, errors.New("too many feature path symlinks") }
+        target, err := os.Readlink(next)
+        if err != nil { return nil, nil, err }
+        if filepath.IsAbs(target) {
+            volume = filepath.VolumeName(target)
+            resolved = volume + string(filepath.Separator)
+            target = strings.TrimPrefix(target, volume)
+        }
+        remaining = append(strings.Split(target, string(filepath.Separator)), remaining...)
+    }
+    directories[filepath.Dir(resolved)] = true
+    result := make([]string, 0, len(directories))
+    for directory := range directories { result = append(result, directory) }
+    sort.Slice(result,func(left,right int) bool {
+        leftDepth,rightDepth := featureWatchDepth(result[left]),featureWatchDepth(result[right])
+        if leftDepth != rightDepth { return leftDepth < rightDepth }
+        return result[left] < result[right]
+    })
+    return result, controls, nil
+}
+
+// featureWatchDepth excludes volume roots so drive and UNC roots precede every descendant control.
+func featureWatchDepth(path string) int {
+    relative := strings.Trim(filepath.Clean(path)[len(filepath.VolumeName(path)):],string(filepath.Separator))
+    if relative == "" { return 0 }
+    return strings.Count(relative,string(filepath.Separator))+1
+}
+
+// featureWatcher retains registration-time controls even when a later rename or permission change prevents resolution.
+// Control values identify file paths whose writes can change the definition, excluding directory metadata writes.
+type featureWatcher struct {
+    *fsnotify.Watcher
+    controls map[string]bool
+}
+
+// featureWatchEvent recognizes recreated case-insensitive entries whose spelling was unavailable during registration.
+// Identity checks are limited to equivalent spelling candidates, keeping unrelated events free of filesystem reads.
+func (watcher *featureWatcher) featureWatchEvent(name string) (bool, bool) {
+    if content, ok := watcher.controls[name]; ok { return content, true }
+    for control, content := range watcher.controls {
+        if !featureWatchEquivalent(control,name) { continue }
+        expected, err := os.Lstat(control)
+        if err != nil { continue }
+        actual, err := os.Lstat(name)
+        if err == nil && os.SameFile(expected,actual) { return content, true }
+    }
+    return false, false
+}
+
+// watchFeatureDirectory watches every path ancestor and symlink control without periodic healthy polling.
+// Missing or unsupported paths activate fallback polling until every required watch can be established.
+func watchFeatureDirectory(path string) *featureWatcher {
+    return registerFeatureDirectory(path,(*fsnotify.Watcher).Add)
+}
+
+// registerFeatureDirectory installs ancestor controls first so replacements during descendant registration remain observable.
+func registerFeatureDirectory(path string, register func(*fsnotify.Watcher,string) error) *featureWatcher {
+    directories, controls, err := featureWatchTopology(path)
+    if err != nil { return nil }
+    backend, err := fsnotify.NewWatcher()
+    if err != nil { return nil }
+    watcher := &featureWatcher{Watcher:backend, controls:controls}
+    for _, directory := range directories {
+        if err := register(backend,directory); err != nil { _ = watcher.Close(); return nil }
+    }
+    // A link may have changed before its control directory was registered.
+    if !featureWatchMatches(path, watcher) { _ = watcher.Close(); return nil }
+    return watcher
+}
+
+// featureWatchMatches avoids rebuilding healthy directory watches during unrelated entry churn.
+func featureWatchMatches(path string, watcher *featureWatcher) bool {
+    if watcher == nil { return false }
+    directories, controls, err := featureWatchTopology(path)
+    if err != nil { return false }
+    if len(controls) != len(watcher.controls) { return false }
+    for path, content := range controls {
+        if registered, ok := watcher.controls[path]; !ok || registered != content { return false }
+    }
+    watched := watcher.WatchList()
+    if len(watched) != len(directories) { return false }
+    names := make(map[string]bool, len(watched))
+    for _, directory := range watched { names[directory] = true }
+    for _, directory := range directories { if !names[directory] { return false } }
+    return true
+}
+
+// runFeatureFileRefresh watches available filesystems and polls only while a watch is unavailable.
+func runFeatureFileRefresh(ctx context.Context, resource managedEvaluator, watcher *featureWatcher) {
+    // Reconcile after watch registration to cover changes since synchronous initialization.
+    _ = resource.client.Refresh(ctx)
+    retry := time.NewTimer(resource.interval)
+    retry.Stop()
+    defer retry.Stop()
+    var polling <-chan time.Time
+    debounce := time.NewTimer(time.Hour)
+    debounce.Stop()
+    defer debounce.Stop()
+    var pending <-chan time.Time
+    rebind, invalidated := false, false
+    var events <-chan fsnotify.Event
+    var failures <-chan error
+    defer func() { if watcher != nil { _ = watcher.Close() } }()
+    for {
+        if watcher != nil {
+            events, failures = watcher.Events, watcher.Errors
+            retry.Stop()
+            polling = nil
+        } else {
+            events, failures = nil, nil
+            if polling == nil { retry.Reset(resource.interval); polling = retry.C }
+        }
+        select {
+        case <-ctx.Done():
+            return
+        case <-polling:
+            polling = nil
+            watcher = watchFeatureDirectory(resource.path)
+            // Reconcile on recovery before returning to event-only refresh.
+            _ = resource.client.Refresh(ctx)
+        case event, ok := <-events:
+            if !ok { _ = watcher.Close(); watcher = nil; continue }
+            name := filepath.Clean(event.Name)
+            content, relevant := watcher.featureWatchEvent(name)
+            if !relevant { continue }
+            // Ancestor replacement can leave descendant watches attached to the old tree at identical paths.
+            structural := event.Has(fsnotify.Create|fsnotify.Remove|fsnotify.Rename)
+            if event.Has(fsnotify.Remove|fsnotify.Rename) && !content { invalidated = true }
+            metadataRecovery := event.Has(fsnotify.Chmod) && resource.client.Status().LastError != nil
+            if structural || (event.Has(fsnotify.Write) && content) || metadataRecovery {
+                rebind = rebind || structural
+                // A fixed flush deadline prevents event bursts from starving valid updates.
+                if pending == nil { debounce.Reset(50*time.Millisecond); pending = debounce.C }
+            }
+        case err, ok := <-failures:
+            if ok && errors.Is(err, fsnotify.ErrEventOverflow) {
+                // Lost events may include a symlink swap, so reconcile topology before publishing recovery.
+                replacement := watchFeatureDirectory(resource.path)
+                _ = watcher.Close()
+                watcher = replacement
+                _ = resource.client.Refresh(ctx)
+                continue
+            }
+            _ = watcher.Close()
+            watcher = nil
+            _ = resource.client.Refresh(ctx)
+        case <-pending:
+            pending = nil
+            if rebind && (invalidated || watcher == nil || !featureWatchMatches(resource.path, watcher)) {
+                replacement := watchFeatureDirectory(resource.path)
+                if watcher != nil { _ = watcher.Close() }
+                watcher = replacement
+            }
+            rebind, invalidated = false, false
+            _ = resource.client.Refresh(ctx)
+        }
+    }
+}
+
+// Close cancels refresh and waits for all owned workers, including concurrent close callers.
+func (manager *Manager) Close() error {
+    manager.mu.Lock()
+    manager.closed = true
+    if manager.cancel != nil { manager.cancel() }
+    manager.mu.Unlock()
+    manager.workers.Wait()
+    return nil
+}
+
+// ReadinessChecks keeps retained valid configuration usable while Instances reports refresh freshness.
+func (manager *Manager) ReadinessChecks() []ReadinessCheck {
+    checks := make([]ReadinessCheck, 0, len(manager.resources))
+    for _, resource := range manager.resources {
+        checks = append(checks, ReadinessCheck{Name: "feature_"+resource.name, Check: func(ctx context.Context) error {
+            if err := ctx.Err(); err != nil { return err }
+            manager.mu.Lock()
+            closed := manager.closed
+            manager.mu.Unlock()
+            if closed { return errors.New("feature manager is closed") }
+            if resource.client.Status().Revision == "" { return errors.New("feature evaluator has no valid configuration") }
+            return nil
+        }})
+    }
+    return checks
+}
+`
