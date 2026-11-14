@@ -226,4 +226,31 @@ func TestSearchManagerAppIsolation(t *testing.T) {
  t.Setenv("SEARCH_TYPO_PATH",filepath.Join(root,"default-typo"))
  if _,err:=NewManager(ctx,defaults);err==nil || !strings.Contains(err.Error(),"typo"){t.Fatalf("default App typo was ignored: %v",err)}
 }
+
+// TestSearchManagerDriverFallback verifies generator-compatible blank selections through real runtime construction.
+func TestSearchManagerDriverFallback(t *testing.T) {
+ for _,test:=range []struct{name,prefix,root,named,appRoot,appNamed string}{
+  {name:"root whitespace",root:"   "},
+  {name:"named whitespace",root:"bleve",named:"   "},
+  {name:"App root whitespace",prefix:"ADMIN",root:"bleve",appRoot:"   "},
+  {name:"App named whitespace",prefix:"ADMIN",root:"bleve",appRoot:"bleve",appNamed:"   "},
+ }{t.Run(test.name,func(t *testing.T){
+  t.Setenv("SEARCH_DRIVER",test.root);t.Setenv("SEARCH_CATALOG_DRIVER",test.named)
+  t.Setenv("ADMIN_SEARCH_DRIVER",test.appRoot);t.Setenv("ADMIN_SEARCH_CATALOG_DRIVER",test.appNamed)
+  t.Setenv("SEARCH_CATALOG_PATH",filepath.Join(t.TempDir(),"catalog"))
+  defs:=map[string]search.Definition{"catalog":definitions()["catalog"]}
+  if err:=ProvisionForApp(context.Background(),test.prefix,defs);err!=nil{t.Fatal(err)}
+  manager,err:=NewManagerForApp(context.Background(),test.prefix,defs);if err!=nil{t.Fatal(err)}
+  if manager.Instances()[0].Driver!="bleve"{t.Fatal("blank selection lost local fallback")}
+  if err:=manager.Close();err!=nil{t.Fatal(err)}
+ })}
+ t.Setenv("SEARCH_DRIVER","meilisearch")
+ t.Setenv("SEARCH_CATALOG_DRIVER","   ")
+ if driver:=searchDriverName("","catalog");driver!="meilisearch"{t.Fatalf("named blank lost root driver: %s",driver)}
+ t.Setenv("ADMIN_SEARCH_DRIVER","meilisearch")
+ t.Setenv("ADMIN_SEARCH_CATALOG_DRIVER","   ")
+ if driver:=searchDriverName("ADMIN","catalog");driver!="meilisearch"{t.Fatalf("App named blank lost App root driver: %s",driver)}
+ t.Setenv("ADMIN_SEARCH_DRIVER","   ")
+ if driver:=searchDriverName("ADMIN","catalog");driver!="bleve"{t.Fatalf("App root blank lost baseline: %s",driver)}
+}
 `

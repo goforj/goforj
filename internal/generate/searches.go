@@ -118,6 +118,7 @@ import (
  "context"
  "errors"
  "fmt"
+ "os"
  {{if .Bleve}}"path/filepath"{{end}}
  "sort"
  "strings"
@@ -194,7 +195,7 @@ func openManager(ctx context.Context, prefix string, definitions map[string]sear
  sort.Strings(names)
  manager := &Manager{indexes: make(map[string]indexResource, len(names))}
  for _, name := range names {
-  driverName := strings.ToLower(strings.TrimSpace(searchValue(prefix, name, "DRIVER", "bleve")))
+  driverName := searchDriverName(prefix, name)
   backend, err := openBackend(ctx, name, driverName, prefix)
   if err != nil { return nil, errors.Join(fmt.Errorf("search: open index %q: %w", name, err), manager.Close()) }
   index, err := search.NewIndex(backend, definitions[name])
@@ -220,6 +221,26 @@ func openBackend(ctx context.Context, name, driver, prefix string) (indexBackend
  default:
   return nil, fmt.Errorf("search: driver %q is not compiled; update SEARCH_SUPPORTED_DRIVERS and run forj generate --search", driver)
  }
+}
+
+// normalizedSearchDriver preserves the generator's fallback for empty or whitespace-only selections.
+func normalizedSearchDriver(value, fallback string) string {
+ driver := strings.ToLower(strings.TrimSpace(value))
+ if driver == "" { return fallback }
+ return driver
+}
+
+// searchDriverName mirrors generated root, named, and App selection without rewriting process environment.
+func searchDriverName(prefix, name string) string {
+ root := normalizedSearchDriver(env.Get("SEARCH_DRIVER", ""), "bleve")
+ driver := root
+ if value, exists := os.LookupEnv("SEARCH_"+strings.ToUpper(name)+"_DRIVER"); exists { driver = normalizedSearchDriver(value, root) }
+ if prefix != "" {
+  appRoot := root
+  if value, exists := os.LookupEnv(prefix+"_SEARCH_DRIVER"); exists { appRoot = normalizedSearchDriver(value, "bleve") }
+  if value, exists := os.LookupEnv(prefix+"_SEARCH_"+strings.ToUpper(name)+"_DRIVER"); exists { driver = normalizedSearchDriver(value, appRoot) }
+ }
+ return driver
 }
 
 // searchValue resolves App root defaults before any more-specific named resource settings.
