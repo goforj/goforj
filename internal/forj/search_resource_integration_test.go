@@ -78,14 +78,14 @@ func TestSearchResourceFullComposition(t *testing.T) {
 	if !strings.Contains(string(documentation), strings.TrimSpace(bootstrap)) {
 		t.Fatal("documented bootstrap differs from executed fixture")
 	}
-	bootstrapDir := filepath.Join(root, "cmd/search-provision")
+	bootstrapDir := filepath.Join(root, "tools/search-provision")
 	if err := os.MkdirAll(bootstrapDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(bootstrapDir, "main.go"), []byte(bootstrap), 0600); err != nil {
 		t.Fatal(err)
 	}
-	provision := exec.CommandContext(t.Context(), "go", "run", "./cmd/search-provision")
+	provision := exec.CommandContext(t.Context(), "go", "run", "./tools/search-provision")
 	provision.Dir = root
 	provision.Env = environment
 	if output, err := provision.CombinedOutput(); err != nil || !strings.Contains(string(output), "Search schemas provisioned") {
@@ -100,7 +100,7 @@ func TestSearchResourceFullComposition(t *testing.T) {
 			t.Fatalf("regenerate: %v\n%s", err, output)
 		}
 		if attempt == 0 {
-			// The provisioning command adds a conventional App marker, so capture its compiled ownership inventory after regeneration.
+			// Capture the configured inventory before requiring the next generation to remain byte stable.
 			for _, name := range []string{"manager_gen.go", "accessors_gen.go"} {
 				path := filepath.Join(root, "internal/searches", name)
 				body, err := os.ReadFile(path)
