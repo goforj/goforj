@@ -133,7 +133,7 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 	return names
 }
 
-// resourceKey gives Feature keys their known App owner while preserving participation-based legacy resource scopes.
+// resourceKey gives App-aware keys their known owner while preserving participation-based legacy resource scopes.
 func resourceKey(config *project.Config, key string) string {
 	if owner, _ := managedAppResourceOwner(config, key); owner != "" {
 		return strings.TrimPrefix(key, owner+"_")
@@ -184,7 +184,7 @@ func knownAppResourceOwner(config *project.Config, key string) string {
 func managedAppResourceOwner(config *project.Config, key string) (string, bool) {
 	owner := knownAppResourceOwner(config, key)
 	base := strings.TrimPrefix(key, owner+"_")
-	if owner == "" || (!strings.HasPrefix(base, "FEATURE_") && !strings.HasPrefix(key, "FEATURE_")) {
+	if owner == "" || (!appAwareResourceKey(base) && !appAwareResourceKey(key)) {
 		return "", false
 	}
 	for name, app := range config.Apps {
@@ -192,7 +192,7 @@ func managedAppResourceOwner(config *project.Config, key string) (string, bool) 
 			continue
 		}
 		enabled := resourceAppliesTo(base, project.NormalizeConfiguredAppComponents(config, app.Components))
-		if !enabled && !strings.HasPrefix(key, "FEATURE_") && resourceAppliesTo(key, project.ProjectComponents(config)) {
+		if !enabled && !appAwareResourceKey(key) && resourceAppliesTo(key, project.ProjectComponents(config)) {
 			return "", false
 		}
 		return owner, enabled
@@ -200,14 +200,19 @@ func managedAppResourceOwner(config *project.Config, key string) (string, bool) 
 	return "", false
 }
 
+// appAwareResourceKey identifies families whose runtime managers enforce known App ownership.
+func appAwareResourceKey(key string) bool {
+	return strings.HasPrefix(key, "FEATURE_") || strings.HasPrefix(key, "NOTIFICATION_")
+}
+
 // resourceScopeAllowed aligns independent family interpretations with App-aware generator ownership.
 func resourceScopeAllowed(config *project.Config, key string, definition project.ResourceDefinition, scope string) bool {
 	owner := knownAppResourceOwner(config, key)
-	if definition.Key == project.ResourceFeature {
+	if definition.Key == project.ResourceFeature || definition.Key == project.ResourceNotification {
 		return owner == strings.TrimSuffix(scope, "_")
 	}
 	managedOwner, enabled := managedAppResourceOwner(config, key)
-	return !enabled || managedOwner == "" || !strings.HasPrefix(key, managedOwner+"_FEATURE_")
+	return !enabled || managedOwner == "" || !appAwareResourceKey(strings.TrimPrefix(key, managedOwner+"_"))
 }
 
 // resourceAppliesTo distinguishes live resource scopes while allowing definitions for future components to retain their fallback interpretation.

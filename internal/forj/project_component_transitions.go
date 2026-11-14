@@ -616,6 +616,52 @@ func astIdentifierListContains(identifiers []*ast.Ident, want string) bool {
 	return false
 }
 
+// validateNotificationRenderTransition rejects removal before it can strand borrowed senders or App providers.
+func (p *ProjectRenderer) validateNotificationRenderTransition(components project.Components) error {
+	if !components.Notification {
+		path := filepath.Join("internal", "notifications")
+		exists, err := p.workspace.renderPathExists(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot disable Notifications while %s exists; automatic Notifications removal is not supported", path)
+		}
+	}
+	for _, app := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
+		if appRenderComponents(p.config, app).Notification {
+			continue
+		}
+		path := filepath.Join(projectlayout.WireDir(".", app), "app.go")
+		exists, err := p.notificationAccessorExists(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot disable Notifications for App %q while %s exposes the generated Notifications API; automatic Notifications removal is not supported", app.Name, path)
+		}
+	}
+	return nil
+}
+
+// notificationAccessorExists detects the generated App API without treating unrelated source text as ownership.
+func (p *ProjectRenderer) notificationAccessorExists(path string) (bool, error) {
+	file, exists, err := p.workspace.parsedRenderGoFile(path)
+	if err != nil {
+		return false, fmt.Errorf("parse Notifications transition path %s: %w", path, err)
+	}
+	if !exists {
+		return false, nil
+	}
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if ok && function.Recv != nil && function.Name.Name == "Notifications" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // validateFeatureRenderTransition rejects removal before generated accessors can strand App-owned providers.
 func (p *ProjectRenderer) validateFeatureRenderTransition(components project.Components) error {
 	if !components.Feature {

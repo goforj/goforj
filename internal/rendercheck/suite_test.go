@@ -401,6 +401,7 @@ func TestPRRenderProfileIncludesPrimitiveBoundaryAndMixedAppSentinels(t *testing
 		{id: "sentinel_named_app_cache_only", appName: "cache-worker", key: project.ComponentCache},
 		{id: "sentinel_named_app_events_only", appName: "events-worker", key: project.ComponentEvents},
 		{id: "sentinel_named_app_storage_only", appName: "storage-worker", key: project.ComponentStorage},
+		{id: "sentinel_named_app_notification_only", appName: "notifier", key: project.ComponentNotification},
 		{id: "sentinel_named_app_mail_only", appName: "mailer", key: project.ComponentMail},
 		{id: "sentinel_named_app_jobs_only", appName: "worker", key: project.ComponentJobs},
 		{id: "sentinel_named_app_database_only", appName: "database-worker", key: project.ComponentDatabaseSQLite},
@@ -633,4 +634,14 @@ func renderCombosInclude(combos []renderCombo, matches func(project.Components) 
 		}
 	}
 	return false
+}
+
+// TestNotificationResourceSentinelsCoverMaximumCompositions prevents optional delivery wiring from missing CI's largest renders.
+func TestNotificationResourceSentinelsCoverMaximumCompositions(t *testing.T) {
+	combos := buildRenderCombos(renderProfilePR)
+	for _, id := range []string{"sentinel_primitives_all_on", "sentinel_max_mysql", "sentinel_max_postgres"} {
+		if !requireRenderComboID(t, combos, id).components.Notification {
+			t.Fatalf("%s omitted Notifications", id)
+		}
+	}
 }

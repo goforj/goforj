@@ -22,6 +22,8 @@ const (
 	ResourceEvents ResourceKey = "events"
 	// ResourceStorage identifies the root storage disk.
 	ResourceStorage ResourceKey = "storage"
+	// ResourceNotification identifies configured synchronous message delivery.
+	ResourceNotification ResourceKey = "notification"
 	// ResourceMail identifies the root mailer used when Mail is enabled.
 	ResourceMail ResourceKey = "mail"
 )
@@ -30,6 +32,8 @@ const (
 type ServiceKey string
 
 const (
+	// ServiceNotificationWebhook identifies an externally configured notification destination.
+	ServiceNotificationWebhook ServiceKey = "notification_webhook"
 	// ServiceRedis identifies a Redis endpoint or generated Redis service.
 	ServiceRedis ServiceKey = "redis"
 	// ServiceMySQL identifies a MySQL endpoint or generated MariaDB service.
@@ -132,6 +136,17 @@ type ResourceDefinition struct {
 }
 
 var resourceCatalog = []ResourceDefinition{
+	{
+		Key: ResourceNotification, Label: "Notifications", EnvironmentPrefix: "NOTIFICATION",
+		DefaultDriver: "log", DefaultSupportedDrivers: []string{"log"},
+		Drivers: []DriverDefinition{
+			{Name: "log", Label: "Local capture", Order: 10},
+			{Name: "webhook", Label: "Webhook", Service: ServiceNotificationWebhook, ServiceLabel: "Notification webhook", Order: 20, Environment: []DriverEnvironmentPlaceholder{
+				driverEnvironmentPlaceholder("NOTIFICATION_WEBHOOK_URL", "", "trusted webhook destination"),
+			}},
+		},
+		applicable: func(components Components) bool { return components.Notification },
+	},
 	{
 		Key: ResourceFeature, Label: "Feature Flags", EnvironmentPrefix: "FEATURE",
 		DefaultDriver: "memory", DefaultSupportedDrivers: []string{"memory", "file"},

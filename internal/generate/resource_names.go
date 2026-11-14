@@ -10,13 +10,14 @@ func ResourceNames(root string, values map[string]string) map[project.ResourceKe
 	environment := generationEnvironment{values: values}
 	input := generationInput{projectDir: root, environment: environment, appPrefixes: newGenerationEnvironmentFilter(root, environment).sortedAppPrefixes()}
 	return map[project.ResourceKey][]string{
-		project.ResourceFeature:  discoverFeatureNames(input),
-		project.ResourceDatabase: discoverDBConnectionNames(input),
-		project.ResourceCache:    discoverCacheStoreNames(input),
-		project.ResourceQueue:    discoverQueueNames(input),
-		project.ResourceEvents:   discoverEventNames(input),
-		project.ResourceStorage:  discoverStorageDiskNames(input),
-		project.ResourceMail:     discoverMailNames(input),
+		project.ResourceNotification: discoverNotificationNames(input),
+		project.ResourceFeature:      discoverFeatureNames(input),
+		project.ResourceDatabase:     discoverDBConnectionNames(input),
+		project.ResourceCache:        discoverCacheStoreNames(input),
+		project.ResourceQueue:        discoverQueueNames(input),
+		project.ResourceEvents:       discoverEventNames(input),
+		project.ResourceStorage:      discoverStorageDiskNames(input),
+		project.ResourceMail:         discoverMailNames(input),
 	}
 }
 

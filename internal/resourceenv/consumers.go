@@ -18,7 +18,7 @@ type resourceConsumerResolver struct {
 	values                map[string]string
 	rawValues             map[string]string
 	appPrefixes           []string
-	featureAppPrefixes    map[string]bool
+	appResourceComponents map[string]project.Components
 	plan                  project.ResourcePlan
 	projectComponents     project.Components
 	projectDatabaseDriver string
@@ -96,14 +96,14 @@ func newResourceConsumerResolver(source []byte, plan project.ResourcePlan, proje
 // resolve keeps applicability App-local while retaining project-wide service placement.
 func (resolver resourceConsumerResolver) resolve(defaultComponents project.Components, appNames []string, appComponents map[string]project.Components) ([]project.EffectiveResourceConsumer, error) {
 	appPrefixes := resourceAppPrefixes(resolver.values, appNames)
-	resolver.featureAppPrefixes = map[string]bool{}
+	resolver.appResourceComponents = map[string]project.Components{}
 	for _, app := range appPrefixes {
 		resolver.appPrefixes = append(resolver.appPrefixes, app.prefix)
 		components, ok := appComponents[app.name]
 		if !ok {
 			components = defaultComponents
 		}
-		resolver.featureAppPrefixes[app.prefix] = components.Feature
+		resolver.appResourceComponents[app.prefix] = components
 	}
 	consumers := []project.EffectiveResourceConsumer{}
 	seen := map[string]bool{}
@@ -324,7 +324,7 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if named.Resource != resource {
 			continue
 		}
-		if (resource == project.ResourceFeature && project.AppResourceKeyOwner(named.EnvironmentKey, resolver.appPrefixes) != "") || resolver.enabledFeatureAppOwns(named.EnvironmentKey) {
+		if ((resource == project.ResourceFeature || resource == project.ResourceNotification) && project.AppResourceKeyOwner(named.EnvironmentKey, resolver.appPrefixes) != "") || resolver.enabledAppResourceOwns(named.EnvironmentKey) {
 			continue
 		}
 		fallback := named.Active
@@ -341,7 +341,8 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 	}
 	for key := range resolver.values {
 		owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
-		if (resource == project.ResourceFeature && owner != "" && owner != scope.app.prefix) || (resource != project.ResourceFeature && resolver.enabledFeatureAppOwns(key)) {
+		appAware := resource == project.ResourceFeature || resource == project.ResourceNotification
+		if (appAware && owner != "" && owner != scope.app.prefix) || (!appAware && resolver.enabledAppResourceOwns(key)) {
 			continue
 		}
 		baseKey := key
@@ -375,8 +376,8 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if !set || strings.TrimSpace(driver) == "" {
 			driver = definition.NamedDriverDefault(rootDriver)
 		}
-		if resource == project.ResourceFeature {
-			driver = resolver.featureDriver(scope, driverKey, definition.DefaultDriver)
+		if resource == project.ResourceFeature || resource == project.ResourceNotification {
+			driver = resolver.rawScopedDriver(scope, driverKey, definition.DefaultDriver)
 		}
 		drivers[strings.ToLower(name)] = str.Of(driver).Trim().ToLower().String()
 	}
@@ -441,8 +442,8 @@ func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerS
 		key += "_" + strings.ToUpper(connection.name)
 	}
 	key += "_DRIVER"
-	if connection.definition.Key == project.ResourceFeature {
-		return resolver.featureDriver(scope, key, connection.definition.DefaultDriver)
+	if connection.definition.Key == project.ResourceFeature || connection.definition.Key == project.ResourceNotification {
+		return resolver.rawScopedDriver(scope, key, connection.definition.DefaultDriver)
 	}
 	value, set := resolver.overlayValue(scope, key)
 	if !set {
@@ -458,8 +459,8 @@ func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerS
 	return connection.definition.NamedDriverDefault(fallback)
 }
 
-// featureDriver preserves raw empty-value inheritance before normalizing the selected Feature driver.
-func (resolver resourceConsumerResolver) featureDriver(scope resourceConsumerScope, key, fallback string) string {
+// rawScopedDriver preserves raw empty-value inheritance for resources whose App resolvers fall back before normalization.
+func (resolver resourceConsumerResolver) rawScopedDriver(scope resourceConsumerScope, key, fallback string) string {
 	value := fallback
 	if project.AppResourceKeyOwner(key, resolver.appPrefixes) == "" {
 		if base := resolver.rawValues[key]; base != "" {
@@ -758,26 +759,27 @@ func (resolver resourceConsumerResolver) scopedValue(scope resourceConsumerScope
 // overlayValue applies runtime overlay precedence, retaining resource-first lookup for legacy managers.
 func (resolver resourceConsumerResolver) overlayValue(scope resourceConsumerScope, key string) (string, bool) {
 	key = str.Of(key).Trim().ToUpper().String()
-	appAware := strings.HasPrefix(key, "FEATURE_")
+	appAware := strings.HasPrefix(key, "FEATURE_") || strings.HasPrefix(key, "NOTIFICATION_")
 	if scope.app.prefix != "" {
 		appKey := scope.app.prefix + "_" + key
-		if (appAware && project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix) || (!appAware && !resolver.enabledFeatureAppOwns(appKey)) {
+		if (appAware && project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix) || (!appAware && !resolver.enabledAppResourceOwns(appKey)) {
 			if value, ok := resolver.values[appKey]; ok {
 				return value, true
 			}
 		}
 	}
-	if (appAware && project.AppResourceKeyOwner(key, resolver.appPrefixes) != "") || (!appAware && resolver.enabledFeatureAppOwns(key)) {
+	if (appAware && project.AppResourceKeyOwner(key, resolver.appPrefixes) != "") || (!appAware && resolver.enabledAppResourceOwns(key)) {
 		return "", false
 	}
 	value, ok := resolver.values[key]
 	return value, ok
 }
 
-// enabledFeatureAppOwns protects active Feature overlays while retaining legacy interpretation for disabled Apps.
-func (resolver resourceConsumerResolver) enabledFeatureAppOwns(key string) bool {
+// enabledAppResourceOwns protects active App-aware overlays while retaining legacy interpretation for disabled Apps.
+func (resolver resourceConsumerResolver) enabledAppResourceOwns(key string) bool {
 	owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
-	return owner != "" && resolver.featureAppPrefixes[owner] && strings.HasPrefix(key, owner+"_FEATURE_")
+	components := resolver.appResourceComponents[owner]
+	return owner != "" && ((components.Feature && strings.HasPrefix(key, owner+"_FEATURE_")) || (components.Notification && strings.HasPrefix(key, owner+"_NOTIFICATION_")))
 }
 
 // consumerName formats the stable identity shared with the pure service planner.

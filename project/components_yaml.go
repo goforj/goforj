@@ -29,6 +29,7 @@ var componentYAMLKeys = []ComponentKey{
 	ComponentEvents,
 	ComponentStorage,
 	ComponentJobs,
+	ComponentNotification,
 }
 
 var retiredLegacyComponentYAMLKeys = map[ComponentKey]struct{}{

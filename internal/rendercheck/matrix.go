@@ -172,7 +172,7 @@ func prSentinelRenderCombos() []renderCombo {
 		{
 			id: "sentinel_primitives_all_on",
 			cfg: project.Components{
-				CLI: true, Docker: true, Cache: true, Events: true, Storage: true, Feature: true, Jobs: true,
+				CLI: true, Docker: true, Cache: true, Events: true, Storage: true, Jobs: true, Feature: true, Notification: true,
 			},
 		},
 		{
@@ -198,7 +198,7 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabaseMySQL: true,
-				Scheduler: true, Cache: true, Events: true, Storage: true, Feature: true, Jobs: true,
+				Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true, Feature: true, Notification: true,
 			},
 		},
 		{
@@ -206,7 +206,7 @@ func prSentinelRenderCombos() []renderCombo {
 			cfg: project.Components{
 				CLI: true, DemoApp: true, Mail: true, Auth: true, OAuth: true, WebAPI: true, WebUI: true,
 				Metrics: true, Observability: true, Grafana: true, Docker: true, DatabasePostgres: true,
-				Scheduler: true, Cache: true, Events: true, Storage: true, Feature: true, Jobs: true,
+				Scheduler: true, Cache: true, Events: true, Storage: true, Jobs: true, Feature: true, Notification: true,
 			},
 		},
 		{
@@ -258,6 +258,7 @@ func prSentinelRenderCombos() []renderCombo {
 		key     project.ComponentKey
 	}{
 		{id: "sentinel_named_app_storage_only", appName: "storage-worker", key: project.ComponentStorage},
+		{id: "sentinel_named_app_notification_only", appName: "notifier", key: project.ComponentNotification},
 		{id: "sentinel_named_app_mail_only", appName: "mailer", key: project.ComponentMail},
 		{id: "sentinel_named_app_database_only", appName: "database-worker", key: project.ComponentDatabaseSQLite},
 		{id: "sentinel_named_app_auth_only", appName: "auth-api", key: project.ComponentAuth},
@@ -341,7 +342,7 @@ func legacyComponentMappingRenderCombo() renderCombo {
 	}
 	defaultComponents.ResolveDependencies()
 	workerComponents := project.Components{
-		CLI: true, Cache: true, Events: true, Storage: true, Jobs: true,
+		CLI: true, Cache: true, Events: true, Storage: true, Jobs: true, Notification: true,
 	}
 	workerComponents.ResolveDependencies()
 	return renderCombo{
