@@ -329,3 +329,12 @@ guidance-attribution question, and preserve previous scorecards in Git history.
 The `catalog-search` evaluation adds a bounded product projection task after the published matrix. It has no retained live provider attempts and does not change any score above. The prepared `catalog-search-domain` scenario installs `github.com/goforj/search@v0.1.1` and the separately tagged `github.com/goforj/search/driver/blevesearch@v0.1.1` before candidate execution, so dependency installation is outside the measurement. The root requires Go 1.24 and the embedded driver requires Go 1.25; the generated Project already targets Go 1.26.
 
 The service obtains its index through the generated manager's named Catalog accessor and App-owned schema registry. A supervisor-only helper wraps the original backend after sealing, preserving the manager's real backend ownership while observing root API calls and controlling terminal-outcome cases. This helper is absent from the candidate-visible Project API. The real local backend calibration checks exact category filtering, stable pages, total precision, replacement visibility, cancellation, and terminal failure. A separate quality observation records executed search-library calls without changing the application outcome. Compiling semantic mutants remove category isolation or skip visibility confirmation. The existing diagnostic trust limits apply. Durable database writes, persistent index lifecycle, facets, highlight rendering, other drivers, and backend-specific ranking are outside this contract.
+## Startup configuration contract awaiting live measurement
+
+`configure-dispatch-startup` adds a typed application configuration task with
+required startup values, deliberate optional fallbacks, process/file precedence,
+credential-safe diagnostics, and immutable service snapshots. Golden and
+compiling semantic mutant calibration use the real Wire initializer with fake
+credentials; source API attribution is separate from behavior. The Project's
+existing env/v2 dependency is staged before candidate execution. No provider
+attempts are included, and the historical benchmark matrix is unchanged.
