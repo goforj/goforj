@@ -323,3 +323,13 @@ Before replacing this page:
 Do not run another complete matrix merely to improve the headline percentage.
 Use repeated paired trials to answer a specific reliability, regression, or
 guidance-attribution question, and preserve previous scorecards in Git history.
+
+## Startup configuration contract awaiting live measurement
+
+`configure-dispatch-startup` adds a typed application configuration task with
+required startup values, deliberate optional fallbacks, process/file precedence,
+credential-safe diagnostics, and immutable service snapshots. Golden and
+compiling semantic mutant calibration use the real Wire initializer with fake
+credentials; source API attribution is separate from behavior. The Project's
+existing env/v2 dependency is staged before candidate execution. No provider
+attempts are included, and the historical benchmark matrix is unchanged.

@@ -412,6 +412,7 @@ func prepareInvoiceHTTPVerifierFixture(t *testing.T) invoiceHTTPVerifierFixture 
 
 // majorSurfaceVerifierCase binds one promoted contract to its executable golden Project and a targeted semantic defect.
 type majorSurfaceVerifierCase struct {
+	requiredQuality      []string
 	evaluation           string
 	scenario             string
 	path                 string
@@ -1051,6 +1052,11 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 	if result.FrameworkOutcome.Status != eval.EndpointPassed {
 		t.Fatalf("golden outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
 	}
+	for _, id := range test.requiredQuality {
+		if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
+			t.Fatalf("golden quality check %q did not pass: %#v", id, result.Checks)
+		}
+	}
 	if len(test.alternates) > 0 {
 		originals := applyEvaluationAlternates(t, projectRoot, test.alternates)
 		alternateChanges := evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)
@@ -1519,4 +1525,25 @@ func evaluationCheckHasStatus(checks []eval.EndpointResult, id string, status ev
 		}
 	}
 	return false
+}
+
+// TestConfigureDispatchStartupVerifierCalibration proves required configuration and optional defaults survive real composition.
+func TestConfigureDispatchStartupVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		requiredQuality: []string{"dispatch-env-api"},
+		evaluation:      "configure-dispatch-startup",
+		scenario:        "dispatch-startup-config",
+		path:            "internal/dispatch/config.go",
+		old:             `if strings.TrimSpace(config.Token) == "" {`,
+		mutant:          `if false && strings.TrimSpace(config.Token) == "" {`,
+		wantFailed:      "dispatch-startup-behavior",
+		wantCompile:     true,
+		behavior: &evaluationBehaviorMutation{
+			path:        "internal/dispatch/config.go",
+			old:         `scope.GetBool("ENABLED", "true")`,
+			mutant:      `scope.GetBool("ENABLED", "false")`,
+			wantFailed:  "dispatch-startup-behavior",
+			wantCompile: true,
+		},
+	})
 }
