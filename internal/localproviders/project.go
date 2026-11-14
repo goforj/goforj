@@ -84,7 +84,7 @@ func resources(root string, config *project.Config, values map[string]string) []
 		if !strings.HasSuffix(key, "_DRIVER") {
 			continue
 		}
-		if owner, enabled := featureResourceOwner(config, key); owner != "" && !enabled {
+		if owner, enabled := managedAppResourceOwner(config, key); owner != "" && !enabled {
 			continue
 		}
 		for _, definition := range project.ResourceCatalog() {
@@ -135,7 +135,7 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 
 // resourceKey gives Feature keys their known App owner while preserving participation-based legacy resource scopes.
 func resourceKey(config *project.Config, key string) string {
-	if owner, _ := featureResourceOwner(config, key); owner != "" {
+	if owner, _ := managedAppResourceOwner(config, key); owner != "" {
 		return strings.TrimPrefix(key, owner+"_")
 	}
 	longest := ""
@@ -169,8 +169,8 @@ func resourceKey(config *project.Config, key string) string {
 	return key
 }
 
-// featureResourceOwner preserves the longest known App boundary even when that App has disabled Feature.
-func featureResourceOwner(config *project.Config, key string) (string, bool) {
+// managedAppResourceOwner preserves the longest known App boundary even when its resource component is disabled.
+func managedAppResourceOwner(config *project.Config, key string) (string, bool) {
 	prefixes := make([]string, 0, len(config.Apps))
 	for name := range config.Apps {
 		if prefix := project.AppEnvironmentPrefix(name); prefix != "" {
