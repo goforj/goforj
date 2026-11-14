@@ -11,6 +11,9 @@ import (
 
 // resourceSetting follows named-to-root inheritance and App overlays for one resource family.
 func (s *Session) resourceSetting(values map[string]string, key, suffix, app string, definition project.ResourceDefinition) string {
+	if definition.Key == project.ResourceSearch {
+		return s.searchResourceSetting(values, key, suffix, app, definition)
+	}
 	if definition.Key == project.ResourceDatabase {
 		_, value := databaseSettingInScope(values, key, suffix, app)
 		if suffix == "DRIVER" && value == "" {
@@ -48,6 +51,66 @@ func (s *Session) resourceSetting(values map[string]string, key, suffix, app str
 		return definition.DefaultDriver
 	}
 	return ""
+}
+
+// searchResourceSetting mirrors Search's App-root defaults, named overrides, and explicit blank driver fallbacks.
+func (s *Session) searchResourceSetting(values map[string]string, key, suffix, app string, definition project.ResourceDefinition) string {
+	base := strings.TrimPrefix(key, app)
+	namedPrefix := strings.TrimSuffix(base, "DRIVER")
+	lookup := func(source, scope string) (string, bool) {
+		if !resourceScopeAllowed(s.config, source, definition, scope) {
+			return "", false
+		}
+		value, present := values[source]
+		return value, present
+	}
+	if suffix == "DRIVER" {
+		normalize := func(value, fallback string) string {
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value == "" {
+				return fallback
+			}
+			return value
+		}
+		rootValue, _ := lookup("SEARCH_DRIVER", "")
+		root := normalize(rootValue, definition.DefaultDriver)
+		appRoot := root
+		if app != "" {
+			if value, present := lookup(app+"SEARCH_DRIVER", app); present {
+				appRoot = normalize(value, definition.DefaultDriver)
+			}
+		}
+		if namedPrefix == "SEARCH_" {
+			return appRoot
+		}
+		driver := appRoot
+		if value, present := lookup(base, ""); present {
+			driver = normalize(value, root)
+		}
+		if app != "" {
+			if value, present := lookup(app+base, app); present {
+				driver = normalize(value, appRoot)
+			}
+		}
+		return driver
+	}
+	value := ""
+	apply := func(source, scope string) {
+		if current, present := lookup(source, scope); present && current != "" {
+			value = current
+		}
+	}
+	apply("SEARCH_"+suffix, "")
+	if app != "" {
+		apply(app+"SEARCH_"+suffix, app)
+	}
+	if namedPrefix != "SEARCH_" {
+		apply(namedPrefix+suffix, "")
+		if app != "" {
+			apply(app+namedPrefix+suffix, app)
+		}
+	}
+	return value
 }
 
 // resourceScopes enumerates every live interpretation of a potentially shared environment key.

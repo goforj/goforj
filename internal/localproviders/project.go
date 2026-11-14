@@ -202,13 +202,13 @@ func managedAppResourceOwner(config *project.Config, key string) (string, bool) 
 
 // appAwareResourceKey identifies families whose runtime managers enforce known App ownership.
 func appAwareResourceKey(key string) bool {
-	return strings.HasPrefix(key, "FEATURE_") || strings.HasPrefix(key, "NOTIFICATION_")
+	return strings.HasPrefix(key, "FEATURE_") || strings.HasPrefix(key, "NOTIFICATION_") || strings.HasPrefix(key, "SEARCH_")
 }
 
 // resourceScopeAllowed aligns independent family interpretations with App-aware generator ownership.
 func resourceScopeAllowed(config *project.Config, key string, definition project.ResourceDefinition, scope string) bool {
 	owner := knownAppResourceOwner(config, key)
-	if definition.Key == project.ResourceFeature || definition.Key == project.ResourceNotification {
+	if definition.Key == project.ResourceFeature || definition.Key == project.ResourceNotification || definition.Key == project.ResourceSearch {
 		return owner == strings.TrimSuffix(scope, "_")
 	}
 	managedOwner, enabled := managedAppResourceOwner(config, key)

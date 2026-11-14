@@ -44,6 +44,8 @@ const (
 	ComponentEvents ComponentKey = "events"
 	// ComponentStorage enables application file and object storage support.
 	ComponentStorage ComponentKey = "storage"
+	// ComponentSearch enables application-owned lexical search indexes.
+	ComponentSearch ComponentKey = "search"
 	// ComponentJobs enables background job dispatch and processing support.
 	ComponentJobs ComponentKey = "jobs"
 )
@@ -79,6 +81,7 @@ var componentCatalog = []ComponentDefinition{
 	{Key: ComponentCache, Label: "Cache", Description: "Cache temporary and computed values", DefaultSelected: true},
 	{Key: ComponentEvents, Label: "Events", Description: "Publish and subscribe to application events", DefaultSelected: true},
 	{Key: ComponentStorage, Label: "File Storage", Description: "Store private and public files or objects", DefaultSelected: true},
+	{Key: ComponentSearch, Label: "Search", Description: "Query rebuildable lexical search indexes"},
 	{Key: ComponentJobs, Label: "Background Jobs", Description: "Send and process work outside requests", DefaultSelected: true},
 }
 

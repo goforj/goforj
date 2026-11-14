@@ -24,6 +24,8 @@ const (
 	ResourceStorage ResourceKey = "storage"
 	// ResourceNotification identifies configured synchronous message delivery.
 	ResourceNotification ResourceKey = "notification"
+	// ResourceSearch identifies rebuildable application search indexes.
+	ResourceSearch ResourceKey = "search"
 	// ResourceMail identifies the root mailer used when Mail is enabled.
 	ResourceMail ResourceKey = "mail"
 )
@@ -34,6 +36,8 @@ type ServiceKey string
 const (
 	// ServiceNotificationWebhook identifies an externally configured notification destination.
 	ServiceNotificationWebhook ServiceKey = "notification_webhook"
+	// ServiceSearchMeilisearch identifies the externally managed search endpoint.
+	ServiceSearchMeilisearch ServiceKey = "search_meilisearch"
 	// ServiceRedis identifies a Redis endpoint or generated Redis service.
 	ServiceRedis ServiceKey = "redis"
 	// ServiceMySQL identifies a MySQL endpoint or generated MariaDB service.
@@ -137,6 +141,12 @@ type ResourceDefinition struct {
 
 var resourceCatalog = []ResourceDefinition{
 	{
+		Key: ResourceFeature, Label: "Feature Flags", EnvironmentPrefix: "FEATURE",
+		DefaultDriver: "memory", DefaultSupportedDrivers: []string{"memory", "file"},
+		Drivers:    []DriverDefinition{{Name: "memory", Label: "Memory", Order: 10}, {Name: "file", Label: "File", Order: 20}},
+		applicable: func(components Components) bool { return components.Feature },
+	},
+	{
 		Key: ResourceNotification, Label: "Notifications", EnvironmentPrefix: "NOTIFICATION",
 		DefaultDriver: "log", DefaultSupportedDrivers: []string{"log"},
 		Drivers: []DriverDefinition{
@@ -146,12 +156,6 @@ var resourceCatalog = []ResourceDefinition{
 			}},
 		},
 		applicable: func(components Components) bool { return components.Notification },
-	},
-	{
-		Key: ResourceFeature, Label: "Feature Flags", EnvironmentPrefix: "FEATURE",
-		DefaultDriver: "memory", DefaultSupportedDrivers: []string{"memory", "file"},
-		Drivers:    []DriverDefinition{{Name: "memory", Label: "Memory", Order: 10}, {Name: "file", Label: "File", Order: 20}},
-		applicable: func(components Components) bool { return components.Feature },
 	},
 	{
 		Key:                     ResourceDatabase,
@@ -353,6 +357,29 @@ var resourceCatalog = []ResourceDefinition{
 			}, Order: 70},
 		},
 		applicable: func(components Components) bool { return components.Mail },
+	},
+	{
+		Key:                     ResourceSearch,
+		Label:                   "Search",
+		EnvironmentPrefix:       "SEARCH",
+		DefaultDriver:           "bleve",
+		DefaultSupportedDrivers: []string{"bleve"},
+		NamedDriversInheritRoot: true,
+		Drivers: []DriverDefinition{
+			{Name: "bleve", Label: "Bleve (single process)", Order: 10},
+			{
+				Name: "meilisearch", Label: "Meilisearch (external service)",
+				Service: ServiceSearchMeilisearch, ServiceLabel: "Meilisearch for search", Order: 20,
+				EndpointEnvironment: []DriverEnvironmentPlaceholder{
+					{Key: "SEARCH_URL", Example: "http://127.0.0.1:7700", Description: "Externally managed Meilisearch endpoint"},
+				},
+				Environment: []DriverEnvironmentPlaceholder{
+					{Key: "SEARCH_API_KEY", Example: "", Description: "Meilisearch API key"},
+					{Key: "SEARCH_PREFIX", Example: "", Description: "Physical namespace prefix"},
+				},
+			},
+		},
+		applicable: func(components Components) bool { return components.Search },
 	},
 }
 

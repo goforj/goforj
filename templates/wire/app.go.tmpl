@@ -26,6 +26,9 @@ import (
 {{- if .Components.Feature }}
 	"{{.GoModuleName}}/internal/features"
 {{- end }}
+{{- if .Components.Search }}
+ "{{.GoModuleName}}/internal/searches"
+{{- end }}
 {{- if .Components.Cache }}
 	"{{.GoModuleName}}/internal/caches"
 {{- end }}
@@ -63,6 +66,9 @@ type App struct {
 {{- end }}
 	rootCmd *{{.AppPackageName}}.RootCmd
 	logger  *logger.AppLogger
+{{- if .Components.Search }}
+ search *searches.Manager
+{{- end }}
 {{- if .Components.Cache }}
 	cache   *caches.Manager
 {{- end }}
@@ -93,6 +99,11 @@ type App struct {
 	db      *database.Connections
 	{{- end }}
 }
+
+{{- if .Components.Search }}
+// Searches returns the App-owned named index manager.
+func (a *App) Searches() *searches.Manager { return a.search }
+{{- end }}
 
 // RootCmd returns the root command of the application
 func (a *App) RootCmd() *{{.AppPackageName}}.RootCmd {
@@ -374,6 +385,9 @@ func NewApplication(
 {{- if .Components.Feature }}
 	featureManager *features.Manager,
 {{- end }}
+{{- if .Components.Search }}
+ searchManager *searches.Manager,
+{{- end }}
 {{- if .Components.Cache }}
 	cacheManager *caches.Manager,
 {{- end }}
@@ -403,6 +417,9 @@ func NewApplication(
 
 	logTimeoutWarnings(appLogger, appTimeouts)
 	attachInspectLogSink(appLogger, inspectManager)
+{{- if .Components.Search }}
+ registerSearchShutdown(lifecycleManager, searchManager)
+{{- end }}
 {{- if .Components.Storage }}
 	logStorageWarnings(appLogger, storage)
 	registerStorageShutdown(lifecycleManager, appLogger, storage)
@@ -413,12 +430,12 @@ func NewApplication(
 {{- if .Components.Events }}
 	registerEventBusLifecycle(lifecycleManager, appLogger, eventsManager)
 {{- end }}
-{{- if .Components.Notification }}
-    lifecycleManager.On(runtime.Shutdown, func(ctx context.Context) error { return notificationManager.Close() })
-{{- end }}
 {{- if .Components.Feature }}
     lifecycleManager.On(runtime.Startup, func(ctx context.Context) error { return featureManager.Start(ctx) })
     lifecycleManager.On(runtime.Shutdown, func(context.Context) error { return featureManager.Close() })
+{{- end }}
+{{- if .Components.Notification }}
+    lifecycleManager.On(runtime.Shutdown, func(ctx context.Context) error { return notificationManager.Close() })
 {{- end }}
 	lifecycleRegistry.Register(lifecycleManager)
 
@@ -427,6 +444,9 @@ func NewApplication(
 		features: featureManager,
 {{- end }}
 		rootCmd: rootCmd,
+{{- if .Components.Search }}
+ search: searchManager,
+{{- end }}
 		logger:  appLogger,
 		{{- if .Components.HasDatabase }}
 		db: db,
@@ -606,4 +626,13 @@ func (a *App) appShutdownTimeout() time.Duration {
 {{ if .Components.Feature }}
 // Features returns this App's configured evaluator resources without capturing request state.
 func (a *App) Features() *features.Manager { return a.features }
+{{- end }}
+{{- if .Components.Search }}
+// searchCloser preserves backend failure reporting without coupling the shutdown hook to manager internals.
+type searchCloser interface { Close() error }
+
+// registerSearchShutdown returns backend cleanup errors through normal App shutdown as well as Wire failure cleanup.
+func registerSearchShutdown(lifecycleManager *runtime.Lifecycle, manager searchCloser) {
+ lifecycleManager.On(runtime.Shutdown, func(context.Context) error { return manager.Close() })
+}
 {{- end }}

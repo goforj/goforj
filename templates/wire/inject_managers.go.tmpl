@@ -8,6 +8,10 @@ import (
 	"{{.GoModuleName}}/internal/logger"
 	"{{.GoModuleName}}/internal/runtime"
 	"github.com/goforj/wire"
+{{- if .Components.Search }}
+ "{{.GoModuleName}}/{{.AppImportPath}}"
+ "{{.GoModuleName}}/internal/searches"
+{{- end }}
 
 {{- if .Components.Feature }}
 	"{{.GoModuleName}}/internal/features"
@@ -45,6 +49,9 @@ import (
 var managerSet = wire.NewSet(
 {{- if .Components.Feature }}
 	provideFeatureManager,
+{{- end }}
+{{- if .Components.Search }}
+ provideSearchManager,
 {{- end }}
 {{- if .Components.Metrics }}
 	metrics.NewManager,
@@ -221,6 +228,15 @@ func provideAppLogger(timeouts *runtime.Timeouts) (*logger.AppLogger, func(), er
 	return appLogger, cleanup, nil
 }
 
+{{ if .Components.Feature }}
+// provideFeatureManager binds evaluator resources to this App's startup configuration.
+func provideFeatureManager() (*features.Manager, func(), error) {
+    manager, err := features.NewManagerForApp("{{.AppEnvPrefix}}")
+    if err != nil { return nil, nil, err }
+    return manager, func() { _ = manager.Close() }, nil
+}
+{{- end }}
+
 {{ if .Components.Notification }}
 // provideNotificationManager releases owned transports if later App initialization fails.
 func provideNotificationManager() (*notifications.Manager, func(), error) {
@@ -230,11 +246,11 @@ func provideNotificationManager() (*notifications.Manager, func(), error) {
 }
 {{- end }}
 
-{{ if .Components.Feature }}
-// provideFeatureManager binds evaluator resources to this App's startup configuration.
-func provideFeatureManager() (*features.Manager, func(), error) {
-    manager, err := features.NewManagerForApp("{{.AppEnvPrefix}}")
-    if err != nil { return nil, nil, err }
-    return manager, func() { _ = manager.Close() }, nil
+{{- if .Components.Search }}
+// provideSearchManager validates existing schemas and transfers backend cleanup to the App.
+func provideSearchManager() (*searches.Manager, func(), error) {
+ manager, err := searches.NewManagerForApp(runtime.BackgroundSourceContext(runtime.SourceStartup), "{{.AppEnvPrefix}}", {{.AppPackageName}}.SearchDefinitions())
+ if err != nil { return nil, nil, err }
+ return manager, func() { _ = manager.Close() }, nil
 }
 {{- end }}

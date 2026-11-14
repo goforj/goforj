@@ -21,6 +21,7 @@ var generationEnvironmentPrefixes = []string{
 	"OBSERVABILITY_",
 	"QUEUE_",
 	"STORAGE_",
+	"SEARCH_",
 }
 
 var generationEnvironmentExactKeys = map[string]bool{

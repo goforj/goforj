@@ -56,6 +56,7 @@ func AppResourceEnvironmentOwner(key string, knownAppPrefixes []string, componen
 	}{
 		{components.Feature, "FEATURE", featureRootKeys},
 		{components.Notification, "NOTIFICATION", append([]string{"SUPPORTED_DRIVERS"}, notificationRootKeys...)},
+		{components.Search, "SEARCH", append([]string{"SUPPORTED_DRIVERS"}, searchRootKeys...)},
 	} {
 		if !resource.enabled {
 			continue
@@ -77,7 +78,7 @@ func AppResourceEnvironmentOwner(key string, knownAppPrefixes []string, componen
 
 // legacyResourceGenerationInput excludes settings consumed by enabled App-aware managers from legacy resource interpretation.
 func legacyResourceGenerationInput(input generationInput, resourcePrefix string) generationInput {
-	if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" {
+	if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" || resourcePrefix == "SEARCH" {
 		return input
 	}
 	if _, err := project.LoadProjectConfigAt(input.projectDir); err != nil {
@@ -85,13 +86,15 @@ func legacyResourceGenerationInput(input generationInput, resourcePrefix string)
 	}
 	enabledFeature := makeSet(generationAppEnvPrefixesForResource(input, "FEATURE")...)
 	enabledNotification := makeSet(generationAppEnvPrefixesForResource(input, "NOTIFICATION")...)
+	enabledSearch := makeSet(generationAppEnvPrefixesForResource(input, "SEARCH")...)
 	prefixes := generationKnownAppEnvPrefixes(input)
 	values := make(map[string]string, len(input.environment.values))
 	for _, entry := range input.environment.Entries() {
 		owner := appResourceEnvironmentOwner(entry.key, prefixes)
 		_, feature := enabledFeature[owner]
 		_, notification := enabledNotification[owner]
-		if owner != "" && ((feature && strings.HasPrefix(entry.key, owner+"_FEATURE_")) || (notification && strings.HasPrefix(entry.key, owner+"_NOTIFICATION_"))) {
+		_, search := enabledSearch[owner]
+		if owner != "" && ((feature && strings.HasPrefix(entry.key, owner+"_FEATURE_")) || (notification && strings.HasPrefix(entry.key, owner+"_NOTIFICATION_")) || (search && strings.HasPrefix(entry.key, owner+"_SEARCH_"))) {
 			continue
 		}
 		values[entry.key] = entry.value

@@ -88,7 +88,7 @@ func TestResourceInventoriesPreserveAppOnlyNames(t *testing.T) {
 	}
 }
 
-// TestPortableRegenerationKeepsAppOnlyResourcesScoped checks the resulting generated ownership maps twice.
+// TestPortableRegenerationKeepsAppOnlyResourcesScoped checks portable regeneration and generated resource ownership twice.
 func TestPortableRegenerationKeepsAppOnlyResourcesScoped(t *testing.T) {
 	for _, test := range []struct {
 		component, prefix, path string
@@ -96,6 +96,7 @@ func TestPortableRegenerationKeepsAppOnlyResourcesScoped(t *testing.T) {
 	}{
 		{"feature", "FEATURE", generate.FeatureManagerPath, generate.GenerateFeatureFiles},
 		{"notification", "NOTIFICATION", generate.NotificationManagerPath, generate.GenerateNotificationFiles},
+		{"search", "SEARCH", generate.SearchManagerPath, generate.GenerateSearchFiles},
 	} {
 		t.Run(test.component, func(t *testing.T) {
 			root := fixture(t)
@@ -103,6 +104,8 @@ func TestPortableRegenerationKeepsAppOnlyResourcesScoped(t *testing.T) {
 			driver := "memory"
 			if test.component == "notification" {
 				driver = "log"
+			} else if test.component == "search" {
+				driver = "bleve"
 			}
 			put(t, root, ".env", "ADMIN_"+test.prefix+"_ALERTS_DRIVER="+driver+"\n")
 			s := openTest(t, root)
@@ -122,6 +125,16 @@ func TestPortableRegenerationKeepsAppOnlyResourcesScoped(t *testing.T) {
 			source, err := os.ReadFile(filepath.Join(root, test.path))
 			if err != nil {
 				t.Fatal(err)
+			}
+			if test.component == "search" {
+				accessors, err := os.ReadFile(filepath.Join(root, generate.SearchAccessorsPath))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(source), "func NewManagerForApp(") || !strings.Contains(string(accessors), "func (manager *Manager) Alerts()") {
+					t.Fatal("search lost explicit App ownership or its declared accessor")
+				}
+				return
 			}
 			for _, fragment := range []string{`"": {}`, `"REPORTS": {}`, `"ADMIN": {"ALERTS"}`} {
 				if !strings.Contains(strings.ReplaceAll(strings.Join(strings.Fields(string(source)), ""), ",", ""), strings.Join(strings.Fields(fragment), "")) {

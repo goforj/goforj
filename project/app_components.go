@@ -23,6 +23,7 @@ var appComponentKeys = []ComponentKey{
 	ComponentCache,
 	ComponentEvents,
 	ComponentStorage,
+	ComponentSearch,
 	ComponentJobs,
 }
 

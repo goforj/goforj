@@ -16,6 +16,7 @@ func ResourceNames(root string, values map[string]string) map[project.ResourceKe
 		project.ResourceCache:        discoverCacheStoreNames(input),
 		project.ResourceQueue:        discoverQueueNames(input),
 		project.ResourceEvents:       discoverEventNames(input),
+		project.ResourceSearch:       discoverSearchNames(input),
 		project.ResourceStorage:      discoverStorageDiskNames(input),
 		project.ResourceMail:         discoverMailNames(input),
 	}

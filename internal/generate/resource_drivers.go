@@ -20,6 +20,8 @@ func BaselineDrivers(resource project.ResourceKey) []string {
 		drivers = queueLocalDrivers
 	case project.ResourceEvents:
 		drivers = eventLocalDrivers
+	case project.ResourceSearch:
+		drivers = searchLocalDrivers
 	case project.ResourceStorage:
 		drivers = storageLocalDrivers
 	case project.ResourceNotification:

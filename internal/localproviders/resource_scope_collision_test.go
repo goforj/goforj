@@ -11,6 +11,7 @@ func TestResourceInventoriesKeepProjectedResourceWordNames(t *testing.T) {
 	for _, test := range []struct{ component, prefix, name, setting, driver string }{
 		{"feature", "FEATURE", "CACHE", "PATH", "memory"},
 		{"notification", "NOTIFICATION", "FEATURE", "WEBHOOK_URL", "log"},
+		{"search", "SEARCH", "CACHE", "PATH", "bleve"},
 	} {
 		t.Run(test.component, func(t *testing.T) {
 			root := fixture(t)
