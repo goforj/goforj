@@ -63,7 +63,7 @@ func discoverPrimitiveChildNames(input generationInput, resourcePrefix string, r
 	names := map[string]struct{}{}
 	add := func(prefix string) {
 		children := exactScopedChildNames(input.environment, prefix, rootKeys)
-		if resourcePrefix == "FEATURE" {
+		if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" {
 			appPrefix := strings.TrimSuffix(prefix, "_"+resourcePrefix)
 			if prefix == resourcePrefix {
 				appPrefix = ""
@@ -135,7 +135,7 @@ func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) 
 	}
 	for _, entry := range input.environment.Entries() {
 		key := entry.key
-		if contract.Prefix == "FEATURE" && appResourceEnvironmentOwner(key, contract.Prefix, generationKnownAppEnvPrefixes(input)) != "" {
+		if (contract.Prefix == "FEATURE" || contract.Prefix == "NOTIFICATION") && appResourceEnvironmentOwner(key, contract.Prefix, generationKnownAppEnvPrefixes(input)) != "" {
 			continue
 		}
 		if !strings.HasPrefix(key, contract.Prefix+"_") {
@@ -167,7 +167,7 @@ func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) 
 			driverKey = contract.Prefix + "_" + scopedKey.child + "_DRIVER"
 		}
 		driverValue := input.environment.Get(driverKey, driverFallback)
-		if contract.Prefix == "FEATURE" && appResourceEnvironmentOwner(driverKey, contract.Prefix, generationKnownAppEnvPrefixes(input)) != "" {
+		if (contract.Prefix == "FEATURE" || contract.Prefix == "NOTIFICATION") && appResourceEnvironmentOwner(driverKey, contract.Prefix, generationKnownAppEnvPrefixes(input)) != "" {
 			driverValue = driverFallback
 		}
 		driver := effectivePrimitiveDriver(driverValue, driverFallback)
@@ -230,7 +230,7 @@ func (v primitiveEnvValidator) eagerNamedDriverProblems() []string {
 	for _, child := range discoverPrimitiveChildNames(v.input, v.contract.Prefix, v.contract.RootKeys) {
 		key := v.contract.Prefix + "_" + child + "_DRIVER"
 		_, set := v.input.environment.Lookup(key)
-		if v.contract.Prefix == "FEATURE" && appResourceEnvironmentOwner(key, v.contract.Prefix, generationKnownAppEnvPrefixes(v.input)) != "" {
+		if (v.contract.Prefix == "FEATURE" || v.contract.Prefix == "NOTIFICATION") && appResourceEnvironmentOwner(key, v.contract.Prefix, generationKnownAppEnvPrefixes(v.input)) != "" {
 			set = false
 		}
 		if set {
@@ -274,7 +274,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 			}
 		}
 		appChildren := exactScopedChildNames(v.input.environment, resourcePrefix, v.contract.RootKeys)
-		if v.contract.Prefix == "FEATURE" {
+		if v.contract.Prefix == "FEATURE" || v.contract.Prefix == "NOTIFICATION" {
 			appChildren = appScopedChildNames(v.input, v.contract.Prefix, appPrefix, v.contract.RootKeys)
 		}
 		for _, child := range appChildren {
@@ -283,7 +283,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 
 		for _, entry := range v.input.environment.Entries() {
 			key := entry.key
-			if v.contract.Prefix == "FEATURE" && appResourceEnvironmentOwner(key, v.contract.Prefix, generationKnownAppEnvPrefixes(v.input)) != appPrefix {
+			if (v.contract.Prefix == "FEATURE" || v.contract.Prefix == "NOTIFICATION") && appResourceEnvironmentOwner(key, v.contract.Prefix, generationKnownAppEnvPrefixes(v.input)) != appPrefix {
 				continue
 			}
 			if !strings.HasPrefix(key, resourcePrefix+"_") {
@@ -400,7 +400,7 @@ func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defa
 		}
 		for _, entry := range input.environment.Entries() {
 			key, value := entry.key, entry.value
-			if resourcePrefix == "FEATURE" && appResourceEnvironmentOwner(key, resourcePrefix, generationKnownAppEnvPrefixes(input)) != appPrefix {
+			if (resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION") && appResourceEnvironmentOwner(key, resourcePrefix, generationKnownAppEnvPrefixes(input)) != appPrefix {
 				continue
 			}
 			if !strings.HasPrefix(key, keyPrefix) || !strings.HasSuffix(key, "_DRIVER") {
