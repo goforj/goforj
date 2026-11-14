@@ -14,16 +14,35 @@ Create `storage/flags/checkout.json` before starting the App. This relative path
 
 Named Apps use their existing environment overlay, for example `BILLING_FEATURE_CHECKOUT_PATH`. Resources identify evaluator configuration, not individual flag names. A name declared only for Billing is not initialized by another App. Accessing an undeclared App resource fails fast.
 
-Inject `*features.Manager` into an application service through the owning App's service Wire set. Capture one request snapshot before targeting:
+## Check a flag
+
+Inject `*features.Manager` into an application service through the owning App's service Wire set. For a simple boolean check:
+
+```go
+enabled := manager.Checkout().Enabled(ctx, "checkout-v2")
+```
+
+Bind a stable tenant identity when the flag uses targeting:
+
+```go
+flags := manager.Checkout().For(feature.Target{Key: tenantID})
+enabled := flags.Enabled(ctx, "checkout-v2")
+```
+
+`Enabled` returns a boolean with a false fallback. Use `Evaluate(ctx, key, fallback)` when an explicit fallback or the full decision metadata is needed. Ordinary checks can observe configuration updates independently.
+
+## Keep related decisions consistent
+
+When multiple decisions must share one configuration revision and evaluation time, capture a snapshot before targeting:
 
 ```go
 snapshot, err := manager.Checkout().Snapshot()
 if err != nil {
     return err
 }
-request := snapshot.For(feature.Target{Key: tenantID})
-checkout := request.Evaluate(ctx, "checkout-v2", false)
-receipt := request.Evaluate(ctx, "receipt-v2", false)
+flags := snapshot.For(feature.Target{Key: tenantID})
+checkout := flags.Enabled(ctx, "checkout-v2")
+receipt := flags.Enabled(ctx, "receipt-v2")
 ```
 
 The ordinary `For` targeting scope does not freeze provider configuration. A snapshot captures both definitions and evaluation time. Dynamic flag names and tenant rollout rules stay in the source document. Keep authorization separate from presentation decisions.
