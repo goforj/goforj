@@ -47,22 +47,32 @@ func appScopedChildNames(input generationInput, resourcePrefix, appPrefix string
 }
 
 // AppResourceEnvironmentOwner identifies enabled managed resource settings before destructive App cleanup.
+// App-owned matches take precedence over another primitive's root named resources.
 func AppResourceEnvironmentOwner(key string, knownAppPrefixes []string, components project.Components) (owner string, managed bool) {
-	if !components.Feature {
-		return "", false
+	for _, resource := range []struct {
+		enabled bool
+		prefix  string
+		keys    []string
+	}{
+		{components.Feature, "FEATURE", featureRootKeys},
+		{components.Notification, "NOTIFICATION", append([]string{"SUPPORTED_DRIVERS"}, notificationRootKeys...)},
+	} {
+		if !resource.enabled {
+			continue
+		}
+		candidate := appResourceEnvironmentOwner(key, knownAppPrefixes)
+		prefix := resource.prefix + "_"
+		if candidate != "" {
+			prefix = candidate + "_" + prefix
+		}
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if _, ok := splitScopedEnvKey(strings.TrimPrefix(key, prefix), resource.keys); ok && (!managed || len(candidate) > len(owner)) {
+			owner, managed = candidate, true
+		}
 	}
-	owner = appResourceEnvironmentOwner(key, knownAppPrefixes)
-	prefix := "FEATURE_"
-	if owner != "" {
-		prefix = owner + "_" + prefix
-	}
-	if !strings.HasPrefix(key, prefix) {
-		return "", false
-	}
-	if _, ok := splitScopedEnvKey(strings.TrimPrefix(key, prefix), featureRootKeys); !ok {
-		return "", false
-	}
-	return owner, true
+	return owner, managed
 }
 
 // SharedResourceEnvironmentSetting recognizes legacy root settings consumed by remaining Apps after Feature ownership is resolved.
