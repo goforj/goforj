@@ -1,0 +1,139 @@
+schema_version: 2
+id: catalog-search
+title: Portable Catalog Search
+description: Add lexical catalog search with category filtering, stable pages, and visible updates.
+depends_on: [catalog-search-domain]
+prepare:
+  checks:
+    - command: [forj, build]
+    - command: [go, test, ./...]
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+markdown:
+  intro: |
+    Query a rebuildable projection while keeping durable persistence outside the indexing boundary.
+  before: |
+    the catalog has a schema and local backend but no application search service.
+  after: |
+    a wired service filters categories, pages deterministically, and confirms index update visibility.
+  files:
+    - internal/catalog/service.go
+    - internal/catalog/service_test.go
+    - app/wire/inject_services_app.go
+steps:
+  - id: add-catalog-service
+    title: Add portable catalog operations
+    write:
+      path: internal/catalog/service.go
+      language: go
+      content: |
+        // Package catalog owns the rebuildable product search projection.
+        package catalog
+
+        import (
+        	"context"
+        	"fmt"
+        	"github.com/goforj/search"
+        )
+
+        // Service indexes already committed records and queries their rebuildable projection.
+        type Service struct{ index *search.Index }
+
+        // NewService shares the App-owned index across catalog operations.
+        func NewService(index *search.Index) *Service { return &Service{index: index} }
+
+        // IndexProduct confirms visibility without confusing accepted work with success.
+        func (service *Service) IndexProduct(ctx context.Context, product Product) error {
+        	receipt, err := search.Upsert(ctx, service.index, search.DocumentID(product.ID), product)
+        	if err != nil {
+        		return err
+        	}
+        	outcome, err := service.index.Wait(ctx, receipt)
+        	if err != nil {
+        		return err
+        	}
+        	if outcome.State != search.OutcomeSucceeded {
+        		return fmt.Errorf("catalog projection not visible: %w", outcome.Error)
+        	}
+        	return nil
+        }
+
+        // Find applies exact category filtering before stable bounded pagination.
+        func (service *Service) Find(ctx context.Context, text, category string, offset, limit uint64) (search.Page[Product], error) {
+        	value, err := search.Keyword(category)
+        	if err != nil {
+        		return search.Page[Product]{}, err
+        	}
+        	return search.SearchAs[Product](ctx, service.index, search.Query{
+        		Text: text, Filter: search.Equal("category", value),
+        		Sort: []search.Sort{{Field: "id", Direction: search.Ascending}}, Offset: offset, Limit: limit,
+        	})
+        }
+  - id: test-catalog-service
+    title: Test category isolation and visible product replacements
+    write:
+      path: internal/catalog/service_test.go
+      language: go
+      content: |
+        // Package catalog owns the rebuildable product search projection.
+        package catalog
+
+        import (
+        	"context"
+        	"testing"
+        )
+
+        // TestServiceFiltersAndReplacesProducts protects the catalog contract using the real local composition.
+        func TestServiceFiltersAndReplacesProducts(t *testing.T) {
+        	index, close, err := OpenIndex()
+        	if err != nil {
+        		t.Fatal(err)
+        	}
+        	t.Cleanup(close)
+        	service := NewService(index)
+        	ctx := context.Background()
+        	for _, product := range []Product{
+        		{ID: "one", Description: "red trail boot", Category: "outdoors"},
+        		{ID: "two", Description: "red city boot", Category: "fashion"},
+        	} {
+        		if err := service.IndexProduct(ctx, product); err != nil {
+        			t.Fatal(err)
+        		}
+        	}
+        	page, err := service.Find(ctx, "red boot", "outdoors", 0, 1)
+        	if err != nil || page.Total.Value != 1 || len(page.Hits) != 1 || page.Hits[0].ID != "one" {
+        		t.Fatalf("filtered page = %#v, %v", page, err)
+        	}
+        	if err := service.IndexProduct(ctx, Product{ID: "one", Description: "green tent", Category: "camping"}); err != nil {
+        		t.Fatal(err)
+        	}
+        	stale, err := service.Find(ctx, "red boot", "outdoors", 0, 1)
+        	if err != nil || stale.Total.Value != 0 {
+        		t.Fatalf("stale page = %#v, %v", stale, err)
+        	}
+        	current, err := service.Find(ctx, "green tent", "camping", 0, 1)
+        	if err != nil || current.Total.Value != 1 {
+        		t.Fatalf("updated page = %#v, %v", current, err)
+        	}
+        }
+  - id: import-catalog
+    title: Import catalog composition
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\t\"example.com/invoiceeval/internal/runtime\"\n"
+      new: "\t\"example.com/invoiceeval/internal/runtime\"\n\t\"example.com/invoiceeval/internal/catalog\"\n"
+  - id: provide-catalog
+    title: Register the catalog index and service
+    replace:
+      path: app/wire/inject_services_app.go
+      language: go
+      old: "\tapp.NewLifecycleRegistry,\n"
+      new: "\tcatalog.OpenIndex,\n\tcatalog.NewService,\n\tapp.NewLifecycleRegistry,\n"
+checks:
+  - command: [go, test, ./internal/catalog]
+  - command: [forj, build]
+  - command: [go, test, ./...]

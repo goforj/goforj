@@ -1,0 +1,74 @@
+schema_version: 2
+id: catalog-search-domain
+title: Catalog Search Projection Boundary
+description: Prepare independently pinned lexical search modules and a rebuildable product projection.
+app:
+  module_name: example.com/invoiceeval
+  doc_module_name: your/module
+  components:
+    web_api: true
+markdown:
+  intro: |
+    The database remains durable truth; this local index projects already committed products.
+  before: |
+    the App has no catalog projection.
+  after: |
+    the App has an explicit index schema and local composition boundary, ready for application behavior.
+  files:
+    - internal/catalog/product.go
+steps:
+  - id: pin-search-modules
+    title: Pin root and embedded backend independently
+    command: [go, get, github.com/goforj/search@v0.1.1, github.com/goforj/search/driver/blevesearch@v0.1.1]
+  - id: add-catalog-projection
+    title: Define the product projection and local index
+    write:
+      path: internal/catalog/product.go
+      language: go
+      content: |
+        // Package catalog owns the rebuildable product search projection.
+        package catalog
+
+        import (
+        	"context"
+        	"github.com/goforj/search"
+        	"github.com/goforj/search/driver/blevesearch"
+        )
+
+        // Product is a projection of a durable catalog record, not its persistence model.
+        type Product struct {
+        	ID          string `json:"id"`
+        	Description string `json:"description"`
+        	Category    string `json:"category"`
+        }
+
+        // Definition declares lexical text separately from exact category and stable ordering.
+        func Definition() search.Definition {
+        	return search.Definition{Name: "catalog", Fields: []search.Field{
+        		{Name: "description", Type: search.TextField, Searchable: true},
+        		{Name: "category", Type: search.KeywordField, Filterable: true},
+        		{Name: "id", Type: search.KeywordField, Required: true, Sortable: true},
+        	}, DefaultSearchable: []search.FieldName{"description"}}
+        }
+
+        // OpenIndex provisions a disposable embedded projection for the local App.
+        func OpenIndex() (*search.Index, func(), error) {
+        	ctx := context.Background()
+        	driver, err := blevesearch.Open(ctx, blevesearch.Config{Memory: true})
+        	if err != nil {
+        		return nil, nil, err
+        	}
+        	if err := driver.CreateIndex(ctx, Definition()); err != nil {
+        		_ = driver.Close()
+        		return nil, nil, err
+        	}
+        	index, err := search.NewIndex(driver, Definition())
+        	if err != nil {
+        		_ = driver.Close()
+        		return nil, nil, err
+        	}
+        	return index, func() { _ = driver.Close() }, nil
+        }
+checks:
+  - command: [go, test, ./internal/catalog]
+  - command: [forj, build]
