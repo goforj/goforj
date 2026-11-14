@@ -14,13 +14,13 @@ Healthy watches do not poll. If watch setup fails or the watcher becomes unavail
 
 Symlinked paths use polling on macOS/BSD because their filesystem watcher cannot reliably report link replacement. Supported platforms watch link control directories and follow changed targets. `FEATURE_REFRESH_INTERVAL` optionally overrides that fallback interval (at least `10ms`); it is omitted from the rendered environment. Notification overflow rebuilds notification coverage and refreshes immediately.
 
-Memory sources start no background workers. Shutdown cancels and joins file workers. Invalid refresh retains valid decisions and keeps readiness usable. `Instances()` exposes the last refresh error and freshness timestamps; startup still fails when no valid initial configuration can be loaded.
+Memory sources start no background workers. Shutdown cancels and joins file workers. Invalid refresh retains valid decisions and keeps readiness usable. After a source read failure, relevant file or directory permission changes trigger another refresh. `Instances()` exposes the last refresh error and freshness timestamps; startup still fails when no valid initial configuration can be loaded.
 
 A named evaluator uses `FEATURE_CHECKOUT_DRIVER=file` and `FEATURE_CHECKOUT_PATH=storage/flags/checkout.json`. Regenerate to add `Manager.Checkout()`.
 
 Create `storage/flags/checkout.json` before starting the App. This relative path assumes the process runs from the Project root; relative paths resolve from the process working directory. A deployment can configure an absolute path for a mounted definition file.
 
-Named Apps use their existing environment overlay, for example `BILLING_FEATURE_CHECKOUT_PATH`. Resources identify evaluator configuration, not individual flag names. A name declared only for Billing is not initialized by another App. Accessing an undeclared App resource fails fast.
+Named Apps use their existing environment overlay, for example `BILLING_FEATURE_CHECKOUT_PATH`. Resources identify evaluator configuration, not individual flag names. A name declared only for Billing is not initialized by another App. Accessing an undeclared App resource fails fast. Creating or removing an App reconciles its evaluator registrations and App-only accessors automatically.
 
 ## Check a flag
 

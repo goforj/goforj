@@ -249,6 +249,7 @@ done < "$go_files_file"
   # Feature managers are generated from Go source templates outside the .tmpl inventory.
   echo "github.com/goforj/feature"
   echo "github.com/fsnotify/fsnotify"
+  echo "golang.org/x/text/unicode/norm"
   # Notification managers are generated from Go source templates rather than embedded .tmpl files.
   echo "github.com/goforj/notification"
   echo "github.com/goforj/notification/driver/log"
