@@ -123,3 +123,9 @@ The highest-value next implementation is the authoritative container or VM backe
 After that trust boundary exists, the next paid measurement should answer a specific adjacent-treatment question with repeated paired trials, beginning with the smoke tier. Do not pay for another complete matrix merely to replace stochastic failures with green cells. Publish a new scorecard only when its protocol, denominator, retained authenticated artifacts, and revision identities are explicit. The newly promoted `create-data-resource` evaluation also needs retained evidence before it joins that scorecard.
 
 Some capability gaps require new infrastructure rather than more source contracts. Browser-observed frontend loading and flicker, deployment rollback, graceful multi-runtime shutdown, and production driver swaps should remain planned until their verifier can observe the real behavior economically and deterministically.
+
+## Incident notification boundary
+
+The `incident-notification` scenario prepares notification v0.1.0 and an incident data/sender boundary before the candidate starts. Dependency installation and real transport provisioning are outside the task. The golden injects primary and fallback senders into its service; no runtime credentials, destinations, or provider calls are configured.
+
+`TestIncidentNotificationVerifierCalibration` accepts the reviewed target and rejects a compiling service that discards its message while returning success. The Atlas supervisor owns recording senders that check message data, caller context, primary acceptance, classified fallback and secondary rejection, uncertain acceptance, transient errors, throttling, and cancellation. Library composition and regression-test quality are reported separately from behavior. A passing synchronous send means handling or acceptance, never proof of recipient receipt. This deterministic calibration does not add a live model result to the benchmark.
