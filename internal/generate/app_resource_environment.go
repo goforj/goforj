@@ -16,14 +16,18 @@ func generationKnownAppEnvPrefixes(input generationInput) []string {
 }
 
 // appResourceEnvironmentOwner gives the longest known App prefix precedence over ambiguous default resource keys.
-func appResourceEnvironmentOwner(key, resourcePrefix string, prefixes []string) string {
-	owner := ""
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(key, prefix+"_"+resourcePrefix+"_") && len(prefix) > len(owner) {
-			owner = prefix
-		}
+func appResourceEnvironmentOwner(key string, prefixes []string) string {
+	return project.AppResourceKeyOwner(key, prefixes)
+}
+
+// generationResourceEnvPrefixes keeps emitted ownership rules aligned with the framework resource catalog.
+func generationResourceEnvPrefixes() []string {
+	definitions := project.ResourceCatalog()
+	prefixes := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		prefixes = append(prefixes, definition.EnvironmentPrefix)
 	}
-	return owner
+	return prefixes
 }
 
 // appScopedChildNames recognizes exact resource settings after assigning their App ownership.
@@ -31,7 +35,7 @@ func appScopedChildNames(input generationInput, resourcePrefix, appPrefix string
 	values := map[string]string{}
 	prefixes := generationKnownAppEnvPrefixes(input)
 	for _, entry := range input.environment.Entries() {
-		if appResourceEnvironmentOwner(entry.key, resourcePrefix, prefixes) == appPrefix {
+		if appResourceEnvironmentOwner(entry.key, prefixes) == appPrefix {
 			values[entry.key] = entry.value
 		}
 	}
@@ -47,7 +51,7 @@ func AppResourceEnvironmentOwner(key string, knownAppPrefixes []string, componen
 	if !components.Feature {
 		return "", false
 	}
-	owner = appResourceEnvironmentOwner(key, "FEATURE", knownAppPrefixes)
+	owner = appResourceEnvironmentOwner(key, knownAppPrefixes)
 	prefix := "FEATURE_"
 	if owner != "" {
 		prefix = owner + "_" + prefix
