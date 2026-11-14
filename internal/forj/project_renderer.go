@@ -1366,9 +1366,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.renderApp(app); err != nil {
 		return err
 	}
-	if appConfigChanged && !projectCapabilitiesChanged && p.projectRenderComponents().Feature {
-		// Feature ownership changes even when adding an App leaves the project capability union unchanged.
-		if err := p.runGenerateFeatures(); err != nil {
+	if appConfigChanged && !projectCapabilitiesChanged {
+		// App ownership changes even when adding an App leaves the project capability union unchanged.
+		if _, err := p.runGenerateAppResources(); err != nil {
 			return err
 		}
 	}
@@ -1484,12 +1484,11 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	if err := p.publishPendingResourceEnvironment(); err != nil {
 		return result, err
 	}
-	if afterProjectComponents.Feature {
-		if err := p.runGenerateFeatures(); err != nil {
-			return result, err
-		}
-		result.Updated = append(result.Updated, generate.FeatureManagerPath, generate.FeatureAccessorsPath)
+	updated, err := p.runGenerateAppResources()
+	if err != nil {
+		return result, err
 	}
+	result.Updated = append(result.Updated, updated...)
 	if err := p.writeTemplates([]string{
 		"internal/runtime/apps.go.tmpl",
 		"internal/runtime/apps_test.go.tmpl",
@@ -3369,14 +3368,27 @@ func (p *ProjectRenderer) runGenerateAll() error {
 	return nil
 }
 
-// runGenerateFeatures reconciles App ownership for creation and removal without regenerating unrelated resources.
-func (p *ProjectRenderer) runGenerateFeatures() error {
-	result, err := generate.GenerateProjectFiles(p.workspace.path(), generate.GenerationSelection{Feature: true})
-	if err != nil {
-		return p.workspace.logicalError(fmt.Errorf("generate feature resources: %w", err))
+// runGenerateAppResources reconciles App ownership without regenerating unrelated resource types.
+func (p *ProjectRenderer) runGenerateAppResources() ([]string, error) {
+	components := p.projectRenderComponents()
+	selection := generate.GenerationSelection{Feature: components.Feature, Notification: components.Notification}
+	paths := generate.OutputPaths(selection)
+	if len(paths) == 0 {
+		return nil, nil
 	}
-	p.lines = append(p.lines, renderCountsLine("forj generate --feature", result.TotalFiles, 0, "files"))
-	return nil
+	result, err := generate.GenerateProjectFiles(p.workspace.path(), selection)
+	if err != nil {
+		return nil, p.workspace.logicalError(fmt.Errorf("generate App resources: %w", err))
+	}
+	flags := []string{"forj generate"}
+	if selection.Feature {
+		flags = append(flags, "--feature")
+	}
+	if selection.Notification {
+		flags = append(flags, "--notification")
+	}
+	p.lines = append(p.lines, renderCountsLine(strings.Join(flags, " "), result.TotalFiles, 0, "files"))
+	return paths, nil
 }
 
 // scaffoldDemoFrontend centralizes scaffold demo frontend behavior so callers follow the same contract.
