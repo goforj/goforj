@@ -140,7 +140,7 @@ func TestSearchAppRootDriverPrecedence(t *testing.T) {
 func TestGeneratedSearchManagerBehavior(t *testing.T) {
 	root := mustTempGeneratedModuleRoot(t, "forj-search-generation-*", filepath.Join("internal", "searches"))
 	writeFixtureGoMod(t, root, fixtureModuleSpec("example.com/searchgeneration", []string{"github.com/goforj/search", "github.com/goforj/search/driver/blevesearch", "github.com/goforj/env/v2"}, nil, nil))
-	input := generationInput{projectDir: root, environment: generationEnvironment{values: map[string]string{"SEARCH_DRIVER": "bleve", "SEARCH_SUPPORTED_DRIVERS": "bleve,meilisearch", "SEARCH_CATALOG_DRIVER": "bleve", "SEARCH_ARCHIVE_DRIVER": "bleve"}}, appPrefixes: []string{"SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"}}
+	input := generationInput{projectDir: root, environment: generationEnvironment{values: map[string]string{"SEARCH_DRIVER": "bleve", "SEARCH_SUPPORTED_DRIVERS": "bleve,meilisearch", "SEARCH_CATALOG_DRIVER": "bleve", "SEARCH_ARCHIVE_DRIVER": "bleve", "SEARCH_CATALOG_V2_DRIVER": "bleve"}}, appPrefixes: []string{"SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"}}
 	if _, err := generateSearchFiles(input); err != nil {
 		t.Fatal(err)
 	}
@@ -446,6 +446,78 @@ func TestSearchManagerResourceWordApps(t *testing.T) {
   if _, err := NewManagerForApp(ctx, prefix, nil); err == nil || !strings.Contains(err.Error(), "typo") { t.Fatalf("%s undeclared index accepted: %v", prefix, err) }
   if err := ProvisionForApp(ctx, prefix, nil); err == nil || !strings.Contains(err.Error(), "typo") { t.Fatalf("%s provision accepted undeclared index: %v", prefix, err) }
   unsetSearchDriver(t, key)
+ }
+}
+
+// searchNamedDefinitions retains original logical names while sharing a small valid schema for identity tests.
+func searchNamedDefinitions(names ...string) map[string]search.Definition {
+ result:=map[string]search.Definition{}
+ for _,name:=range names { definition:=definitions()["catalog"];definition.Name=search.IndexName(name);result[name]=definition }
+ return result
+}
+
+// TestSearchManagerDeclaredNames maps environment and accessor aliases without renaming schemas or default physical paths.
+func TestSearchManagerDeclaredNames(t *testing.T) {
+ ctx:=context.Background()
+ root:=t.TempDir()
+ t.Setenv("SEARCH_DRIVER","bleve")
+ t.Setenv("SEARCH_PATH",root)
+ for _,key:=range []string{"SEARCH_CATALOG_PATH","SEARCH_CATALOG_DRIVER","SEARCH_CATALOG_V2_PATH","SEARCH_CATALOG_V2_DRIVER","SEARCH_CAFÉ_PATH","SEARCH_KELVIN_PATH","SEARCH_KELVIN_PATH"}{unsetSearchDriver(t,key)}
+ defs:=searchNamedDefinitions("Catalog","catalog-v2","Café","Kelvin")
+ if err:=Provision(ctx,defs);err!=nil{t.Fatal(err)}
+ entries,err:=os.ReadDir(root);if err!=nil{t.Fatal(err)}
+ for _,entry:=range entries { if !entry.IsDir(){continue}; if _,exists:=defs[entry.Name()];!exists{t.Fatalf("default backend path renamed to %q",entry.Name())} }
+ for name:=range defs {
+  if _,err:=os.Stat(filepath.Join(root,name));err!=nil{t.Fatalf("original backend path missing for %s: %v",name,err)}
+  t.Setenv("SEARCH_"+searchConfigName(name)+"_PATH",filepath.Join(root,name))
+ }
+ manager,err:=NewManager(ctx,defs);if err!=nil{t.Fatal(err)}
+ if manager.Catalog()!=manager.Index("Catalog") || manager.Catalog()!=manager.Index("CATALOG"){t.Fatal("case alias did not resolve exact definition")}
+ if manager.CatalogV2()!=manager.Index("catalog-v2") || manager.CatalogV2()!=manager.Index("CATALOG_V2"){t.Fatal("hyphen alias did not resolve exact definition")}
+ if manager.Index("café").Definition().Name!="Café" || manager.Index("kelvin").Definition().Name!="Kelvin"{t.Fatal("Unicode alias changed schema name")}
+ if manager.Catalog().Definition().Name!="Catalog" || manager.CatalogV2().Definition().Name!="catalog-v2"{t.Fatal("schema identity normalized")}
+ if err:=manager.Close();err!=nil{t.Fatal(err)}
+ // Existing exact-name hyphen environment keys remain usable when the canonical key is absent.
+ unsetSearchDriver(t,"SEARCH_CATALOG_V2_PATH")
+ t.Setenv("SEARCH_CATALOG-V2_PATH",filepath.Join(root,"catalog-v2"))
+ manager,err=NewManager(ctx,defs);if err!=nil{t.Fatal(err)}
+ if err:=manager.Close();err!=nil{t.Fatal(err)}
+ t.Setenv("SEARCH_CATALOG_V2_PATH",filepath.Join(root,"catalog-v2"))
+ t.Setenv("SEARCH_CATALOG-V2_PATH",filepath.Join(root,"must-not-open"))
+ manager,err=NewManager(ctx,defs);if err!=nil{t.Fatalf("canonical key did not take precedence: %v",err)}
+ if err:=manager.Close();err!=nil{t.Fatal(err)}
+ appRoot:=t.TempDir()
+ t.Setenv("ADMIN_SEARCH_CATALOG_PATH",filepath.Join(appRoot,"Catalog"))
+ t.Setenv("ADMIN_SEARCH_CATALOG_V2_PATH",filepath.Join(appRoot,"catalog-v2"))
+ t.Setenv("ADMIN_SEARCH_CAFÉ_PATH",filepath.Join(appRoot,"Café"))
+ t.Setenv("ADMIN_SEARCH_KELVIN_PATH",filepath.Join(appRoot,"Kelvin"))
+ if err:=ProvisionForApp(ctx,"ADMIN",defs);err!=nil{t.Fatal(err)}
+ manager,err=NewManagerForApp(ctx,"ADMIN",defs);if err!=nil{t.Fatal(err)}
+ if manager.CatalogV2().Definition().Name!="catalog-v2"{t.Fatal("App alias changed schema name")}
+ if err:=manager.Close();err!=nil{t.Fatal(err)}
+}
+
+// TestSearchManagerRejectsAmbiguousAliases validates the entire declaration map before any local or remote backend opens.
+func TestSearchManagerRejectsAmbiguousAliases(t *testing.T) {
+ for _,names:=range [][]string{{"Catalog","catalog"},{"catalog-v2","catalog_v2"},{"Café","café"},{"Kelvin","Kelvin"}}{
+  t.Run(strings.Join(names,"/"),func(t *testing.T){
+   root:=t.TempDir()
+   t.Setenv("SEARCH_DRIVER","bleve");t.Setenv("SEARCH_PATH",root)
+   defs:=searchNamedDefinitions(append([]string{"aaa"},names...)...)
+   var previous string
+   for attempt:=0;attempt<3;attempt++{
+    if err:=Provision(context.Background(),defs);err==nil || !strings.Contains(err.Error(),"share environment/accessor alias"){t.Fatalf("ambiguous aliases accepted: %v",err)}else if previous!="" && err.Error()!=previous{t.Fatalf("nondeterministic alias error: %s vs %s",previous,err)}else{previous=err.Error()}
+    if _,err:=NewManager(context.Background(),defs);err==nil || !strings.Contains(err.Error(),"share environment/accessor alias"){t.Fatalf("startup accepted aliases: %v",err)}
+   }
+   entries,err:=os.ReadDir(root);if err!=nil || len(entries)!=0{t.Fatalf("alias validation opened backend paths: %v %v",entries,err)}
+   var requests atomic.Int64
+   server:=httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter,request *http.Request){requests.Add(1);response.WriteHeader(http.StatusServiceUnavailable)}))
+   defer server.Close()
+   t.Setenv("SEARCH_DRIVER","meilisearch");t.Setenv("SEARCH_URL",server.URL)
+   if err:=Provision(context.Background(),defs);err==nil || !strings.Contains(err.Error(),"share environment/accessor alias"){t.Fatalf("remote provision accepted aliases: %v",err)}
+   if _,err:=NewManager(context.Background(),defs);err==nil || !strings.Contains(err.Error(),"share environment/accessor alias"){t.Fatalf("remote startup accepted aliases: %v",err)}
+   if requests.Load()!=0{t.Fatalf("alias validation contacted backend %d times",requests.Load())}
+  })
  }
 }
 
