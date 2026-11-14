@@ -234,10 +234,13 @@ func normalizedSearchDriver(value, fallback string) string {
 func searchDriverName(prefix, name string) string {
  root := normalizedSearchDriver(env.Get("SEARCH_DRIVER", ""), "bleve")
  driver := root
+ appRoot := root
+ if prefix != "" {
+  if value, exists := os.LookupEnv(prefix+"_SEARCH_DRIVER"); exists { appRoot = normalizedSearchDriver(value, "bleve") }
+  driver = appRoot
+ }
  if value, exists := os.LookupEnv("SEARCH_"+strings.ToUpper(name)+"_DRIVER"); exists { driver = normalizedSearchDriver(value, root) }
  if prefix != "" {
-  appRoot := root
-  if value, exists := os.LookupEnv(prefix+"_SEARCH_DRIVER"); exists { appRoot = normalizedSearchDriver(value, "bleve") }
   if value, exists := os.LookupEnv(prefix+"_SEARCH_"+strings.ToUpper(name)+"_DRIVER"); exists { driver = normalizedSearchDriver(value, appRoot) }
  }
  return driver
