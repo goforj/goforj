@@ -16,6 +16,7 @@ func TestNotificationGenerationRejectsUnrepresentableConfiguration(t *testing.T)
 		{"NOTIFICATION_DEFAULT_DRIVER": "log"},
 		{"NOTIFICATION_CLOSE_DRIVER": "log"},
 		{"NOTIFICATION_123_DRIVER": "log"},
+		{"NOTIFICATION_FOO_BAR_DRIVER": "log", "NOTIFICATION_FOO__BAR_DRIVER": "log"},
 	} {
 		t.Run(strings.Join(sortedEnvironmentKeys(values), ","), func(t *testing.T) {
 			for key, value := range values {
@@ -187,6 +188,9 @@ func TestInvalidRuntimeConfigurationFailsBeforeSending(t *testing.T) {
         {"NOTIFICATION_WEBHOOK_TIMEOUT", "0s"},
         {"NOTIFICATION_WEBHOOK_ALLOW_PRIVATE", "invalid"},
         {"NOTIFICATION_WEBHOOK_URL", "://invalid"},
+        {"NOTIFICATION_WEBHOOK_URL", ""},
+        {"NOTIFICATION_WEBHOOK_URL", "   "},
+        {"NOTIFICATION_ALERTS_DRIVER", "webhook"},
         {"NOTIFICATION_WEBHOOK_FORMAT", "unknown"},
         {"NOTIFICATION_ALERTS_DRIVER", "unknown"},
     } {
@@ -268,6 +272,10 @@ func TestAppOnlySenderMembership(t *testing.T) {
     if root.Shared() != root.Named("shared") { t.Fatal("root-declared sender unavailable") }
     assertOtherAppAccessorPanics(t, root)
     if manager, err := NewManagerForApp("ADMIN"); err == nil || manager != nil { t.Fatal("owning App ignored invalid configuration") }
+    for _, endpoint := range []string{"", "   "} {
+        t.Setenv("ADMIN_NOTIFICATION_ALERTS_WEBHOOK_URL", endpoint)
+        if manager, err := NewManagerForApp("ADMIN"); err == nil || manager != nil { t.Fatal("owning App accepted missing webhook URL") }
+    }
     t.Setenv("ADMIN_NOTIFICATION_ALERTS_WEBHOOK_URL", server.URL)
     t.Setenv("ADMIN_NOTIFICATION_ALERTS_WEBHOOK_ALLOW_PRIVATE", "true")
     admin, err := NewManagerForApp(" admin ")
