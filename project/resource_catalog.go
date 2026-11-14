@@ -10,6 +10,8 @@ import (
 type ResourceKey string
 
 const (
+	// ResourceFeature identifies configured feature evaluators, independently of dynamic flag names.
+	ResourceFeature ResourceKey = "feature"
 	// ResourceDatabase identifies the App database.
 	ResourceDatabase ResourceKey = "database"
 	// ResourceCache identifies the root cache.
@@ -20,6 +22,8 @@ const (
 	ResourceEvents ResourceKey = "events"
 	// ResourceStorage identifies the root storage disk.
 	ResourceStorage ResourceKey = "storage"
+	// ResourceNotification identifies configured synchronous message delivery.
+	ResourceNotification ResourceKey = "notification"
 	// ResourceSearch identifies rebuildable application search indexes.
 	ResourceSearch ResourceKey = "search"
 	// ResourceMail identifies the root mailer used when Mail is enabled.
@@ -30,6 +34,8 @@ const (
 type ServiceKey string
 
 const (
+	// ServiceNotificationWebhook identifies an externally configured notification destination.
+	ServiceNotificationWebhook ServiceKey = "notification_webhook"
 	// ServiceSearchMeilisearch identifies the externally managed search endpoint.
 	ServiceSearchMeilisearch ServiceKey = "search_meilisearch"
 	// ServiceRedis identifies a Redis endpoint or generated Redis service.
@@ -134,6 +140,23 @@ type ResourceDefinition struct {
 }
 
 var resourceCatalog = []ResourceDefinition{
+	{
+		Key: ResourceFeature, Label: "Feature Flags", EnvironmentPrefix: "FEATURE",
+		DefaultDriver: "memory", DefaultSupportedDrivers: []string{"memory", "file"},
+		Drivers:    []DriverDefinition{{Name: "memory", Label: "Memory", Order: 10}, {Name: "file", Label: "File", Order: 20}},
+		applicable: func(components Components) bool { return components.Feature },
+	},
+	{
+		Key: ResourceNotification, Label: "Notifications", EnvironmentPrefix: "NOTIFICATION",
+		DefaultDriver: "log", DefaultSupportedDrivers: []string{"log"},
+		Drivers: []DriverDefinition{
+			{Name: "log", Label: "Local capture", Order: 10},
+			{Name: "webhook", Label: "Webhook", Service: ServiceNotificationWebhook, ServiceLabel: "Notification webhook", Order: 20, Environment: []DriverEnvironmentPlaceholder{
+				driverEnvironmentPlaceholder("NOTIFICATION_WEBHOOK_URL", "", "trusted webhook destination"),
+			}},
+		},
+		applicable: func(components Components) bool { return components.Notification },
+	},
 	{
 		Key:                     ResourceDatabase,
 		Label:                   "Database",

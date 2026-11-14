@@ -123,6 +123,7 @@ import (
  "errors"
  "os"
  "path/filepath"
+ "strings"
  "testing"
 
  "github.com/goforj/search"
@@ -195,5 +196,34 @@ func TestSearchManager(t *testing.T) {
  // Index requires an actual App declaration, even if another App generated its accessor.
  defer func(){if recover()==nil {t.Fatal("missing App index did not fail fast")}}()
  empty.Index("missing")
+}
+
+// TestSearchManagerAppIsolation initializes independent default and named App schemas against real Bleve owners.
+func TestSearchManagerAppIsolation(t *testing.T) {
+ ctx:=context.Background()
+ root:=t.TempDir()
+ t.Setenv("SEARCH_DRIVER","bleve")
+ t.Setenv("SEARCH_SUPPORTED_DRIVERS","bleve,meilisearch")
+ t.Setenv("SEARCH_CATALOG_DRIVER","bleve")
+ t.Setenv("SEARCH_CATALOG_PATH",filepath.Join(root,"catalog"))
+ t.Setenv("ADMIN_SEARCH_ARCHIVE_DRIVER","bleve")
+ t.Setenv("ADMIN_SEARCH_ARCHIVE_PATH",filepath.Join(root,"archive"))
+ defaults:=map[string]search.Definition{"catalog":definitions()["catalog"]}
+ admin:=map[string]search.Definition{"archive":definitions()["archive"]}
+ if err:=Provision(ctx,defaults);err!=nil{t.Fatal(err)}
+ if err:=ProvisionForApp(ctx,"ADMIN",admin);err!=nil{t.Fatal(err)}
+ defaultManager,err:=NewManager(ctx,defaults);if err!=nil{t.Fatal(err)}
+ t.Cleanup(func(){_ = defaultManager.Close()})
+ adminManager,err:=NewManagerForApp(ctx," admin ",admin);if err!=nil{t.Fatal(err)}
+ t.Cleanup(func(){_ = adminManager.Close()})
+ if len(defaultManager.Instances())!=1 || len(adminManager.Instances())!=1{t.Fatal("App opened another App's index")}
+ receipt,err:=search.Upsert(ctx,defaultManager.Catalog(),"product",map[string]string{"description":"red boot"});if err!=nil{t.Fatal(err)}
+ if _,err:=defaultManager.Catalog().Wait(ctx,receipt);err!=nil{t.Fatal(err)}
+ archive,err:=adminManager.Archive().Search(ctx,search.Query{Text:"red"});if err!=nil || archive.Total.Value!=0{t.Fatalf("App data crossed index owners: %#v %v",archive,err)}
+ catalog,err:=defaultManager.Catalog().Search(ctx,search.Query{Text:"red"});if err!=nil || catalog.Total.Value!=1{t.Fatalf("default index missing data: %#v %v",catalog,err)}
+ t.Setenv("ADMIN_SEARCH_TYPO_PATH",filepath.Join(root,"typo"))
+ if _,err:=NewManagerForApp(ctx,"ADMIN",admin);err==nil || !strings.Contains(err.Error(),"typo"){t.Fatalf("named App typo was ignored: %v",err)}
+ t.Setenv("SEARCH_TYPO_PATH",filepath.Join(root,"default-typo"))
+ if _,err:=NewManager(ctx,defaults);err==nil || !strings.Contains(err.Error(),"typo"){t.Fatalf("default App typo was ignored: %v",err)}
 }
 `

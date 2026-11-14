@@ -4,9 +4,11 @@ package forj
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -132,5 +134,92 @@ func main() {
  defer cancel()
  if err := searches.Provision(ctx, app.SearchDefinitions()); err != nil { log.Fatal(err) }
  fmt.Println("Search schemas provisioned")
+}
+`
+
+// TestSearchResourceRuntimeIsolation initializes both real App graphs with disjoint schemas and backend owners.
+func TestSearchResourceRuntimeIsolation(t *testing.T) {
+	root := t.TempDir()
+	repository, err := testkit.RepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := project.Config{ProjectName: "Scoped Search", GoModuleName: "example.com/scopedsearch", Render: project.RenderConfig{Components: project.Components{CLI: true, Search: true}}, Apps: map[string]project.AppConfig{"admin": {Components: project.Components{CLI: true, Search: true}}}}
+	if err := writeConventionalAppMarker(root, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	testkit.RenderProjectWithForj(t, root, testkit.RenderProjectRequest{Config: config, ModuleReplaces: map[string]string{"github.com/goforj/goforj": repository}})
+	schema := "import \"github.com/goforj/search\"\n\n// SearchDefinitions owns this App's explicit schema.\nfunc SearchDefinitions() map[string]search.Definition { return map[string]search.Definition{NAME: {Name: NAME, Fields: []search.Field{{Name: \"description\", Type: search.TextField, Searchable: true}}}} }\n"
+	for name, path := range map[string]string{"catalog": "app/search.go", "archive": "app/admin/search.go"} {
+		pkg := "app"
+		if name == "archive" {
+			pkg = project.AppPackageName("admin")
+		}
+		source := "// Package " + pkg + " owns App composition.\npackage " + pkg + "\n" + strings.ReplaceAll(schema, "NAME", strconv.Quote(name))
+		if err := os.WriteFile(filepath.Join(root, path), []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	environmentFile, err := os.OpenFile(filepath.Join(root, ".env"), os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, writeErr := fmt.Fprintln(environmentFile, "\nSEARCH_CATALOG_DRIVER=bleve\nSEARCH_CATALOG_PATH=_data/search/catalog\nADMIN_SEARCH_ARCHIVE_DRIVER=bleve\nADMIN_SEARCH_ARCHIVE_PATH=_data/search/admin/archive")
+	closeErr := environmentFile.Close()
+	if writeErr != nil || closeErr != nil {
+		t.Fatalf("configure indexes: %v, %v", writeErr, closeErr)
+	}
+	forj := testkit.EnsureIntegrationForjBinary(t)
+	environment := testkit.IntegrationGoProcessEnv(t, map[string]string{"GOWORK": "off"})
+	generate := exec.CommandContext(t.Context(), forj, "generate", "--search")
+	generate.Dir = root
+	generate.Env = environment
+	if output, err := generate.CombinedOutput(); err != nil {
+		t.Fatalf("generate scoped accessors: %v\n%s", err, output)
+	}
+	programDir := filepath.Join(root, "cmd/search-scope-check")
+	if err := os.MkdirAll(programDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(programDir, "main.go"), []byte(searchRuntimeIsolationProgram), 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(t.Context(), "go", "run", "./cmd/search-scope-check")
+	command.Dir = root
+	command.Env = environment
+	if output, err := command.CombinedOutput(); err != nil || !strings.Contains(string(output), "App search indexes isolated") {
+		t.Fatalf("real App initialization: %v\n%s", err, output)
+	}
+}
+
+const searchRuntimeIsolationProgram = `// Package main verifies independently initialized App search resources.
+package main
+import (
+ "context"
+ "fmt"
+ "log"
+ "github.com/goforj/env/v2"
+ "github.com/goforj/search"
+ "example.com/scopedsearch/app"
+ "example.com/scopedsearch/app/admin"
+ defaultwire "example.com/scopedsearch/app/wire"
+ adminwire "example.com/scopedsearch/app/admin/wire"
+ "example.com/scopedsearch/internal/searches"
+)
+// main proves disjoint App schemas can initialize and close without sharing a Bleve owner.
+func main() {
+ if err:=env.Load();err!=nil{log.Fatal(err)}
+ ctx:=context.Background()
+ if err:=searches.Provision(ctx,app.SearchDefinitions());err!=nil{log.Fatal(err)}
+ if err:=searches.ProvisionForApp(ctx,"ADMIN",adminapp.SearchDefinitions());err!=nil{log.Fatal(err)}
+ defaults,err:=defaultwire.InitializeApplication();if err!=nil{log.Fatal(err)}
+ defer defaults.Shutdown(ctx)
+ named,err:=adminwire.InitializeApplication();if err!=nil{log.Fatal(err)}
+ defer named.Shutdown(ctx)
+ if len(defaults.Searches().Instances())!=1 || len(named.Searches().Instances())!=1{log.Fatal("App opened unrelated index")}
+ receipt,err:=search.Upsert(ctx,defaults.Searches().Catalog(),"product",map[string]string{"description":"red boot"});if err!=nil{log.Fatal(err)}
+ if _,err:=defaults.Searches().Catalog().Wait(ctx,receipt);err!=nil{log.Fatal(err)}
+ page,err:=named.Searches().Archive().Search(ctx,search.Query{Text:"red"});if err!=nil || page.Total.Value!=0{log.Fatalf("cross-App index data: %#v %v",page,err)}
+ fmt.Println("App search indexes isolated")
 }
 `

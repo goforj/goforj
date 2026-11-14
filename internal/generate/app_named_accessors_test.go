@@ -161,6 +161,13 @@ func appNamedAccessorTests() []appNamedAccessorTest {
 			test.requiredAccessor = "func (m *Manager) Reports() Bus"
 			test.configAccessor = "func (m *Manager) Archive() Bus"
 			test.forbiddenAccessor = "func (m *Manager) Billing() Bus"
+		case "notification":
+			test.configKey = "BILLING_NOTIFICATION_ARCHIVE_DRIVER"
+			test.configValue = "log"
+			test.generatedPath = NotificationAccessorsPath
+			test.requiredAccessor = "func (manager *Manager) Reports() notification.Sender"
+			test.configAccessor = "func (manager *Manager) Archive() notification.Sender"
+			test.forbiddenAccessor = "func (manager *Manager) Billing() notification.Sender"
 		case "mail":
 			test.configKey = "BILLING_MAIL_ARCHIVE_LOG_BODIES"
 			test.configValue = "true"

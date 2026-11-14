@@ -1,6 +1,14 @@
 package generate
 
 const (
+	// FeatureManagerPath identifies the generated feature configuration lifecycle.
+	FeatureManagerPath = "internal/features/manager_gen.go"
+	// FeatureAccessorsPath identifies accessors for configured feature evaluators.
+	FeatureAccessorsPath = "internal/features/accessors_gen.go"
+	// NotificationManagerPath identifies configured synchronous senders.
+	NotificationManagerPath = "internal/notifications/manager_gen.go"
+	// NotificationAccessorsPath identifies generated named sender accessors.
+	NotificationAccessorsPath = "internal/notifications/accessors_gen.go"
 	// SearchManagerPath identifies the generated search composition.
 	SearchManagerPath = "internal/searches/manager_gen.go"
 	// SearchAccessorsPath identifies the generated named index accessors.
@@ -40,12 +48,14 @@ func OutputPaths(selection GenerationSelection) []string {
 		enabled bool
 		paths   []string
 	}{
+		{selection.Feature, []string{FeatureManagerPath, FeatureAccessorsPath}},
 		{selection.Search, []string{SearchManagerPath, SearchAccessorsPath}},
 		{selection.Cache, []string{CacheManagerPath, CacheAccessorsPath}},
 		{selection.Queue, []string{QueueManagerPath, QueueAccessorsPath}},
 		{selection.Storage, []string{StorageManagerPath, StorageAccessorsPath}},
 		{selection.Events, []string{EventsManagerPath, EventsAccessorsPath}},
 		{selection.Queue || selection.Events, []string{MessageContextPropagatorPath}},
+		{selection.Notification, []string{NotificationManagerPath, NotificationAccessorsPath}},
 		{selection.Mail, []string{MailManagerPath, MailAccessorsPath}},
 		{selection.Database, []string{DatabaseConnectionsPath}},
 		{selection.Observability, []string{ObservabilityTargetsPath}},
