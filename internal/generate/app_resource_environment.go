@@ -1,6 +1,10 @@
 package generate
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/goforj/goforj/project"
+)
 
 // generationKnownAppEnvPrefixes includes every known App so disabled Apps cannot become default resource names.
 func generationKnownAppEnvPrefixes(input generationInput) []string {
@@ -36,4 +40,23 @@ func appScopedChildNames(input generationInput, resourcePrefix, appPrefix string
 		scope = appPrefix + "_" + resourcePrefix
 	}
 	return exactScopedChildNames(generationEnvironment{values: values}, scope, rootKeys)
+}
+
+// AppResourceEnvironmentOwner identifies enabled managed resource settings before destructive App cleanup.
+func AppResourceEnvironmentOwner(key string, knownAppPrefixes []string, components project.Components) (owner string, managed bool) {
+	if !components.Feature {
+		return "", false
+	}
+	owner = appResourceEnvironmentOwner(key, "FEATURE", knownAppPrefixes)
+	prefix := "FEATURE_"
+	if owner != "" {
+		prefix = owner + "_" + prefix
+	}
+	if !strings.HasPrefix(key, prefix) {
+		return "", false
+	}
+	if _, ok := splitScopedEnvKey(strings.TrimPrefix(key, prefix), featureRootKeys); !ok {
+		return "", false
+	}
+	return owner, true
 }

@@ -1409,6 +1409,32 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		return makeapp.RemoveResult{}, err
 	}
 
+	removedPrefix := project.AppEnvironmentPrefix(app.Name)
+	knownAppPrefixes := []string{removedPrefix}
+	for _, knownApp := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
+		if prefix := project.AppEnvironmentPrefix(knownApp.Name); prefix != "" {
+			knownAppPrefixes = append(knownAppPrefixes, prefix)
+		}
+	}
+	for name := range p.config.Dev.Apps {
+		knownAppPrefixes = append(knownAppPrefixes, project.AppEnvironmentPrefix(name))
+	}
+	for name := range p.config.Dev.Run {
+		knownAppPrefixes = append(knownAppPrefixes, project.AppEnvironmentPrefix(name))
+	}
+	preserveResourceSetting := func(key string) bool {
+		owner, managed := generate.AppResourceEnvironmentOwner(key, knownAppPrefixes, beforeProjectComponents)
+		if managed {
+			return owner != removedPrefix
+		}
+		for _, prefix := range knownAppPrefixes {
+			if len(prefix) > len(removedPrefix) && strings.HasPrefix(key, prefix+"_") {
+				return true
+			}
+		}
+		return false
+	}
+
 	var result makeapp.RemoveResult
 	for _, path := range []string{
 		projectlayout.AppDir(".", app),
@@ -1444,7 +1470,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		result.Removed = append(result.Removed, cmdDir)
 	}
 	for _, path := range []string{".env", ".env.host", ".env.example"} {
-		updated, err := p.workspace.removeAppEnvDefaults(path, app.Name)
+		updated, err := p.workspace.removeAppEnvDefaults(path, app.Name, preserveResourceSetting)
 		if err != nil {
 			return result, err
 		}
@@ -2073,8 +2099,8 @@ func removeEnvSectionHeader(lines []string, appName string) []string {
 	return out
 }
 
-// removeAppEnvDefaults deletes app-prefixed overrides when an app is removed.
-func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string) (bool, error) {
+// removeAppEnvDefaults removes an App section while optional ownership predicates protect shared settings.
+func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string, preserve ...func(string) bool) (bool, error) {
 	prefix := project.AppEnvironmentPrefix(appName)
 	if prefix == "" {
 		return false, nil
@@ -2096,7 +2122,16 @@ func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string
 	for _, line := range lines {
 		key, _, ok := envfile.ParseAssignment(line)
 		if ok && strings.HasPrefix(key, appPrefix) {
-			continue
+			keep := false
+			for _, predicate := range preserve {
+				if predicate(key) {
+					keep = true
+					break
+				}
+			}
+			if !keep {
+				continue
+			}
 		}
 		if isEnvSectionHeader(line, appName) {
 			continue
