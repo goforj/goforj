@@ -169,24 +169,45 @@ func resourceKey(config *project.Config, key string) string {
 	return key
 }
 
-// managedAppResourceOwner preserves the longest known App boundary even when its resource component is disabled.
-func managedAppResourceOwner(config *project.Config, key string) (string, bool) {
+// knownAppResourceOwner shares the longest App boundary across provider inventories, validation, and targets.
+func knownAppResourceOwner(config *project.Config, key string) string {
 	prefixes := make([]string, 0, len(config.Apps))
 	for name := range config.Apps {
 		if prefix := project.AppEnvironmentPrefix(name); prefix != "" {
 			prefixes = append(prefixes, prefix)
 		}
 	}
-	owner := project.AppResourceKeyOwner(key, prefixes)
-	if owner == "" || !strings.HasPrefix(strings.TrimPrefix(key, owner+"_"), "FEATURE_") {
+	return project.AppResourceKeyOwner(key, prefixes)
+}
+
+// managedAppResourceOwner assigns App-aware keys while preserving active legacy interpretations for disabled components.
+func managedAppResourceOwner(config *project.Config, key string) (string, bool) {
+	owner := knownAppResourceOwner(config, key)
+	base := strings.TrimPrefix(key, owner+"_")
+	if owner == "" || (!strings.HasPrefix(base, "FEATURE_") && !strings.HasPrefix(key, "FEATURE_")) {
 		return "", false
 	}
 	for name, app := range config.Apps {
-		if project.AppEnvironmentPrefix(name) == owner {
-			return owner, project.NormalizeConfiguredAppComponents(config, app.Components).Feature
+		if project.AppEnvironmentPrefix(name) != owner {
+			continue
 		}
+		enabled := resourceAppliesTo(base, project.NormalizeConfiguredAppComponents(config, app.Components))
+		if !enabled && !strings.HasPrefix(key, "FEATURE_") && resourceAppliesTo(key, project.ProjectComponents(config)) {
+			return "", false
+		}
+		return owner, enabled
 	}
 	return "", false
+}
+
+// resourceScopeAllowed aligns independent family interpretations with App-aware generator ownership.
+func resourceScopeAllowed(config *project.Config, key string, definition project.ResourceDefinition, scope string) bool {
+	owner := knownAppResourceOwner(config, key)
+	if definition.Key == project.ResourceFeature {
+		return owner == strings.TrimSuffix(scope, "_")
+	}
+	managedOwner, enabled := managedAppResourceOwner(config, key)
+	return !enabled || managedOwner == "" || !strings.HasPrefix(key, managedOwner+"_FEATURE_")
 }
 
 // resourceAppliesTo distinguishes live resource scopes while allowing definitions for future components to retain their fallback interpretation.
@@ -335,10 +356,11 @@ func databaseSettingInScope(values map[string]string, key, suffix, app string) (
 // databaseScopes includes every participating database interpretation of a key, retaining the conventional fallback for future components.
 func (s *Session) databaseScopes(key string) []string {
 	scopes := map[string]bool{}
-	if base := resourceKey(s.config, key); strings.HasPrefix(base, "DB_") {
+	definition, _ := project.ResourceDefinitionByKey(project.ResourceDatabase)
+	if base := resourceKey(s.config, key); strings.HasPrefix(base, "DB_") && resourceScopeAllowed(s.config, key, definition, strings.TrimSuffix(key, base)) {
 		scopes[strings.TrimSuffix(key, base)] = true
 	}
-	if strings.HasPrefix(key, "DB_") && project.ProjectComponents(s.config).HasDatabase() {
+	if strings.HasPrefix(key, "DB_") && project.ProjectComponents(s.config).HasDatabase() && resourceScopeAllowed(s.config, key, definition, "") {
 		scopes[""] = true
 	}
 	for name, app := range s.config.Apps {
@@ -346,7 +368,7 @@ func (s *Session) databaseScopes(key string) []string {
 			continue
 		}
 		prefix := project.AppEnvironmentPrefix(name) + "_"
-		if strings.HasPrefix(key, prefix+"DB_") && project.NormalizeConfiguredAppComponents(s.config, app.Components).HasDatabase() {
+		if strings.HasPrefix(key, prefix+"DB_") && project.NormalizeConfiguredAppComponents(s.config, app.Components).HasDatabase() && resourceScopeAllowed(s.config, key, definition, prefix) {
 			scopes[prefix] = true
 		}
 	}
