@@ -35,6 +35,37 @@ func TestRenderedFeatureResourceComposition(t *testing.T) {
 			t.Fatal("disabled feature generated a package")
 		}
 	})
+	t.Run("new App ownership", func(t *testing.T) {
+		root := t.TempDir()
+		testkit.RenderProjectWithForj(t, root, testkit.RenderProjectRequest{Config: project.Config{ProjectName: "Feature Apps", GoModuleName: "example.com/featureapps", Render: project.RenderConfig{Components: project.Components{CLI: true, Feature: true}}}})
+		runFeatureRenderCommand(t, root, "make:app", "reporting", "--components", "cli,feature")
+		// A plain Go test must initialize the new App before another framework build can repair its ownership map.
+		runtimeTest := `package features
+
+import (
+    "context"
+    "testing"
+)
+
+// TestCreatedAppFeatureOwnership starts a newly created App with the already generated manager.
+func TestCreatedAppFeatureOwnership(t *testing.T) {
+    manager,err := NewManagerForApp("REPORTING")
+    if err != nil { t.Fatal(err) }
+    defer manager.Close()
+    if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
+    for _,check := range manager.ReadinessChecks() { if err := check.Check(context.Background()); err != nil { t.Fatal(err) } }
+}
+`
+		if err := os.WriteFile(filepath.Join(root, "internal/features/created_app_test.go"), []byte(runtimeTest), 0600); err != nil {
+			t.Fatal(err)
+		}
+		initialize := exec.Command("go", "test", "./internal/features", "-run", "^TestCreatedAppFeatureOwnership$", "-count=1")
+		initialize.Dir = root
+		initialize.Env = testkit.IntegrationGoProcessEnv(t, map[string]string{"GOWORK": "off"})
+		if output, err := initialize.CombinedOutput(); err != nil {
+			t.Fatalf("initialize make:app feature resources: %v\n%s", err, output)
+		}
+	})
 	t.Run("complete composition", func(t *testing.T) {
 		root := t.TempDir()
 		if err := writeConventionalAppMarker(root, "billing"); err != nil {

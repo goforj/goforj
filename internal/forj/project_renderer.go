@@ -1356,6 +1356,14 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.renderApp(app); err != nil {
 		return err
 	}
+	if appConfigChanged && !projectCapabilitiesChanged && p.projectRenderComponents().Feature {
+		// Feature ownership changes even when adding an App leaves the project capability union unchanged.
+		result, err := generate.GenerateProjectFiles(p.workspace.path(), generate.GenerationSelection{Feature: true})
+		if err != nil {
+			return p.workspace.logicalError(fmt.Errorf("generate App feature resources: %w", err))
+		}
+		p.lines = append(p.lines, renderCountsLine("forj generate --feature", result.TotalFiles, 0, "files"))
+	}
 	if err := p.writeTemplates([]string{
 		"internal/cmd/launch.go.tmpl",
 		"internal/cmd/launch_test.go.tmpl",

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goforj/goforj/internal/forj/makeapp"
+	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/project"
 )
 
@@ -54,5 +56,34 @@ func TestFeatureAppRemovalRejectsExistingAccessor(t *testing.T) {
 	err := projectRendererForTest(t, config).validateFeatureRenderTransition(project.ProjectComponents(config))
 	if err == nil || !strings.Contains(err.Error(), "cannot disable Feature for App") {
 		t.Fatalf("App removal error = %v", err)
+	}
+}
+
+// TestFeatureMakeAppRefreshesOwnership updates compiled App registration before wiring a new App.
+func TestFeatureMakeAppRefreshesOwnership(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disabled", true: "enabled"}[enabled], func(t *testing.T) {
+			usePrimitiveRendererRoot(t)
+			config := &project.Config{ProjectName: "Feature Apps", GoModuleName: "example.com/featureapps", Render: project.RenderConfig{Components: project.Components{CLI: true, Feature: true}}}
+			if err := writeProjectConfig(".goforj.yml", config); err != nil {
+				t.Fatal(err)
+			}
+			writePrimitiveRendererFile(t, ".env", "FEATURE_DRIVER=memory\nFEATURE_SUPPORTED_DRIVERS=memory,file\n")
+			if _, err := generate.GenerateFeatureFiles("."); err != nil {
+				t.Fatal(err)
+			}
+			renderer := unitProjectRenderer(t)
+			if err := renderer.RenderAppOnly(project.DefaultNamedApp("billing"), makeapp.RenderOptions{Components: project.Components{CLI: true, Feature: enabled}, SkipWire: true}); err != nil {
+				t.Fatal(err)
+			}
+			body := readPrimitiveRendererFile(t, generate.FeatureManagerPath)
+			if strings.Contains(body, `"BILLING":`) != enabled {
+				t.Fatalf("wrong App participation: %s", body)
+			}
+			provider := readPrimitiveRendererFile(t, "app/billing/wire/inject_managers.go")
+			if strings.Contains(provider, `features.NewManagerForApp("BILLING")`) != enabled {
+				t.Fatal("provider and ownership disagree")
+			}
+		})
 	}
 }

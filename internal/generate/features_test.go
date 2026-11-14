@@ -14,6 +14,7 @@ func TestFeatureGenerationValidatesConfiguration(t *testing.T) {
 		values map[string]string
 	}{
 		{"unknown driver", map[string]string{"FEATURE_DRIVER": "hosted"}},
+		{"invalid accessor", map[string]string{"FEATURE_123_DRIVER": "memory"}},
 		{"method collision", map[string]string{"FEATURE_INSTANCES_DRIVER": "memory"}},
 		{"unknown build driver", map[string]string{"FEATURE_SUPPORTED_DRIVERS": "memory,hosted"}},
 		{"inactive child option", map[string]string{"FEATURE_CHECKOUT_DRIVER": "memory", "FEATURE_CHECKOUT_PATH": "wrong"}},
@@ -27,6 +28,36 @@ func TestFeatureGenerationValidatesConfiguration(t *testing.T) {
 				t.Fatal("invalid generation published output")
 			}
 		})
+	}
+}
+
+// TestFeatureGenerationPreservesExistingArtifacts rejects invalid accessors before changing either output.
+func TestFeatureGenerationPreservesExistingArtifacts(t *testing.T) {
+	root := t.TempDir()
+	input := fixtureGenerationInput(root, nil)
+	if _, err := generateFeatureFiles(input); err != nil {
+		t.Fatal(err)
+	}
+	originals := map[string]string{}
+	for _, path := range []string{FeatureManagerPath, FeatureAccessorsPath} {
+		contents, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		originals[path] = string(contents)
+	}
+	invalid := fixtureGenerationInput(root, map[string]string{"FEATURE_123_DRIVER": "memory", "FEATURE_SUPPORTED_DRIVERS": "memory"})
+	if count, err := generateFeatureFiles(invalid); err == nil || count != 0 {
+		t.Fatalf("invalid accessor: count=%d err=%v", count, err)
+	}
+	for path, original := range originals {
+		contents, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(contents) != original {
+			t.Fatalf("invalid generation changed %s", path)
+		}
 	}
 }
 
@@ -76,6 +107,7 @@ import (
     "errors"
     "os"
     "path/filepath"
+    "runtime"
     "sync"
     "sync/atomic"
     "testing"
@@ -85,10 +117,26 @@ import (
     "github.com/goforj/feature"
 )
 
+// featureFixtureDirectory removes platform temp-directory aliases so ordinary paths exercise healthy watches.
+func featureFixtureDirectory(t *testing.T) string {
+    t.Helper()
+    path, err := filepath.EvalSymlinks(t.TempDir())
+    if err != nil { t.Fatal(err) }
+    return path
+}
+
+// featureSymlinkInterval retains event-only assertions where the backend supports reliable link replacement.
+func featureSymlinkInterval(t *testing.T) {
+    t.Helper()
+    interval := "1h"
+    if runtime.GOOS != "linux" && runtime.GOOS != "windows" { interval = "20ms" }
+    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL",interval)
+}
+
 // configureFeatureFixture supplies safe native defaults for each isolated runtime probe.
 func configureFeatureFixture(t *testing.T) string {
     t.Helper()
-    path := filepath.Join(t.TempDir(), "flags.json")
+    path := filepath.Join(featureFixtureDirectory(t), "flags.json")
     if err := os.WriteFile(path, []byte("{\"schema\":1,\"flags\":{\"checkout-v2\":{\"default\":true}}}"), 0600); err != nil { t.Fatal(err) }
     for key, value := range map[string]string{"FEATURE_DRIVER":"memory", "FEATURE_DOCUMENT":"{\"schema\":1,\"flags\":{}}", "FEATURE_CHECKOUT_DRIVER":"file", "FEATURE_CHECKOUT_PATH":path, "FEATURE_CHECKOUT_REFRESH_INTERVAL":"10ms", "FEATURE_INITIALIZATION_TIMEOUT":"5s", "FEATURE_REFRESH_INTERVAL":"30s"} { t.Setenv(key,value) }
     return path
@@ -269,7 +317,7 @@ func TestFeatureFileRefreshFallback(t *testing.T) {
         return feature.Decode([]byte("{\"schema\":1,\"flags\":{}}"))
     }))
     if err != nil { t.Fatal(err) }
-    resource := managedEvaluator{client:client,path:filepath.Join(t.TempDir(),"missing","flags.json"),interval:10*time.Millisecond}
+    resource := managedEvaluator{client:client,path:filepath.Join(featureFixtureDirectory(t),"missing","flags.json"),interval:10*time.Millisecond}
     if watcher := watchFeatureDirectory(resource.path); watcher != nil { _ = watcher.Close(); t.Fatal("missing parent was watched") }
     ctx,cancel := context.WithCancel(context.Background()); defer cancel()
     done := make(chan struct{})
@@ -326,7 +374,7 @@ func TestManagedFeatureMountedSymlink(t *testing.T) {
     if err := os.Symlink("one",filepath.Join(parent,"..data")); err != nil { t.Skipf("symlinks unavailable: %v",err) }
     if err := os.Remove(path); err != nil { t.Fatal(err) }
     if err := os.Symlink(filepath.Join("..data","flags.json"),path); err != nil { t.Fatal(err) }
-    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
+    featureSymlinkInterval(t)
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
     initial := manager.Instances()[1].Status.LastSuccess
     if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
@@ -363,7 +411,7 @@ func TestFeatureNotificationDebounce(t *testing.T) {
         return feature.Decode([]byte("{\"schema\":1,\"flags\":{}}"))
     }))
     if err != nil { t.Fatal(err) }
-    path := filepath.Join(t.TempDir(),"flags.json")
+    path := filepath.Join(featureFixtureDirectory(t),"flags.json")
     watcher := watchFeatureDirectory(path)
     if watcher == nil { t.Fatal("cannot watch test directory") }
     // Own the event channel to exercise platform-independent debounce behavior without backend noise.
@@ -383,4 +431,128 @@ func TestFeatureNotificationDebounce(t *testing.T) {
     time.Sleep(100*time.Millisecond)
     if loads.Load()!=3 { t.Fatalf("event burst caused %d loads",loads.Load()) }
 }
+// TestFeatureNotificationChurn bounds refresh latency even while unrelated entries keep changing.
+func TestFeatureNotificationChurn(t *testing.T) {
+    path := configureFeatureFixture(t)
+    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL", "1h")
+    manager, err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
+    initial := manager.Instances()[1].Status.LastSuccess
+    if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
+    waitFeatureCondition(t, func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
+    stop, done := make(chan struct{}), make(chan struct{})
+    go func() {
+        defer close(done)
+        tick := time.NewTicker(5*time.Millisecond); defer tick.Stop()
+        noise := path+".noise"
+        for { select {
+        case <-stop: return
+        case <-tick.C: _ = os.WriteFile(noise, []byte("noise"),0600); _ = os.Remove(noise)
+        } }
+    }()
+    defer func(){ close(stop); <-done }()
+    writeFeatureDefinition(t,path,false)
+    waitFeatureCondition(t, func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+}
+
+// TestFeatureSymlinkTargets rebinds repeated parent swaps and follows direct external and nested targets.
+func TestFeatureSymlinkTargets(t *testing.T) {
+    for _, mode := range []string{"parent", "direct", "nested"} { t.Run(mode, func(t *testing.T) {
+        path := configureFeatureFixture(t)
+        parent := filepath.Dir(path)
+        targets := []string{filepath.Join(featureFixtureDirectory(t),"flags.json"), filepath.Join(featureFixtureDirectory(t),"flags.json"), filepath.Join(featureFixtureDirectory(t),"flags.json")}
+        for _, target := range targets { writeFeatureDefinition(t,target,true) }
+        if err := os.Remove(path); err != nil { t.Fatal(err) }
+        control := path
+        linkTarget := targets[0]
+        if mode == "parent" {
+            control = filepath.Join(parent,"current")
+            path = filepath.Join(control,"flags.json")
+            linkTarget = filepath.Dir(targets[0])
+        } else if mode == "nested" {
+            control = filepath.Join(featureFixtureDirectory(t),"intermediate")
+            if err := os.Symlink(control,path); err != nil { t.Skipf("symlinks unavailable: %v",err) }
+        }
+        if err := os.Symlink(linkTarget,control); err != nil { t.Skipf("symlinks unavailable: %v",err) }
+        t.Setenv("FEATURE_CHECKOUT_PATH",path)
+        featureSymlinkInterval(t)
+        watcher := watchFeatureDirectory(path)
+        supported := runtime.GOOS == "linux" || runtime.GOOS == "windows"
+        if watcher != nil { _ = watcher.Close() }
+        if (watcher != nil) != supported { t.Fatal("symlink watching availability does not match reliable backend coverage") }
+        manager, err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
+        initial := manager.Instances()[1].Status.LastSuccess
+        if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
+        waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
+        for i, enabled := range []bool{false,true} {
+            target := targets[i+1]
+            writeFeatureDefinition(t,target,enabled)
+            destination := target
+            if mode == "parent" { destination = filepath.Dir(target) }
+            if err := os.Symlink(destination,control+".next"); err != nil { t.Fatal(err) }
+            if err := os.Rename(control+".next",control); err != nil { t.Fatal(err) }
+            waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") == enabled })
+        }
+        if err := os.WriteFile(targets[2],[]byte("{\"schema\":1,\"flags\":{}}"),0600); err != nil { t.Fatal(err) }
+        waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+        writeFeatureDefinition(t,targets[2],true)
+        waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+    }) }
+}
+
+// TestFeatureMemoryHasNoRefreshWorker keeps immutable sources outside the file refresh lifecycle.
+func TestFeatureMemoryHasNoRefreshWorker(t *testing.T) {
+    var loads atomic.Int64
+    client, err := feature.Open(context.Background(),feature.SourceFunc(func(context.Context)(feature.Document,error) {
+        loads.Add(1)
+        return feature.Decode([]byte("{\"schema\":1,\"flags\":{}}"))
+    }))
+    if err != nil { t.Fatal(err) }
+    manager := &Manager{resources: []managedEvaluator{{driver:"memory", client:client, interval:10*time.Millisecond}}}
+    defer manager.Close()
+    if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
+    time.Sleep(100*time.Millisecond)
+    if loads.Load() != 1 { t.Fatal("memory source started a refresh worker") }
+}
+
+// TestFeatureUnresolvableSymlinks keeps incomplete or cyclic topology from masquerading as healthy watching.
+func TestFeatureUnresolvableSymlinks(t *testing.T) {
+    parent := featureFixtureDirectory(t)
+    link := filepath.Join(parent,"current")
+    if err := os.Symlink("current",link); err != nil { t.Skipf("symlinks unavailable: %v",err) }
+    if watcher := watchFeatureDirectory(filepath.Join(link,"flags.json")); watcher != nil { _ = watcher.Close(); t.Fatal("cyclic path was watched") }
+    if err := os.Remove(link); err != nil { t.Fatal(err) }
+    if err := os.Symlink("missing",link); err != nil { t.Fatal(err) }
+    if watcher := watchFeatureDirectory(filepath.Join(link,"flags.json")); watcher != nil { _ = watcher.Close(); t.Fatal("missing symlink parent was watched") }
+}
+
+// TestFeatureOverflowRebindsSymlinkTargets recovers directory topology when the swap notification was lost.
+func TestFeatureOverflowRebindsSymlinkTargets(t *testing.T) {
+    if runtime.GOOS != "linux" && runtime.GOOS != "windows" { t.Skip("symlink notification coverage requires fallback on this backend") }
+    path := configureFeatureFixture(t)
+    first, second := filepath.Join(featureFixtureDirectory(t),"flags.json"), filepath.Join(featureFixtureDirectory(t),"flags.json")
+    writeFeatureDefinition(t,first,true)
+    writeFeatureDefinition(t,second,false)
+    if err := os.Remove(path); err != nil { t.Fatal(err) }
+    if err := os.Symlink(first,path); err != nil { t.Skipf("symlinks unavailable: %v",err) }
+    manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
+    resource := manager.resources[1]; resource.interval = time.Hour
+    watcher := watchFeatureDirectory(path)
+    if watcher == nil { t.Fatal("cannot watch test symlink") }
+    // Suppress swap notifications to reproduce an overflow that lost the topology change.
+    watcher.Events = make(chan fsnotify.Event)
+    watcher.Errors = make(chan error,1)
+    ctx,cancel := context.WithCancel(context.Background())
+    done := make(chan struct{})
+    initial := manager.Instances()[1].Status.LastSuccess
+    go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,watcher) }()
+    defer func(){ cancel(); <-done }()
+    waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
+    if err := os.Symlink(second,path+".next"); err != nil { t.Fatal(err) }
+    if err := os.Rename(path+".next",path); err != nil { t.Fatal(err) }
+    watcher.Errors <- fsnotify.ErrEventOverflow
+    waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(ctx,"checkout-v2") })
+    writeFeatureDefinition(t,second,true)
+    waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(ctx,"checkout-v2") })
+}
+
 `
