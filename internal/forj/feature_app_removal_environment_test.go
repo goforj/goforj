@@ -13,9 +13,9 @@ func TestFeatureRemoveResourceNamedAppPreservesEnvironment(t *testing.T) {
 	for _, configured := range []bool{false, true} {
 		t.Run(map[bool]string{false: "conventional", true: "configured"}[configured], func(t *testing.T) {
 			usePrimitiveRendererRoot(t)
-			config := &project.Config{ProjectName: "Feature Removal", GoModuleName: "example.com/removal", Render: project.RenderConfig{Components: project.Components{CLI: true, Feature: true}}}
+			config := &project.Config{ProjectName: "Feature Removal", GoModuleName: "example.com/removal", Render: project.RenderConfig{Components: project.Components{CLI: true, Feature: true, Cache: true}}}
 			if configured {
-				config.Apps = map[string]project.AppConfig{"feature": {Components: project.Components{CLI: true, Feature: true}}, "feature-child": {Components: project.Components{CLI: true, Feature: true}}}
+				config.Apps = map[string]project.AppConfig{"feature": {Components: project.Components{CLI: true, Feature: true, Cache: true}}, "feature-child": {Components: project.Components{CLI: true, Feature: true, Cache: true}}}
 			}
 			if err := writeProjectConfig(".goforj.yml", config); err != nil {
 				t.Fatal(err)
@@ -23,7 +23,7 @@ func TestFeatureRemoveResourceNamedAppPreservesEnvironment(t *testing.T) {
 			app := project.DefaultNamedApp("feature")
 			writePrimitiveRendererFile(t, app.Entrypoint, "package main\n")
 			writePrimitiveRendererFile(t, project.DefaultNamedApp("feature-child").Entrypoint, "package main\n")
-			contents := "FEATURE_DRIVER=memory\nFEATURE_DOCUMENT={\"schema\":1,\"flags\":{}}\nFEATURE_SUPPORTED_DRIVERS=memory,file\nFEATURE_CHILD_DRIVER=memory\nFEATURE_CHILD_DOCUMENT={\"schema\":1,\"flags\":{}}\nFEATURE_CHILD_FEATURE_DRIVER=memory\nFEATURE_CHILD_FEATURE_NESTED_DRIVER=memory\nFEATURE_CHILD_API_HTTP_PORT=8181\nFEATURE_CHILD_CUSTOM_VALUE=keep\n# Feature\nFEATURE_FEATURE_DRIVER=memory\nFEATURE_FEATURE_REMOVED_DRIVER=memory\nFEATURE_CUSTOM_SETTING=remove\nUNRELATED_SETTING=keep\n"
+			contents := "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory,redis\nFEATURE_DRIVER=memory\nFEATURE_DOCUMENT={\"schema\":1,\"flags\":{}}\nFEATURE_SUPPORTED_DRIVERS=memory,file\nFEATURE_CHILD_DRIVER=memory\nFEATURE_CHILD_DOCUMENT={\"schema\":1,\"flags\":{}}\nFEATURE_CHILD_FEATURE_DRIVER=memory\nFEATURE_CHILD_FEATURE_NESTED_DRIVER=memory\nFEATURE_CHILD_API_HTTP_PORT=8181\nFEATURE_CHILD_CUSTOM_VALUE=keep\nFEATURE_CHILD_CACHE_DRIVER=redis\n# Feature\nFEATURE_CACHE_DRIVER=redis\nFEATURE_FEATURE_DRIVER=memory\nFEATURE_FEATURE_REMOVED_DRIVER=memory\nFEATURE_CUSTOM_SETTING=remove\nUNRELATED_SETTING=keep\n"
 			for _, path := range []string{".env", ".env.host", ".env.example"} {
 				writePrimitiveRendererFile(t, path, contents)
 			}
@@ -35,12 +35,12 @@ func TestFeatureRemoveResourceNamedAppPreservesEnvironment(t *testing.T) {
 			}
 			for _, path := range []string{".env", ".env.host", ".env.example"} {
 				body := readPrimitiveRendererFile(t, path)
-				for _, key := range []string{"FEATURE_DRIVER=memory", "FEATURE_DOCUMENT=", "FEATURE_SUPPORTED_DRIVERS=", "FEATURE_CHILD_DRIVER=memory", "FEATURE_CHILD_DOCUMENT=", "FEATURE_CHILD_FEATURE_DRIVER=memory", "FEATURE_CHILD_FEATURE_NESTED_DRIVER=memory", "FEATURE_CHILD_API_HTTP_PORT=8181", "FEATURE_CHILD_CUSTOM_VALUE=keep", "UNRELATED_SETTING=keep"} {
+				for _, key := range []string{"FEATURE_DRIVER=memory", "FEATURE_DOCUMENT=", "FEATURE_SUPPORTED_DRIVERS=", "FEATURE_CHILD_DRIVER=memory", "FEATURE_CHILD_DOCUMENT=", "FEATURE_CHILD_FEATURE_DRIVER=memory", "FEATURE_CHILD_FEATURE_NESTED_DRIVER=memory", "FEATURE_CHILD_API_HTTP_PORT=8181", "FEATURE_CHILD_CUSTOM_VALUE=keep", "FEATURE_CHILD_CACHE_DRIVER=redis", "UNRELATED_SETTING=keep"} {
 					if !strings.Contains(body, key) {
 						t.Fatalf("%s lost %s: %s", path, key, body)
 					}
 				}
-				for _, key := range []string{"FEATURE_FEATURE_DRIVER=", "FEATURE_FEATURE_REMOVED_DRIVER=", "FEATURE_CUSTOM_SETTING=", "# Feature\n"} {
+				for _, key := range []string{"FEATURE_FEATURE_DRIVER=", "FEATURE_FEATURE_REMOVED_DRIVER=", "FEATURE_CUSTOM_SETTING=", "FEATURE_CACHE_DRIVER=", "# Feature\n"} {
 					if strings.Contains(body, key) {
 						t.Fatalf("%s retained %s: %s", path, key, body)
 					}
