@@ -27,6 +27,8 @@ func TestSearchResourceFullComposition(t *testing.T) {
 	components.DatabaseMySQL = false
 	components.DatabaseSQLite = true
 	components.Search = true
+	components.Feature = true
+	components.Notification = true
 	components.DemoApp = true
 	config := project.Config{ProjectName: "Search composition", GoModuleName: "example.com/searchcomposition", Render: project.RenderConfig{Components: components}, Apps: map[string]project.AppConfig{
 		"catalog": {Components: project.Components{CLI: true, WebAPI: true, Search: true}},

@@ -37,16 +37,11 @@ func (s *Session) ResourcesFor(values map[string]string) []Resource {
 func resources(root string, config *project.Config, values map[string]string) []Resource {
 	byKey := map[string]Resource{}
 	components := project.ProjectComponents(config)
-	names := generate.ResourceNames(root, values)
-	// Framework-owned resources must enter App inventories before the first switch.
-	for _, definition := range project.ResourceCatalog() {
-		for _, named := range definition.NamedResources {
-			if named.RequiredComponent != "" && !components.Enabled(named.RequiredComponent) {
-				continue
-			}
-			if !slices.Contains(names[definition.Key], named.Name) {
-				names[definition.Key] = append(names[definition.Key], named.Name)
-			}
+	names := resourceNamesForScope(root, config, values, "")
+	appNames := map[string]map[project.ResourceKey][]string{}
+	for app := range config.Apps {
+		if app != project.DefaultAppName {
+			appNames[app] = resourceNamesForScope(root, config, values, app)
 		}
 	}
 
@@ -70,7 +65,7 @@ func resources(root string, config *project.Config, values map[string]string) []
 			prefix := project.AppEnvironmentPrefix(app) + "_"
 			key := prefix + definition.EnvironmentKey("DRIVER")
 			byKey[key] = Resource{Key: key, SupportedKey: definition.EnvironmentKey("SUPPORTED_DRIVERS"), Label: key, Definition: definition}
-			for _, name := range names[definition.Key] {
+			for _, name := range appNames[app][definition.Key] {
 				if name == "default" || name == "root" {
 					continue
 				}
@@ -102,6 +97,37 @@ func resources(root string, config *project.Config, values map[string]string) []
 		out = append(out, sharedResourceChoices(config, byKey[key]))
 	}
 	return out
+}
+
+// resourceNamesForScope preserves root inheritance without promoting another App's declarations.
+func resourceNamesForScope(root string, config *project.Config, values map[string]string, app string) map[project.ResourceKey][]string {
+	scoped := map[string]string{}
+	for key, value := range values {
+		if resourceKey(config, key) == key {
+			scoped[key] = value
+		}
+	}
+	if app != "" {
+		prefix := project.AppEnvironmentPrefix(app) + "_"
+		for key, value := range values {
+			base := resourceKey(config, key)
+			if base != key && strings.TrimPrefix(key, prefix) == base {
+				scoped[base] = value
+			}
+		}
+	}
+	names := generate.ResourceNames(root, scoped)
+	for _, definition := range project.ResourceCatalog() {
+		for _, named := range definition.NamedResources {
+			if named.RequiredComponent != "" && !project.ProjectComponents(config).Enabled(named.RequiredComponent) {
+				continue
+			}
+			if !slices.Contains(names[definition.Key], named.Name) {
+				names[definition.Key] = append(names[definition.Key], named.Name)
+			}
+		}
+	}
+	return names
 }
 
 // resourceKey prefers participating resource scopes so an App without cache cannot claim a root database named cache.
