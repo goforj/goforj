@@ -135,3 +135,62 @@ func TestRenderedNotificationNamedOnlyResource(t *testing.T) {
 		t.Fatalf("named-only App tests: %v\n%s", err, output)
 	}
 }
+
+// TestRenderedNotificationAppMutations reconciles sender ownership without a subsequent framework build repairing it.
+func TestRenderedNotificationAppMutations(t *testing.T) {
+	root := t.TempDir()
+	testkit.RenderProjectWithForj(t, root, testkit.RenderProjectRequest{Config: project.Config{ProjectName: "Notification Apps", GoModuleName: "example.com/notificationapps", Render: project.RenderConfig{Components: project.Components{CLI: true, Notification: true}}}})
+	setRenderedEnvValue(t, root, "BILLING_NOTIFICATION_ONLY_DRIVER", "log")
+	run := func(args ...string) {
+		t.Helper()
+		command := exec.CommandContext(t.Context(), testkit.EnsureIntegrationForjBinary(t), args...)
+		command.Dir = root
+		command.Env = testkit.IntegrationGoProcessEnv(t, map[string]string{"GOWORK": "off"})
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("forj %v: %v\n%s", args, err, output)
+		}
+	}
+	verify := func(enabled bool) {
+		t.Helper()
+		source := `package notifications
+
+import "testing"
+
+// TestAppOwnership checks current compiled ownership through the public manager API.
+func TestAppOwnership(t *testing.T) {
+    root,err := NewManager()
+    if err != nil { t.Fatal(err) }
+    defer root.Close()
+    if root.Named("only") != nil { t.Fatal("App-only sender leaked into default App") }
+    manager,err := NewManagerForApp("BILLING")
+    if {{enabled}} {
+        if err != nil { t.Fatal(err) }
+        defer manager.Close()
+        if manager.Named("only") == nil { t.Fatal("App-only sender missing") }
+    } else if err == nil { _ = manager.Close(); t.Fatal("removed App retains sender ownership") }
+}
+`
+		value := "false"
+		if enabled {
+			value = "true"
+		}
+		source = strings.ReplaceAll(source, "{{enabled}}", value)
+		if err := os.WriteFile(filepath.Join(root, "internal/notifications/app_mutation_test.go"), []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+		accessors := readRenderedFile(t, root, "internal/notifications/accessors_gen.go")
+		if strings.Contains(accessors, "Only()") != enabled {
+			t.Fatal("App-only accessor disagrees with App participation")
+		}
+		command := exec.CommandContext(t.Context(), "go", "test", "./internal/notifications", "-run", "^TestAppOwnership$", "-count=1")
+		command.Dir = root
+		command.Env = testkit.IntegrationGoProcessEnv(t, map[string]string{"GOWORK": "off"})
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("initialize notification App: %v\n%s", err, output)
+		}
+	}
+	run("make:app", "billing", "--components", "cli,notification")
+	verify(true)
+	run("make:app", "billing", "--remove")
+	verify(false)
+}

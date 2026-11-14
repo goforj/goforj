@@ -225,7 +225,12 @@ func (p *ProjectRenderer) prepareResourceEnvironment() error {
 		return err
 	}
 	p.resources.plan = reconciled.EffectivePlan
-	consumers, err := resourceenv.ResolveConsumers(reconciled.Source, reconciled.EffectivePlan, projectComponents, p.config)
+	knownApps := projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config)
+	knownAppNames := make([]string, 0, len(knownApps))
+	for _, app := range knownApps {
+		knownAppNames = append(knownAppNames, app.Name)
+	}
+	consumers, err := resourceenv.ResolveConsumers(reconciled.Source, reconciled.EffectivePlan, projectComponents, p.config, knownAppNames...)
 	if err != nil {
 		return fmt.Errorf("discover effective resource consumers: %w", err)
 	}

@@ -84,6 +84,9 @@ func resources(root string, config *project.Config, values map[string]string) []
 		if !strings.HasSuffix(key, "_DRIVER") {
 			continue
 		}
+		if owner, enabled := managedAppResourceOwner(config, key); owner != "" && !enabled {
+			continue
+		}
 		for _, definition := range project.ResourceCatalog() {
 			base := resourceKey(config, key)
 			if !definition.AppliesTo(components) || !strings.HasPrefix(base, definition.EnvironmentPrefix+"_") {
@@ -116,7 +119,7 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 			}
 		}
 	}
-	names := generate.ResourceNames(root, scoped)
+	names := generate.ResourceNamesInScope(scoped)
 	for _, definition := range project.ResourceCatalog() {
 		for _, named := range definition.NamedResources {
 			if named.RequiredComponent != "" && !project.ProjectComponents(config).Enabled(named.RequiredComponent) {
@@ -130,8 +133,11 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 	return names
 }
 
-// resourceKey prefers participating resource scopes so an App without cache cannot claim a root database named cache.
+// resourceKey gives App-aware keys their known owner while preserving participation-based legacy resource scopes.
 func resourceKey(config *project.Config, key string) string {
+	if owner, _ := managedAppResourceOwner(config, key); owner != "" {
+		return strings.TrimPrefix(key, owner+"_")
+	}
 	longest := ""
 	participating := ""
 	for name, app := range config.Apps {
@@ -161,6 +167,52 @@ func resourceKey(config *project.Config, key string) string {
 		return strings.TrimPrefix(key, longest)
 	}
 	return key
+}
+
+// knownAppResourceOwner shares the longest App boundary across provider inventories, validation, and targets.
+func knownAppResourceOwner(config *project.Config, key string) string {
+	prefixes := make([]string, 0, len(config.Apps))
+	for name := range config.Apps {
+		if prefix := project.AppEnvironmentPrefix(name); prefix != "" {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	return project.AppResourceKeyOwner(key, prefixes)
+}
+
+// managedAppResourceOwner assigns App-aware keys while preserving active legacy interpretations for disabled components.
+func managedAppResourceOwner(config *project.Config, key string) (string, bool) {
+	owner := knownAppResourceOwner(config, key)
+	base := strings.TrimPrefix(key, owner+"_")
+	if owner == "" || (!appAwareResourceKey(base) && !appAwareResourceKey(key)) {
+		return "", false
+	}
+	for name, app := range config.Apps {
+		if project.AppEnvironmentPrefix(name) != owner {
+			continue
+		}
+		enabled := resourceAppliesTo(base, project.NormalizeConfiguredAppComponents(config, app.Components))
+		if !enabled && !appAwareResourceKey(key) && resourceAppliesTo(key, project.ProjectComponents(config)) {
+			return "", false
+		}
+		return owner, enabled
+	}
+	return "", false
+}
+
+// appAwareResourceKey identifies families whose runtime managers enforce known App ownership.
+func appAwareResourceKey(key string) bool {
+	return strings.HasPrefix(key, "FEATURE_") || strings.HasPrefix(key, "NOTIFICATION_")
+}
+
+// resourceScopeAllowed aligns independent family interpretations with App-aware generator ownership.
+func resourceScopeAllowed(config *project.Config, key string, definition project.ResourceDefinition, scope string) bool {
+	owner := knownAppResourceOwner(config, key)
+	if definition.Key == project.ResourceFeature || definition.Key == project.ResourceNotification {
+		return owner == strings.TrimSuffix(scope, "_")
+	}
+	managedOwner, enabled := managedAppResourceOwner(config, key)
+	return !enabled || managedOwner == "" || !appAwareResourceKey(strings.TrimPrefix(key, managedOwner+"_"))
 }
 
 // resourceAppliesTo distinguishes live resource scopes while allowing definitions for future components to retain their fallback interpretation.
@@ -309,10 +361,11 @@ func databaseSettingInScope(values map[string]string, key, suffix, app string) (
 // databaseScopes includes every participating database interpretation of a key, retaining the conventional fallback for future components.
 func (s *Session) databaseScopes(key string) []string {
 	scopes := map[string]bool{}
-	if base := resourceKey(s.config, key); strings.HasPrefix(base, "DB_") {
+	definition, _ := project.ResourceDefinitionByKey(project.ResourceDatabase)
+	if base := resourceKey(s.config, key); strings.HasPrefix(base, "DB_") && resourceScopeAllowed(s.config, key, definition, strings.TrimSuffix(key, base)) {
 		scopes[strings.TrimSuffix(key, base)] = true
 	}
-	if strings.HasPrefix(key, "DB_") && project.ProjectComponents(s.config).HasDatabase() {
+	if strings.HasPrefix(key, "DB_") && project.ProjectComponents(s.config).HasDatabase() && resourceScopeAllowed(s.config, key, definition, "") {
 		scopes[""] = true
 	}
 	for name, app := range s.config.Apps {
@@ -320,7 +373,7 @@ func (s *Session) databaseScopes(key string) []string {
 			continue
 		}
 		prefix := project.AppEnvironmentPrefix(name) + "_"
-		if strings.HasPrefix(key, prefix+"DB_") && project.NormalizeConfiguredAppComponents(s.config, app.Components).HasDatabase() {
+		if strings.HasPrefix(key, prefix+"DB_") && project.NormalizeConfiguredAppComponents(s.config, app.Components).HasDatabase() && resourceScopeAllowed(s.config, key, definition, prefix) {
 			scopes[prefix] = true
 		}
 	}

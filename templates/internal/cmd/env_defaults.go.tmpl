@@ -138,7 +138,7 @@ func ApplyCompiledEnvOverrides() error {
 	return applyCompiledEnvMap(strings.TrimSpace(CompiledEnvOverridesBase64), true)
 }
 
-// ApplyAppEnvOverlay promotes active app-prefixed env values over base keys.
+// ApplyAppEnvOverlay promotes legacy App values while retaining resource scopes for their App-aware resolvers.
 func ApplyAppEnvOverlay() error {
 	prefix := activeAppEnvPrefix()
 	if prefix == "" {
@@ -151,7 +151,7 @@ func ApplyAppEnvOverlay() error {
 			continue
 		}
 		baseKey := strings.TrimPrefix(key, prefix)
-		if !appOverlayKeyAllowed(baseKey) {
+		if !appOverlayKeyAllowed(baseKey) || appScopedResourceOverlayKey(baseKey) {
 			continue
 		}
 		if err := os.Setenv(baseKey, value); err != nil {
@@ -159,6 +159,29 @@ func ApplyAppEnvOverlay() error {
 		}
 	}
 	return nil
+}
+
+// appScopedResourceOverlayKey preserves base values because App-aware resources resolve both scopes themselves.
+func appScopedResourceOverlayKey(key string) bool {
+{{- if .ProjectComponents.Feature }}
+	if scoped, ok := strings.CutPrefix(key, "FEATURE_"); ok {
+		for _, suffix := range []string{"DRIVER", "SUPPORTED_DRIVERS", "PATH", "DOCUMENT", "REFRESH_INTERVAL", "INITIALIZATION_TIMEOUT"} {
+			if scoped == suffix || strings.HasSuffix(scoped, "_"+suffix) {
+				return true
+			}
+		}
+	}
+{{- end }}
+{{- if .ProjectComponents.Notification }}
+	if scoped, ok := strings.CutPrefix(key, "NOTIFICATION_"); ok {
+		for _, suffix := range []string{"DRIVER", "SUPPORTED_DRIVERS", "WEBHOOK_URL", "WEBHOOK_FORMAT", "WEBHOOK_TIMEOUT", "WEBHOOK_BEARER_TOKEN", "WEBHOOK_ALLOW_PRIVATE"} {
+			if scoped == suffix || strings.HasSuffix(scoped, "_"+suffix) {
+				return true
+			}
+		}
+	}
+{{- end }}
+	return false
 }
 
 func activeAppEnvPrefix() string {
