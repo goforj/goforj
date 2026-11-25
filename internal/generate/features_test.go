@@ -17,6 +17,7 @@ func TestFeatureGenerationValidatesConfiguration(t *testing.T) {
 		{"invalid accessor", map[string]string{"FEATURE_123_DRIVER": "memory"}},
 		{"method collision", map[string]string{"FEATURE_INSTANCES_DRIVER": "memory"}},
 		{"unknown build driver", map[string]string{"FEATURE_SUPPORTED_DRIVERS": "memory,hosted"}},
+		{"named build manifest", map[string]string{"FEATURE_CHECKOUT_SUPPORTED_DRIVERS": "memory,file"}},
 		{"unknown named driver", map[string]string{"FEATURE_CHECKOUT_DRIVER": "hosted", "FEATURE_CHECKOUT_PATH": "wrong"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

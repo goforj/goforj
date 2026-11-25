@@ -202,7 +202,7 @@ func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) 
 		if _, ok := allowedKeys[scopedKey.rootKey]; ok {
 			continue
 		}
-		if (scopedKey.child == "" && contract.AllowInactiveRootKeys) || (scopedKey.child != "" && contract.AllowInactiveNamedKeys) {
+		if (scopedKey.child == "" && contract.AllowInactiveRootKeys) || (scopedKey.child != "" && inactivePrimitiveDriverKeyAllowed(contract, scopedKey.rootKey)) {
 			continue
 		}
 		problems = append(problems, fmt.Sprintf("%s is not supported for %s driver %q", key, strings.ToLower(contract.Prefix), driver))
@@ -338,7 +338,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 			if _, allowed := allowedKeys[scopedKey.rootKey]; allowed {
 				continue
 			}
-			if (scopedKey.child == "" && v.contract.AllowInactiveRootKeys) || (scopedKey.child != "" && v.contract.AllowInactiveNamedKeys) {
+			if (scopedKey.child == "" && v.contract.AllowInactiveRootKeys) || (scopedKey.child != "" && inactivePrimitiveDriverKeyAllowed(v.contract, scopedKey.rootKey)) {
 				continue
 			}
 			problems = append(problems, fmt.Sprintf("%s is not supported for %s driver %q", key, strings.ToLower(v.contract.Prefix), driver))
@@ -643,6 +643,19 @@ func effectivePrimitiveDriver(value, fallback string) string {
 		driver = str.Of(fallback).Trim().ToLower().String()
 	}
 	return driver
+}
+
+// inactivePrimitiveDriverKeyAllowed preserves source options without allowing project-only settings on named resources.
+func inactivePrimitiveDriverKeyAllowed(contract primitiveEnvContract, key string) bool {
+	if !contract.AllowInactiveNamedKeys {
+		return false
+	}
+	for _, keys := range contract.DriverKeys {
+		if _, known := keys[key]; known {
+			return true
+		}
+	}
+	return false
 }
 
 // allowedPrimitiveKeys combines shared and driver-specific keys so stale settings fail before code generation.
