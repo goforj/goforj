@@ -53,6 +53,7 @@ func TestSyncCoreLibrariesIncludesBaseModules(t *testing.T) {
 		"github.com/goforj/str",
 		"github.com/goforj/null/v6",
 		"github.com/goforj/wire",
+		"github.com/gorilla/websocket",
 	}
 	want := make([]string, 0, len(modules))
 	for _, module := range modules {
@@ -219,6 +220,7 @@ func TestSyncCoreLibrariesGatesWebMinimums(t *testing.T) {
 // TestUsesMinimumVersion keeps ecosystem security floors separate from exact framework release pins.
 func TestUsesMinimumVersion(t *testing.T) {
 	for _, module := range []string{
+		"github.com/gorilla/websocket",
 		"google.golang.org/grpc", "github.com/andybalholm/brotli",
 		"go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace",
 		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
