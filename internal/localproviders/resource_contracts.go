@@ -22,6 +22,9 @@ func resourceDefinitions(config *project.Config, key string) []project.ResourceD
 		}
 	}
 	if len(definitions) == 0 {
+		if owner, enabled := managedAppResourceOwner(config, key); owner != "" && !enabled {
+			return nil
+		}
 		base := resourceKey(config, key)
 		for _, definition := range project.ResourceCatalog() {
 			if strings.HasPrefix(base, definition.EnvironmentPrefix+"_") {

@@ -2,6 +2,58 @@ package localproviders
 
 import "testing"
 
+// TestDisabledFeatureDriverRoundTrip retains inactive drivers without blocking edits to participating resources.
+func TestDisabledFeatureDriverRoundTrip(t *testing.T) {
+	for _, test := range []struct{ app, key string }{
+		{"billing", "BILLING_FEATURE_DRIVER"},
+		{"billing", "BILLING_FEATURE_CHECKOUT_DRIVER"},
+		{"feature-feature", "FEATURE_FEATURE_FEATURE_DRIVER"},
+		{"feature-feature", "FEATURE_FEATURE_FEATURE_CHECKOUT_DRIVER"},
+	} {
+		t.Run(test.key, func(t *testing.T) {
+			root := fixture(t)
+			put(t, root, ".goforj.yml", "module_name: example.org/disabled\nrender:\n  components: [cli, feature]\napps:\n  billing:\n    components: [cli]\n  feature:\n    components: [cli, feature]\n  feature-feature:\n    components: [cli]\n")
+			put(t, root, ".env", "FEATURE_DRIVER=file\nFEATURE_PATH=flags.json\n"+test.key+"=hosted\n")
+			session := openTest(t, root)
+			original := clone(session.Current)
+			portable, err := session.Portable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if portable[test.key] != "hosted" || portable["FEATURE_DRIVER"] != "memory" {
+				t.Fatalf("portable changed inactive configuration: %v", portable)
+			}
+			if err := session.Apply(portable); err != nil {
+				t.Fatal(err)
+			}
+			session = openTest(t, root)
+			if err := session.Restore(); err != nil {
+				t.Fatal(err)
+			}
+			session = openTest(t, root)
+			if !equalValues(session.Current, original) {
+				t.Fatalf("restore changed inactive configuration: %v", session.Current)
+			}
+			app := session.config.Apps[test.app]
+			app.Components.Feature = true
+			session.config.Apps[test.app] = app
+			if err := session.Validate(session.Current); err == nil {
+				t.Fatal("re-enabled App accepted an unsupported driver")
+			}
+		})
+	}
+}
+
+// TestDisabledFeatureAppRetainsActiveLegacyValidation keeps overlapping queue resources subject to their active contracts.
+func TestDisabledFeatureAppRetainsActiveLegacyValidation(t *testing.T) {
+	root := fixture(t)
+	put(t, root, ".goforj.yml", "module_name: example.org/disabled\nrender:\n  components: [cli, jobs, feature]\napps:\n  queue:\n    components: [cli]\n")
+	put(t, root, ".env", "QUEUE_DRIVER=workerpool\nFEATURE_DRIVER=memory\nQUEUE_FEATURE_DRIVER=hosted\n")
+	if _, err := Open(root); err == nil {
+		t.Fatal("active legacy queue resource accepted an unsupported driver")
+	}
+}
+
 // TestDisabledFeatureAppInventoryDoesNotLeak keeps stale App sources and drivers out of default and sibling inventories.
 func TestDisabledFeatureAppInventoryDoesNotLeak(t *testing.T) {
 	for _, test := range []struct{ name, assignment string }{
