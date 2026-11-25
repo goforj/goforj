@@ -604,11 +604,12 @@ func TestFeatureUnreadableLeafRecovery(t *testing.T) {
     path := configureFeatureFixture(t)
     watcher := requireFeatureWatcher(t,path)
     _ = watcher.Close()
-    var loads atomic.Int64
+    var failedLoads atomic.Int64
     source := feature.NewFileSource(path)
     client,err := feature.Open(context.Background(),feature.SourceFunc(func(ctx context.Context)(feature.Document,error) {
-        loads.Add(1)
-        return source.Load(ctx)
+        document,err := source.Load(ctx)
+        if err != nil { failedLoads.Add(1) }
+        return document,err
     }))
     if err != nil { t.Fatal(err) }
     flags := feature.New(client)
@@ -622,7 +623,7 @@ func TestFeatureUnreadableLeafRecovery(t *testing.T) {
     done := make(chan struct{})
     go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,nil) }()
     defer func(){ cancel(); <-done }()
-    waitFeatureCondition(t,func() bool { return loads.Load() >= 3 && client.Status().LastError != nil })
+    waitFeatureCondition(t,func() bool { return failedLoads.Load() >= 2 && client.Status().LastError != nil })
     if err := os.Chmod(path,0600); err != nil { t.Fatal(err) }
     waitFeatureCondition(t,func() bool { return client.Status().LastError == nil && !flags.Enabled(context.Background(),"checkout-v2") })
 }
