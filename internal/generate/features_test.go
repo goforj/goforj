@@ -400,6 +400,96 @@ func TestManagedFeatureMountedSymlink(t *testing.T) {
     waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
 }
 
+// TestFeatureHardlinkUpdates observes inode writes made outside the configured path's directory.
+func TestFeatureHardlinkUpdates(t *testing.T) {
+    switch runtime.GOOS {
+    case "linux", "darwin", "dragonfly", "freebsd", "netbsd", "openbsd":
+    default:
+        t.Skip("inode notification backend required")
+    }
+    path := configureFeatureFixture(t)
+    alias := filepath.Join(featureFixtureDirectory(t),"alias.json")
+    if err := os.Link(path,alias); err != nil { t.Fatal(err) }
+    manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
+    resource := manager.resources[1]; resource.interval = time.Hour
+    watcher := requireFeatureWatcher(t,path)
+    ctx,cancel := context.WithCancel(context.Background())
+    done := make(chan struct{})
+    initial := resource.client.Status().LastAttempt
+    go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,watcher) }()
+    defer func(){ cancel(); <-done }()
+    waitFeatureCondition(t,func() bool { return resource.client.Status().LastAttempt.After(initial) })
+    if err := os.WriteFile(alias,[]byte("{\"schema\":1,\"flags\":{\"checkout-v2\":{\"default\":false}}}"),0600); err != nil { t.Fatal(err) }
+    waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(ctx,"checkout-v2") })
+    replacement := path+".next"
+    writeFeatureDefinition(t,replacement,true)
+    replacementAlias := filepath.Join(filepath.Dir(alias),"replacement.json")
+    if err := os.Link(replacement,replacementAlias); err != nil { t.Fatal(err) }
+    if err := os.Rename(replacement,path); err != nil { t.Fatal(err) }
+    waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(ctx,"checkout-v2") })
+    if err := os.WriteFile(replacementAlias,[]byte("{\"schema\":1,\"flags\":{\"checkout-v2\":{\"default\":false}}}"),0600); err != nil { t.Fatal(err) }
+    waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(ctx,"checkout-v2") })
+}
+
+// TestFeatureWatchSetupNotifications exercises handoff with owned channels so backend closure cannot race synthetic sends.
+func TestFeatureWatchSetupNotifications(t *testing.T) {
+    for _, mode := range []string{"unrelated", "content", "structural", "error", "registration-error"} { t.Run(mode,func(t *testing.T) {
+        path := configureFeatureFixture(t)
+        ctx,cancel := context.WithTimeout(context.Background(),3*time.Second); defer cancel()
+        events, failures := make(chan fsnotify.Event), make(chan error)
+        watcher := &featureWatcher{Watcher:&fsnotify.Watcher{Events:events,Errors:failures},controls:map[string]bool{path:true}}
+        finish, result := make(chan bool), make(chan bool,1)
+        stop, done := make(chan struct{}), make(chan struct{})
+        go func() {
+            defer close(done)
+            drainFeatureWatchSetup(watcher,finish,result,stop)
+        }()
+        defer func(){ close(stop); <-done }()
+        for range 100 {
+            select { case events <- fsnotify.Event{Name:path+".noise",Op:fsnotify.Create}: case <-ctx.Done(): t.Fatal("setup notifications did not drain") }
+        }
+        event := fsnotify.Event{Name:path,Op:fsnotify.Write}
+        if mode == "structural" { event.Op = fsnotify.Rename }
+        if mode == "error" {
+            select { case failures <- fsnotify.ErrEventOverflow: case <-ctx.Done(): t.Fatal("setup errors did not drain") }
+        } else if mode != "unrelated" {
+            select { case events <- event: case <-ctx.Done(): t.Fatal("source notification did not drain") }
+        }
+        select { case finish <- mode != "registration-error": case <-ctx.Done(): t.Fatal("setup handoff blocked") }
+        var usable bool
+        select { case usable = <-result: case <-ctx.Done(): t.Fatal("setup handoff did not complete") }
+        want := mode == "unrelated" || mode == "content"
+        if usable != want { t.Fatalf("usable watcher = %t, want %t",usable,want) }
+        if !usable {
+            select { case failures <- fsnotify.ErrEventOverflow: case <-ctx.Done(): t.Fatal("failed setup stopped draining before cleanup") }
+            close(events); close(failures)
+        }
+    }) }
+}
+
+// TestFeatureWatchRegistrationChurn keeps native Add calls responsive while an ancestor produces unrelated events.
+func TestFeatureWatchRegistrationChurn(t *testing.T) {
+    path := configureFeatureFixture(t)
+    ancestor := filepath.Dir(path)
+    parent := filepath.Join(ancestor,"nested")
+    if err := os.Mkdir(parent,0700); err != nil { t.Fatal(err) }
+    path = filepath.Join(parent,"flags.json")
+    writeFeatureDefinition(t,path,true)
+    watcher := registerFeatureDirectory(path,func(backend *fsnotify.Watcher,directory string) error {
+        if err := backend.Add(directory); err != nil { return err }
+        if directory == ancestor {
+            for range 100 {
+                noise,err := os.CreateTemp(ancestor,"noise-")
+                if err != nil { return err }
+                if err := noise.Close(); err != nil { return err }
+            }
+        }
+        return nil
+    })
+    if watcher == nil { watcher = requireFeatureWatcher(t,path) }
+    _ = watcher.Close()
+}
+
 // TestManagedFeatureParentReplacement reacquires a directory watch after the watched directory is replaced.
 func TestManagedFeatureParentReplacement(t *testing.T) {
     path := configureFeatureFixture(t)

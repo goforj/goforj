@@ -8,7 +8,7 @@ The default memory source starts empty without an inline definition in the gener
 
 `FEATURE_INITIALIZATION_TIMEOUT` optionally overrides the positive startup budget (default `5s`); it is omitted from the rendered environment.
 
-The App lifecycle watches file source directories, coalesces events in 50ms windows, and refreshes after edits or atomic replacements. Continuous directory activity does not postpone updates indefinitely.
+The App lifecycle watches file sources and their control directories, coalesces events in 50ms windows, and refreshes after edits or atomic replacements. Linux and macOS/BSD source watches also observe in-place writes through hard links. Continuous directory activity does not postpone updates indefinitely.
 
 Healthy watches do not poll. If watch setup fails or the watcher becomes unavailable, the manager polls and retries the watch every 30s, then stops polling when watching recovers.
 
