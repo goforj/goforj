@@ -112,6 +112,7 @@ import (
     "strings"
     "sync"
     "sync/atomic"
+    "syscall"
     "testing"
     "time"
 
@@ -131,7 +132,7 @@ func featureFixtureDirectory(t *testing.T) string {
 func featureSymlinkInterval(t *testing.T) {
     t.Helper()
     interval := "1h"
-    if runtime.GOOS != "linux" && runtime.GOOS != "windows" { interval = "20ms" }
+    if runtime.GOOS != "linux" { interval = "20ms" }
     t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL",interval)
 }
 
@@ -279,9 +280,49 @@ func waitFeatureCondition(t *testing.T, condition func() bool) {
 // Recovery tests still use a short fallback because a later registration can fail independently of this probe.
 func requireFeatureWatcher(t *testing.T, path string) *featureWatcher {
     t.Helper()
+    if runtime.GOOS == "windows" { t.Skip("native watches obstruct ancestor replacement on Windows") }
     var watcher *featureWatcher
     waitFeatureCondition(t,func() bool { watcher = watchFeatureDirectory(path); return watcher != nil })
     return watcher
+}
+
+// probeFeatureWatcher verifies native registration where available while retaining Windows functional coverage.
+func probeFeatureWatcher(t *testing.T, path string) {
+    t.Helper()
+    if runtime.GOOS == "windows" {
+        if watcher := watchFeatureDirectory(path); watcher != nil { _ = watcher.Close(); t.Fatal("Windows source unexpectedly acquired native watches") }
+        return
+    }
+    watcher := requireFeatureWatcher(t,path)
+    _ = watcher.Close()
+}
+
+// retryFeatureMutation tolerates short Windows sharing conflicts from concurrent source reads.
+func retryFeatureMutation(operation func() error) error {
+    deadline := time.Now().Add(time.Second)
+    for {
+        err := operation()
+        if err == nil || runtime.GOOS != "windows" || (!errors.Is(err,syscall.Errno(5)) && !errors.Is(err,syscall.Errno(32)) && !errors.Is(err,syscall.Errno(33))) || !time.Now().Before(deadline) { return err }
+        time.Sleep(5*time.Millisecond)
+    }
+}
+
+// renameFeaturePath allows polling reads to release Windows handles before replacing a path.
+func renameFeaturePath(from, to string) error {
+    return retryFeatureMutation(func() error { return os.Rename(from,to) })
+}
+
+// removeFeaturePath allows polling reads to release Windows handles before removing a path.
+func removeFeaturePath(path string) error {
+    return retryFeatureMutation(func() error { return os.Remove(path) })
+}
+
+// replaceFeatureSymlink accommodates Windows directory links that cannot replace an existing entry by rename.
+func replaceFeatureSymlink(next, path string) error {
+    if runtime.GOOS == "windows" {
+        if err := removeFeaturePath(path); err != nil { return err }
+    }
+    return renameFeaturePath(next,path)
 }
 
 // writeFeatureDefinition replaces complete files so editor-style saves can be tested repeatedly.
@@ -291,14 +332,13 @@ func writeFeatureDefinition(t *testing.T, path string, enabled bool) {
     if enabled { document = "{\"schema\":1,\"flags\":{\"checkout-v2\":{\"default\":true}}}" }
     temp := path+".next"
     if err := os.WriteFile(temp, []byte(document),0600); err != nil { t.Fatal(err) }
-    if err := os.Rename(temp,path); err != nil { t.Fatal(err) }
+    if err := renameFeaturePath(temp,path); err != nil { t.Fatal(err) }
 }
 
 // TestManagedFeatureFileNotifications observes writes and repeated atomic replacement across source recovery.
 func TestManagedFeatureFileNotifications(t *testing.T) {
     path := configureFeatureFixture(t)
-    watcher := requireFeatureWatcher(t,path)
-    _ = watcher.Close()
+    probeFeatureWatcher(t,path)
     t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
     initial := manager.Instances()[1].Status.LastSuccess
@@ -311,7 +351,7 @@ func TestManagedFeatureFileNotifications(t *testing.T) {
         writeFeatureDefinition(t,path,enabled)
         waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError == nil && manager.Checkout().Enabled(context.Background(),"checkout-v2") == enabled })
     }
-    if err := os.Remove(path); err != nil { t.Fatal(err) }
+    if err := removeFeaturePath(path); err != nil { t.Fatal(err) }
     waitFeatureCondition(t,func() bool { return errors.Is(manager.Instances()[1].Status.LastError,feature.ErrSource) })
     writeFeatureDefinition(t,path,true)
     waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError == nil && manager.Checkout().Enabled(context.Background(),"checkout-v2") })
@@ -340,7 +380,9 @@ func TestFeatureFileRefreshFallback(t *testing.T) {
     waitFeatureCondition(t,func() bool { return loads.Load() >= 5 })
     recovered := loads.Load()
     time.Sleep(100*time.Millisecond)
-    if loads.Load()!=recovered { t.Fatal("polling continued after watch recovery") }
+    if runtime.GOOS == "windows" {
+        if loads.Load() <= recovered { t.Fatal("Windows fallback stopped polling") }
+    } else if loads.Load()!=recovered { t.Fatal("polling continued after watch recovery") }
     writeFeatureDefinition(t,resource.path,true)
     waitFeatureCondition(t,func() bool { return loads.Load()>recovered })
     cancel()
@@ -378,14 +420,14 @@ func TestFeatureFileWatcherFailure(t *testing.T) {
     }) }
 }
 
-// TestManagedFeatureMountedSymlink follows a projected directory swap without waiting for polling.
+// TestManagedFeatureMountedSymlink follows projected directory swaps through native events or fallback polling.
 func TestManagedFeatureMountedSymlink(t *testing.T) {
     path := configureFeatureFixture(t)
     parent := filepath.Dir(path)
     if err := os.Mkdir(filepath.Join(parent,"one"),0700); err != nil { t.Fatal(err) }
     writeFeatureDefinition(t,filepath.Join(parent,"one","flags.json"),true)
     if err := os.Symlink("one",filepath.Join(parent,"..data")); err != nil { t.Skipf("symlinks unavailable: %v",err) }
-    if err := os.Remove(path); err != nil { t.Fatal(err) }
+    if err := removeFeaturePath(path); err != nil { t.Fatal(err) }
     if err := os.Symlink(filepath.Join("..data","flags.json"),path); err != nil { t.Fatal(err) }
     featureSymlinkInterval(t)
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
@@ -396,7 +438,7 @@ func TestManagedFeatureMountedSymlink(t *testing.T) {
     if err := os.Mkdir(filepath.Join(parent,"two"),0700); err != nil { t.Fatal(err) }
     writeFeatureDefinition(t,filepath.Join(parent,"two","flags.json"),false)
     if err := os.Symlink("two",filepath.Join(parent,"..next")); err != nil { t.Fatal(err) }
-    if err := os.Rename(filepath.Join(parent,"..next"),filepath.Join(parent,"..data")); err != nil { t.Fatal(err) }
+    if err := replaceFeatureSymlink(filepath.Join(parent,"..next"),filepath.Join(parent,"..data")); err != nil { t.Fatal(err) }
     waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
 }
 
@@ -431,75 +473,17 @@ func TestFeatureHardlinkUpdates(t *testing.T) {
     waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(ctx,"checkout-v2") })
 }
 
-// TestFeatureWatchSetupNotifications exercises handoff with owned channels so backend closure cannot race synthetic sends.
-func TestFeatureWatchSetupNotifications(t *testing.T) {
-    for _, mode := range []string{"unrelated", "content", "structural", "error", "registration-error"} { t.Run(mode,func(t *testing.T) {
-        path := configureFeatureFixture(t)
-        ctx,cancel := context.WithTimeout(context.Background(),3*time.Second); defer cancel()
-        events, failures := make(chan fsnotify.Event), make(chan error)
-        watcher := &featureWatcher{Watcher:&fsnotify.Watcher{Events:events,Errors:failures},controls:map[string]bool{path:true}}
-        finish, result := make(chan bool), make(chan bool,1)
-        stop, done := make(chan struct{}), make(chan struct{})
-        go func() {
-            defer close(done)
-            drainFeatureWatchSetup(watcher,finish,result,stop)
-        }()
-        defer func(){ close(stop); <-done }()
-        for range 100 {
-            select { case events <- fsnotify.Event{Name:path+".noise",Op:fsnotify.Create}: case <-ctx.Done(): t.Fatal("setup notifications did not drain") }
-        }
-        event := fsnotify.Event{Name:path,Op:fsnotify.Write}
-        if mode == "structural" { event.Op = fsnotify.Rename }
-        if mode == "error" {
-            select { case failures <- fsnotify.ErrEventOverflow: case <-ctx.Done(): t.Fatal("setup errors did not drain") }
-        } else if mode != "unrelated" {
-            select { case events <- event: case <-ctx.Done(): t.Fatal("source notification did not drain") }
-        }
-        select { case finish <- mode != "registration-error": case <-ctx.Done(): t.Fatal("setup handoff blocked") }
-        var usable bool
-        select { case usable = <-result: case <-ctx.Done(): t.Fatal("setup handoff did not complete") }
-        want := mode == "unrelated" || mode == "content"
-        if usable != want { t.Fatalf("usable watcher = %t, want %t",usable,want) }
-        if !usable {
-            select { case failures <- fsnotify.ErrEventOverflow: case <-ctx.Done(): t.Fatal("failed setup stopped draining before cleanup") }
-            close(events); close(failures)
-        }
-    }) }
-}
-
-// TestFeatureWatchRegistrationChurn keeps native Add calls responsive while an ancestor produces unrelated events.
-func TestFeatureWatchRegistrationChurn(t *testing.T) {
-    path := configureFeatureFixture(t)
-    ancestor := filepath.Dir(path)
-    parent := filepath.Join(ancestor,"nested")
-    if err := os.Mkdir(parent,0700); err != nil { t.Fatal(err) }
-    path = filepath.Join(parent,"flags.json")
-    writeFeatureDefinition(t,path,true)
-    watcher := registerFeatureDirectory(path,func(backend *fsnotify.Watcher,directory string) error {
-        if err := backend.Add(directory); err != nil { return err }
-        if directory == ancestor {
-            for range 100 {
-                noise,err := os.CreateTemp(ancestor,"noise-")
-                if err != nil { return err }
-                if err := noise.Close(); err != nil { return err }
-            }
-        }
-        return nil
-    })
-    if watcher == nil { watcher = requireFeatureWatcher(t,path) }
-    _ = watcher.Close()
-}
-
 // TestManagedFeatureParentReplacement reacquires a directory watch after the watched directory is replaced.
 func TestManagedFeatureParentReplacement(t *testing.T) {
     path := configureFeatureFixture(t)
-    watcher := requireFeatureWatcher(t,path)
-    _ = watcher.Close()
+    probeFeatureWatcher(t,path)
     t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
+    initial := manager.Instances()[1].Status.LastSuccess
     if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
+    waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
     parent := filepath.Dir(path)
-    if err := os.Rename(parent,parent+".old"); err != nil { t.Fatal(err) }
+    if err := renameFeaturePath(parent,parent+".old"); err != nil { t.Fatal(err) }
     t.Cleanup(func(){ _ = os.RemoveAll(parent+".old") })
     if err := os.Mkdir(parent,0700); err != nil { t.Fatal(err) }
     writeFeatureDefinition(t,path,false)
@@ -510,6 +494,7 @@ func TestManagedFeatureParentReplacement(t *testing.T) {
 
 // TestFeatureWatchRegistrationOrder keeps ancestor controls active throughout descendant registration.
 func TestFeatureWatchRegistrationOrder(t *testing.T) {
+    if runtime.GOOS == "windows" { t.Skip("native watches obstruct ancestor replacement on Windows") }
     path := configureFeatureFixture(t)
     ancestor := filepath.Join(filepath.Dir(path),"revision")
     parent := filepath.Join(ancestor,"nested")
@@ -557,6 +542,30 @@ func TestFeatureWatchRegistrationOrder(t *testing.T) {
     }
 }
 
+// TestFeatureWindowsPollingAncestorReplacement keeps deployment swaps available while a file manager is running.
+func TestFeatureWindowsPollingAncestorReplacement(t *testing.T) {
+    if runtime.GOOS != "windows" { t.Skip("Windows handle and polling contract required") }
+    configureFeatureFixture(t)
+    ancestor := filepath.Join(featureFixtureDirectory(t),"revision")
+    parent := filepath.Join(ancestor,"nested")
+    if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
+    path := filepath.Join(parent,"flags.json")
+    writeFeatureDefinition(t,path,true)
+    if watcher := watchFeatureDirectory(path); watcher != nil { _ = watcher.Close(); t.Fatal("Windows source acquired replacement-blocking native watches") }
+    t.Setenv("FEATURE_CHECKOUT_PATH",path)
+    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
+    manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
+    initial := manager.Instances()[1].Status.LastSuccess
+    if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
+    waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
+    if err := renameFeaturePath(ancestor,ancestor+".old"); err != nil { t.Fatal(err) }
+    if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
+    writeFeatureDefinition(t,path,false)
+    waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+    writeFeatureDefinition(t,path,true)
+    waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") })
+}
+
 // TestManagedFeatureAncestorReplacement rebinds unchanged watch paths after any ancestor is replaced.
 func TestManagedFeatureAncestorReplacement(t *testing.T) {
     configureFeatureFixture(t)
@@ -567,15 +576,14 @@ func TestManagedFeatureAncestorReplacement(t *testing.T) {
     path := filepath.Join(parent,"flags.json")
     writeFeatureDefinition(t,path,true)
     t.Setenv("FEATURE_CHECKOUT_PATH",path)
-    watcher := requireFeatureWatcher(t,path)
-    _ = watcher.Close()
+    probeFeatureWatcher(t,path)
     t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
     initial := manager.Instances()[1].Status.LastSuccess
     if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
     waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
     for _, directory := range []string{ancestor,parent} {
-        if err := os.Rename(directory,directory+".old"); err != nil { t.Fatal(err) }
+        if err := renameFeaturePath(directory,directory+".old"); err != nil { t.Fatal(err) }
         if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
         writeFeatureDefinition(t,path,false)
         waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
@@ -597,8 +605,7 @@ func TestManagedFeaturePathCase(t *testing.T) {
         if mode == "ancestor" { configured = filepath.Join(filepath.Dir(ancestor),"REVISION","NESTED","FLAGS.JSON") }
         if _,err := os.Stat(configured); err != nil { t.Skip("case-sensitive filesystem") }
         t.Setenv("FEATURE_CHECKOUT_PATH",configured)
-        watcher := requireFeatureWatcher(t,configured)
-        _ = watcher.Close()
+        probeFeatureWatcher(t,configured)
         t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
         manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
         initial := manager.Instances()[1].Status.LastSuccess
@@ -606,13 +613,13 @@ func TestManagedFeaturePathCase(t *testing.T) {
         waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
         writeFeatureDefinition(t,path,false)
         waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
-        if err := os.Rename(ancestor,ancestor+".old"); err != nil { t.Fatal(err) }
+        if err := renameFeaturePath(ancestor,ancestor+".old"); err != nil { t.Fatal(err) }
         if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
         writeFeatureDefinition(t,path,true)
         waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") })
         writeFeatureDefinition(t,path,false)
         waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
-        if err := os.Remove(path); err != nil { t.Fatal(err) }
+        if err := removeFeaturePath(path); err != nil { t.Fatal(err) }
         waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError != nil })
         writeFeatureDefinition(t,path,true)
         waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError == nil && manager.Checkout().Enabled(context.Background(),"checkout-v2") })
@@ -633,8 +640,7 @@ func TestManagedFeatureUnicodeSpelling(t *testing.T) {
         if _,err := os.Stat(configured); err != nil { t.Skip("normalization-sensitive filesystem") }
         // An unrelated hardlink must not supply the canonical spelling of a replaceable entry.
         if err := os.Link(path,filepath.Join(parent,"aaa-unrelated.json")); err != nil { t.Fatal(err) }
-        watcher := requireFeatureWatcher(t,configured)
-        _ = watcher.Close()
+        probeFeatureWatcher(t,configured)
         t.Setenv("FEATURE_CHECKOUT_PATH",configured)
         t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
         manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
@@ -643,9 +649,9 @@ func TestManagedFeatureUnicodeSpelling(t *testing.T) {
         waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastSuccess.After(initial) })
         replacement := filepath.Join(parent,"replacement.json")
         writeFeatureDefinition(t,replacement,false)
-        if err := os.Rename(replacement,path); err != nil { t.Fatal(err) }
+        if err := renameFeaturePath(replacement,path); err != nil { t.Fatal(err) }
         waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(context.Background(),"checkout-v2") })
-        if err := os.Remove(path); err != nil { t.Fatal(err) }
+        if err := removeFeaturePath(path); err != nil { t.Fatal(err) }
         waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError != nil })
         writeFeatureDefinition(t,path,true)
         waitFeatureCondition(t,func() bool { return manager.Instances()[1].Status.LastError == nil && manager.Checkout().Enabled(context.Background(),"checkout-v2") })
@@ -661,7 +667,10 @@ func TestFeatureNormalizationDistinctPaths(t *testing.T) {
     writeFeatureDefinition(t,path,true)
     if _,err := os.Stat(other); err == nil { t.Skip("normalization-insensitive filesystem") }
     writeFeatureDefinition(t,other,false)
-    _,controls,err := featureWatchTopology(path); if err != nil { t.Fatal(err) }
+    controls := map[string]bool{path:true}
+    if runtime.GOOS != "windows" {
+        _,resolved,err := featureWatchTopology(path); if err != nil { t.Fatal(err) }; controls = resolved
+    }
     if !controls[path] { t.Fatal("configured source missing from topology") }
     if _,ok := controls[other]; ok { t.Fatal("distinct normalization entry became a source control") }
     watcher := &featureWatcher{controls:controls}
@@ -674,8 +683,11 @@ func TestFeatureCaseDistinctPaths(t *testing.T) {
     other := filepath.Join(filepath.Dir(path),strings.ToUpper(filepath.Base(path)))
     if _,err := os.Stat(other); err == nil { t.Skip("case-insensitive filesystem") }
     writeFeatureDefinition(t,other,false)
-    directories,controls,err := featureWatchTopology(path); if err != nil { t.Fatal(err) }
-    if len(directories) == 0 || !controls[path] { t.Fatal("configured source missing from topology") }
+    controls := map[string]bool{path:true}
+    if runtime.GOOS != "windows" {
+        directories,resolved,err := featureWatchTopology(path); if err != nil { t.Fatal(err) }
+        if len(directories) == 0 || !resolved[path] { t.Fatal("configured source missing from topology") }; controls = resolved
+    }
     if _,ok := controls[other]; ok { t.Fatal("distinct case-sensitive entry became a source control") }
     watcher := &featureWatcher{controls:controls}
     if _,relevant := watcher.featureWatchEvent(other); relevant { t.Fatal("distinct case-sensitive event matched the source") }
@@ -788,8 +800,7 @@ func TestFeatureNotificationDebounce(t *testing.T) {
 // TestFeatureNotificationChurn bounds refresh latency even while unrelated entries keep changing.
 func TestFeatureNotificationChurn(t *testing.T) {
     path := configureFeatureFixture(t)
-    watcher := requireFeatureWatcher(t,path)
-    _ = watcher.Close()
+    probeFeatureWatcher(t,path)
     t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL", "20ms")
     manager, err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
     initial := manager.Instances()[1].Status.LastSuccess
@@ -818,7 +829,7 @@ func TestFeatureSymlinkTargets(t *testing.T) {
         targets := []string{filepath.Join(featureFixtureDirectory(t),"flags.json"), filepath.Join(featureFixtureDirectory(t),"flags.json"), filepath.Join(featureFixtureDirectory(t),"flags.json")}
         if mode == "same-directory" { targets = []string{filepath.Join(parent,"one.json"),filepath.Join(parent,"two.json"),filepath.Join(parent,"three.json")} }
         for _, target := range targets { writeFeatureDefinition(t,target,true) }
-        if err := os.Remove(path); err != nil { t.Fatal(err) }
+        if err := removeFeaturePath(path); err != nil { t.Fatal(err) }
         control := path
         linkTarget := targets[0]
         if mode == "parent" {
@@ -836,7 +847,7 @@ func TestFeatureSymlinkTargets(t *testing.T) {
         t.Setenv("FEATURE_CHECKOUT_PATH",path)
         featureSymlinkInterval(t)
         watcher := watchFeatureDirectory(path)
-        supported := runtime.GOOS == "linux" || runtime.GOOS == "windows"
+        supported := runtime.GOOS == "linux"
         if watcher != nil { _ = watcher.Close() }
         if (watcher != nil) != supported { t.Fatal("symlink watching availability does not match reliable backend coverage") }
         manager, err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
@@ -852,7 +863,7 @@ func TestFeatureSymlinkTargets(t *testing.T) {
                 relative,err := filepath.Rel(filepath.Dir(control),destination); if err != nil { t.Fatal(err) }; destination = relative
             }
             if err := os.Symlink(destination,control+".next"); err != nil { t.Fatal(err) }
-            if err := os.Rename(control+".next",control); err != nil { t.Fatal(err) }
+            if err := replaceFeatureSymlink(control+".next",control); err != nil { t.Fatal(err) }
             waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(context.Background(),"checkout-v2") == enabled })
         }
         if err := os.WriteFile(targets[2],[]byte("{\"schema\":1,\"flags\":{}}"),0600); err != nil { t.Fatal(err) }
@@ -890,7 +901,7 @@ func TestFeatureUnresolvableSymlinks(t *testing.T) {
 
 // TestFeatureOverflowRebindsSymlinkTargets recovers directory topology when the swap notification was lost.
 func TestFeatureOverflowRebindsSymlinkTargets(t *testing.T) {
-    if runtime.GOOS != "linux" && runtime.GOOS != "windows" { t.Skip("symlink notification coverage requires fallback on this backend") }
+    if runtime.GOOS != "linux" { t.Skip("native symlink notification coverage requires Linux") }
     path := configureFeatureFixture(t)
     first, second := filepath.Join(featureFixtureDirectory(t),"flags.json"), filepath.Join(featureFixtureDirectory(t),"flags.json")
     writeFeatureDefinition(t,first,true)

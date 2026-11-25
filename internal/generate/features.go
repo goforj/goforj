@@ -341,6 +341,8 @@ func featureWatchComponent(directory, part string, info os.FileInfo) (string, er
 // featureWatchTopology covers replaceable ancestors and retains exact event paths to exclude unrelated churn.
 // Leaf watches observe hard-link writes; kqueue also needs them to detect incomplete coverage of unreadable children.
 func featureWatchTopology(path string) ([]string, map[string]bool, error) {
+    // Persistent descendant handles prevent directory deployment swaps on Windows.
+    if runtime.GOOS == "windows" { return nil, nil, errors.New("feature ancestor replacement requires polling on Windows") }
     path, err := filepath.Abs(path)
     if err != nil { return nil, nil, err }
     volume := filepath.VolumeName(path)
@@ -432,55 +434,18 @@ func watchFeatureDirectory(path string) *featureWatcher {
 }
 
 // registerFeatureDirectory installs ancestor controls first so replacements during descendant registration remain observable.
-// Setup notifications must be drained because Windows services Add requests on its notification goroutine.
 func registerFeatureDirectory(path string, register func(*fsnotify.Watcher,string) error) *featureWatcher {
     directories, controls, err := featureWatchTopology(path)
     if err != nil { return nil }
     backend, err := fsnotify.NewWatcher()
     if err != nil { return nil }
     watcher := &featureWatcher{Watcher:backend, controls:controls}
-    finish, result := make(chan bool), make(chan bool)
-    stop, done := make(chan struct{}), make(chan struct{})
-    go func() {
-        defer close(done)
-        drainFeatureWatchSetup(watcher,finish,result,stop)
-    }()
-    defer func() { close(stop); <-done }()
-    registered := true
     for _, directory := range directories {
-        if err := register(backend,directory); err != nil { registered = false; break }
+        if err := register(backend,directory); err != nil { _ = watcher.Close(); return nil }
     }
-    // Consumed content notifications are reconciled by the worker; structural changes require fresh coverage.
-    if registered { registered = featureWatchMatches(path, watcher) }
-    finish <- registered
-    if !<-result { _ = watcher.Close(); return nil }
+    // A link may have changed before its control directory was registered.
+    if !featureWatchMatches(path, watcher) { _ = watcher.Close(); return nil }
     return watcher
-}
-
-// drainFeatureWatchSetup preserves structural invalidation while allowing synchronous backend registration to progress.
-// An unusable watcher keeps draining until its caller closes the backend and stops setup.
-func drainFeatureWatchSetup(watcher *featureWatcher, finish <-chan bool, result chan<- bool, stop <-chan struct{}) {
-    events, failures := watcher.Events, watcher.Errors
-    invalidated := false
-    for {
-        select {
-        case <-stop:
-            return
-        case registered := <-finish:
-            usable := registered && !invalidated
-            result <- usable
-            if usable { return }
-            finish = nil
-        case event, ok := <-events:
-            if !ok { invalidated = true; events = nil; continue }
-            if event.Has(fsnotify.Create|fsnotify.Remove|fsnotify.Rename) {
-                if _, relevant := watcher.featureWatchEvent(filepath.Clean(event.Name)); relevant { invalidated = true }
-            }
-        case _, ok := <-failures:
-            invalidated = true
-            if !ok { failures = nil }
-        }
-    }
 }
 
 // featureWatchMatches verifies complete path coverage before setup hands the watcher to its worker.
