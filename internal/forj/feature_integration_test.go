@@ -150,7 +150,7 @@ func TestRemovedAppFeatureOwnership(t *testing.T) {
 		command.Dir = root
 		command.Env = testkit.IntegrationGoProcessEnv(t, map[string]string{"GOWORK": "off"})
 		output, err := command.CombinedOutput()
-		if err != nil || !strings.Contains(string(output), `"Version": "v0.1.0"`) || strings.Contains(string(output), `"Replace"`) {
+		if err != nil || !strings.Contains(string(output), `"Version": "v0.1.1"`) || strings.Contains(string(output), `"Replace"`) {
 			t.Fatalf("feature module resolution: %v\n%s", err, output)
 		}
 	})

@@ -148,7 +148,7 @@ override_version_for_module() {
     go.opentelemetry.io/otel/log|go.opentelemetry.io/otel/sdk/log|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp|go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc|go.opentelemetry.io/otel/sdk) echo "v1.47.0" ;;
     go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp|go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc) echo "v0.23.0" ;;
     github.com/charmbracelet/x/cellbuf) echo "v0.0.15" ;;
-    github.com/goforj/feature) echo "v0.1.0" ;;
+    github.com/goforj/feature) echo "v0.1.1" ;;
     github.com/goforj/cache) echo "v0.4.0" ;;
     github.com/goforj/cache/cachecore) echo "v0.4.3" ;;
     github.com/goforj/cache/driver/rediscache) echo "v0.4.3" ;;
