@@ -112,3 +112,51 @@ func TestOpenRejectsAppDiscoveryFailure(t *testing.T) {
 		t.Fatalf("expected App discovery error, got %v", err)
 	}
 }
+
+// TestDevAppFeatureRoundTrip keeps Dev-only ownership consistent with generation and preserves explicit opt-outs.
+func TestDevAppFeatureRoundTrip(t *testing.T) {
+	for _, test := range []struct{ name, inventory string }{
+		{"dev apps", "apps:\n    queue: {}\n"},
+		{"dev run", "run:\n    queue: go run ./custom/queue\n"},
+	} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(test.name+"/"+map[bool]string{false: "disabled", true: "enabled"}[enabled], func(t *testing.T) {
+				root := fixture(t)
+				config := "module_name: example.org/devfeatures\nrender:\n  components: [cli, jobs, feature]\ndev:\n  " + test.inventory
+				if !enabled {
+					config += "apps:\n  queue:\n    components: [cli]\n"
+				}
+				put(t, root, ".goforj.yml", config)
+				driver := "file"
+				want := "memory"
+				if !enabled {
+					driver = "redis"
+					want = "workerpool"
+				}
+				put(t, root, ".env", "QUEUE_DRIVER=workerpool\nQUEUE_SUPPORTED_DRIVERS=workerpool,redis\nFEATURE_DRIVER=memory\nQUEUE_FEATURE_DRIVER="+driver+"\nQUEUE_FEATURE_PATH=flags.json\n")
+				session := openTest(t, root)
+				original := clone(session.Current)
+				portable, err := session.Portable()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if portable["QUEUE_FEATURE_DRIVER"] != want {
+					t.Fatalf("Dev App selection = %q, want %q", portable["QUEUE_FEATURE_DRIVER"], want)
+				}
+				if err := session.Apply(portable); err != nil {
+					t.Fatal(err)
+				}
+				if err := openTest(t, root).Restore(); err != nil {
+					t.Fatal(err)
+				}
+				if restored := openTest(t, root); !equalValues(restored.Current, original) {
+					t.Fatal("restore changed Dev App configuration")
+				}
+				body, err := os.ReadFile(filepath.Join(root, ".goforj.yml"))
+				if err != nil || string(body) != config {
+					t.Fatalf("provider operation changed persisted Dev inventory: %v", err)
+				}
+			})
+		}
+	}
+}

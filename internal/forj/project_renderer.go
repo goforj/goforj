@@ -32,6 +32,7 @@ import (
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/projectlayout"
+	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/templates"
 	"golang.org/x/mod/semver"
@@ -1357,8 +1358,8 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 		return err
 	}
 	if appConfigChanged && !projectCapabilitiesChanged && p.projectRenderComponents().Feature {
-		// Feature ownership changes even when adding an App leaves the project capability union unchanged.
-		if err := p.runGenerateFeatures(); err != nil {
+		// App Feature scopes can also claim keys previously interpreted as another resource family's named resources.
+		if err := p.runGenerateAll(); err != nil {
 			return err
 		}
 	}
@@ -1410,16 +1411,12 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	}
 
 	removedPrefix := project.AppEnvironmentPrefix(app.Name)
-	knownAppPrefixes := []string{removedPrefix}
+	knownAppNames := []string{app.Name}
 	for _, knownApp := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
-		if prefix := project.AppEnvironmentPrefix(knownApp.Name); prefix != "" {
-			knownAppPrefixes = append(knownAppPrefixes, prefix)
-		}
+		knownAppNames = append(knownAppNames, knownApp.Name)
 	}
-	for name := range p.config.Dev.Apps {
-		knownAppPrefixes = append(knownAppPrefixes, project.AppEnvironmentPrefix(name))
-	}
-	for name := range p.config.Dev.Run {
+	var knownAppPrefixes []string
+	for _, name := range resourceenv.KnownAppNames(p.config, knownAppNames...) {
 		knownAppPrefixes = append(knownAppPrefixes, project.AppEnvironmentPrefix(name))
 	}
 	preserveResourceSetting := func(key string) bool {
@@ -1501,10 +1498,10 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		return result, err
 	}
 	if afterProjectComponents.Feature {
-		if err := p.runGenerateFeatures(); err != nil {
+		if err := p.runGenerateAll(); err != nil {
 			return result, err
 		}
-		result.Updated = append(result.Updated, generate.FeatureManagerPath, generate.FeatureAccessorsPath)
+		result.Updated = append(result.Updated, generate.OutputPaths(generate.GenerationSelectionFromComponents(afterProjectComponents))...)
 	}
 	if err := p.writeTemplates([]string{
 		"internal/runtime/apps.go.tmpl",
@@ -3380,16 +3377,6 @@ func (p *ProjectRenderer) runGenerateAll() error {
 		return p.workspace.logicalError(err)
 	}
 	p.lines = append(p.lines, renderCountsLine("forj generate", result.TotalFiles, 0, "files"))
-	return nil
-}
-
-// runGenerateFeatures reconciles App ownership for creation and removal without regenerating unrelated resources.
-func (p *ProjectRenderer) runGenerateFeatures() error {
-	result, err := generate.GenerateProjectFiles(p.workspace.path(), generate.GenerationSelection{Feature: true})
-	if err != nil {
-		return p.workspace.logicalError(fmt.Errorf("generate feature resources: %w", err))
-	}
-	p.lines = append(p.lines, renderCountsLine("forj generate --feature", result.TotalFiles, 0, "files"))
 	return nil
 }
 

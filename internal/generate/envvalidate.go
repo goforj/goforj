@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/goforj/goforj/internal/projectlayout"
+	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/str/v2"
 )
@@ -470,6 +471,15 @@ func generationAppEnvPrefixSet(projectDir string, environment generationEnvironm
 	return prefixes
 }
 
+// generationKnownAppNames shares configured, conventional, and Dev App ownership across generation and resource consumers.
+func generationKnownAppNames(projectDir string, config *project.Config) []string {
+	var names []string
+	for _, app := range projectlayout.RuntimeApps(projectDir, config) {
+		names = append(names, app.Name)
+	}
+	return resourceenv.KnownAppNames(config, names...)
+}
+
 // configuredGenerationAppEnvPrefixes shares the renderer's runtime App inventory without making a missing config fatal to direct generators.
 func configuredGenerationAppEnvPrefixes(projectDir string) map[string]struct{} {
 	prefixes := map[string]struct{}{}
@@ -483,13 +493,7 @@ func configuredGenerationAppEnvPrefixes(projectDir string) map[string]struct{} {
 		if err != nil {
 			return prefixes
 		}
-		for _, app := range projectlayout.RuntimeApps(projectDir, config) {
-			addName(app.Name)
-		}
-		for name := range config.Dev.Apps {
-			addName(name)
-		}
-		for name := range config.Dev.Run {
+		for _, name := range generationKnownAppNames(projectDir, config) {
 			addName(name)
 		}
 	}
@@ -572,13 +576,7 @@ func generationAppEnvPrefixesForResource(input generationInput, resourcePrefix s
 			enabled[prefix] = struct{}{}
 		}
 	}
-	for _, app := range projectlayout.RuntimeApps(input.projectDir, config) {
-		addDefaultProjection(app.Name)
-	}
-	for name := range config.Dev.Apps {
-		addDefaultProjection(name)
-	}
-	for name := range config.Dev.Run {
+	for _, name := range generationKnownAppNames(input.projectDir, config) {
 		addDefaultProjection(name)
 	}
 	filtered := make([]string, 0, len(prefixes))

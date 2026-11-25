@@ -11,6 +11,7 @@ import (
 
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/projectlayout"
+	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 )
 
@@ -50,15 +51,19 @@ func Open(root string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Conventional Apps inherit default components only in this session, keeping provider ownership aligned with runtime discovery.
+	var appNames []string
 	for _, app := range discovery.RuntimeApps(config) {
-		if _, configured := config.Apps[app.Name]; configured || app.Name == project.DefaultAppName {
+		appNames = append(appNames, app.Name)
+	}
+	// Conventional and Dev Apps inherit default components only in this session, matching generation without persisting inferred selections.
+	for _, name := range resourceenv.KnownAppNames(config, appNames...) {
+		if _, configured := config.Apps[name]; configured {
 			continue
 		}
 		if config.Apps == nil {
 			config.Apps = make(map[string]project.AppConfig)
 		}
-		config.Apps[app.Name] = project.AppConfig{Components: project.AppDefaultComponents(config.Render.Components.WithResolvedDependencies())}
+		config.Apps[name] = project.AppConfig{Components: project.AppDefaultComponents(config.Render.Components.WithResolvedDependencies())}
 	}
 	s := &Session{Root: root, config: config, files: map[string]file{}, rename: os.Rename}
 	for _, name := range []string{".env", ".env.example", stateName, ".gitignore"} {
