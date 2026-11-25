@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/goforj/goforj/internal/generate"
+	"github.com/goforj/goforj/internal/projectlayout"
 	"github.com/goforj/goforj/project"
 )
 
@@ -44,6 +45,20 @@ func Open(root string) (*Session, error) {
 	config, err := project.LoadProjectConfigAt(root)
 	if err != nil {
 		return nil, err
+	}
+	discovery, err := projectlayout.Discover(root)
+	if err != nil {
+		return nil, err
+	}
+	// Conventional Apps inherit default components only in this session, keeping provider ownership aligned with runtime discovery.
+	for _, app := range discovery.RuntimeApps(config) {
+		if _, configured := config.Apps[app.Name]; configured || app.Name == project.DefaultAppName {
+			continue
+		}
+		if config.Apps == nil {
+			config.Apps = make(map[string]project.AppConfig)
+		}
+		config.Apps[app.Name] = project.AppConfig{Components: project.AppDefaultComponents(config.Render.Components.WithResolvedDependencies())}
 	}
 	s := &Session{Root: root, config: config, files: map[string]file{}, rename: os.Rename}
 	for _, name := range []string{".env", ".env.example", stateName, ".gitignore"} {
