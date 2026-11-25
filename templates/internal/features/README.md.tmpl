@@ -24,16 +24,16 @@ Named Apps use their existing environment overlay, for example `BILLING_FEATURE_
 
 ## Check a flag
 
-Inject `*features.Manager` into an application service through the owning App's service Wire set. For a simple boolean check:
+Inject `*features.Manager` as `features` into an application service through the owning App's service Wire set. For a simple boolean check:
 
 ```go
-enabled := manager.Checkout().Enabled(ctx, "checkout-v2")
+enabled := features.Checkout().Enabled(ctx, "checkout-v2")
 ```
 
 Bind a stable tenant identity when the flag uses targeting:
 
 ```go
-flags := manager.Checkout().For(feature.Target{Key: tenantID})
+flags := features.Checkout().For(feature.Target{Key: tenantID})
 enabled := flags.Enabled(ctx, "checkout-v2")
 ```
 
@@ -44,7 +44,7 @@ enabled := flags.Enabled(ctx, "checkout-v2")
 When multiple decisions must share one configuration revision and evaluation time, capture a snapshot before targeting:
 
 ```go
-snapshot, err := manager.Checkout().Snapshot()
+snapshot, err := features.Checkout().Snapshot()
 if err != nil {
     return err
 }
