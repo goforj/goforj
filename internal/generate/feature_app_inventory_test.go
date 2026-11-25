@@ -48,7 +48,7 @@ func TestFeatureGenerationIncludesConventionalApps(t *testing.T) {
 func TestFeatureGenerationValidatesConventionalAppOverlays(t *testing.T) {
 	for _, environment := range []string{
 		"BILLING_FEATURE_DRIVER=hosted\n",
-		"BILLING_FEATURE_CHECKOUT_DRIVER=memory\nBILLING_FEATURE_CHECKOUT_PATH=flags.json\n",
+		"BILLING_FEATURE_CHECKOUT_DRIVER=hosted\nBILLING_FEATURE_CHECKOUT_PATH=flags.json\n",
 	} {
 		t.Run(strings.Split(environment, "\n")[0], func(t *testing.T) {
 			root := featureInventoryProject(t, "", "billing")

@@ -95,8 +95,10 @@ type primitiveEnvContract struct {
 	DriverKeys            map[string]map[string]struct{}
 	ChildNames            func(environment generationEnvironment) []string
 	AllowInactiveRootKeys bool
-	InheritRootDriver     bool
-	EagerNamedResources   bool
+	// AllowInactiveNamedKeys preserves deployment settings through portable driver changes.
+	AllowInactiveNamedKeys bool
+	InheritRootDriver      bool
+	EagerNamedResources    bool
 }
 
 // primitiveEnvValidator owns the derived driver state shared by root, named, and App-prefixed validation.
@@ -200,7 +202,7 @@ func validatePrimitiveEnv(input generationInput, contract primitiveEnvContract) 
 		if _, ok := allowedKeys[scopedKey.rootKey]; ok {
 			continue
 		}
-		if scopedKey.child == "" && contract.AllowInactiveRootKeys {
+		if (scopedKey.child == "" && contract.AllowInactiveRootKeys) || (scopedKey.child != "" && contract.AllowInactiveNamedKeys) {
 			continue
 		}
 		problems = append(problems, fmt.Sprintf("%s is not supported for %s driver %q", key, strings.ToLower(contract.Prefix), driver))
@@ -336,7 +338,7 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 			if _, allowed := allowedKeys[scopedKey.rootKey]; allowed {
 				continue
 			}
-			if scopedKey.child == "" && v.contract.AllowInactiveRootKeys {
+			if (scopedKey.child == "" && v.contract.AllowInactiveRootKeys) || (scopedKey.child != "" && v.contract.AllowInactiveNamedKeys) {
 				continue
 			}
 			problems = append(problems, fmt.Sprintf("%s is not supported for %s driver %q", key, strings.ToLower(v.contract.Prefix), driver))

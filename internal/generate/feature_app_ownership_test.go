@@ -55,12 +55,12 @@ func TestFeatureResourceWordAppsOwnTheirEnvironment(t *testing.T) {
 // TestFeatureResourceWordAppValidation preserves driver validation within the longest owning App scope.
 func TestFeatureResourceWordAppValidation(t *testing.T) {
 	root := featureInventoryProject(t, "", "feature", "feature-feature")
-	writeGenerationEnvironmentFile(t, root, ".env", "FEATURE_FEATURE_DRIVER=file\nFEATURE_FEATURE_PATH=feature.json\nFEATURE_FEATURE_FEATURE_CHILD_DRIVER=memory\nFEATURE_FEATURE_FEATURE_CHILD_PATH=invalid.json\n")
+	writeGenerationEnvironmentFile(t, root, ".env", "FEATURE_FEATURE_DRIVER=file\nFEATURE_FEATURE_PATH=feature.json\nFEATURE_FEATURE_FEATURE_CHILD_DRIVER=hosted\nFEATURE_FEATURE_FEATURE_CHILD_PATH=retained.json\n")
 	input, err := loadProjectGenerationInput(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := generateFeatureFiles(input); err == nil || !strings.Contains(err.Error(), `FEATURE_FEATURE_FEATURE_CHILD_PATH is not supported for feature driver "memory"`) {
+	if _, err := generateFeatureFiles(input); err == nil || !strings.Contains(err.Error(), `FEATURE_FEATURE_FEATURE_CHILD_DRIVER selects unsupported driver "hosted"`) {
 		t.Fatalf("validation = %v", err)
 	}
 }

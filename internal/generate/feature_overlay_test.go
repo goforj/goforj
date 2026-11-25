@@ -61,26 +61,38 @@ func TestFeatureOverlayDrivers(t *testing.T) {
 	}
 }
 
-// TestFeatureOverlayRejectsIncompatibleDrivers preserves errors for explicitly selected incompatible or unsupported drivers.
-func TestFeatureOverlayRejectsIncompatibleDrivers(t *testing.T) {
-	for _, test := range []struct {
-		name, driver, option, want string
-	}{
-		{"memory with file path", "memory", "PATH", `not supported for feature driver "memory"`},
-		{"whitespace with file path", " \t ", "PATH", `not supported for feature driver "memory"`},
-		{"inherited file with document", "", "DOCUMENT", `not supported for feature driver "file"`},
-		{"unknown driver", "hosted", "PATH", `unsupported driver "hosted"`},
+// TestFeatureOverlayPreservesInactiveSourceSettings keeps source switches reversible within an App's named resource.
+func TestFeatureOverlayPreservesInactiveSourceSettings(t *testing.T) {
+	for _, test := range []struct{ name, driver, option string }{
+		{"memory with file path", "memory", "PATH"},
+		{"whitespace with file path", " \t ", "PATH"},
+		{"inherited file with document", "", "DOCUMENT"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			input := fixtureGenerationInput(root, map[string]string{
+			input := fixtureGenerationInput(t.TempDir(), map[string]string{
 				"FEATURE_CHECKOUT_DRIVER": "file", "FEATURE_CHECKOUT_PATH": "base.json",
-				"BILLING_FEATURE_CHECKOUT_DRIVER": test.driver, "BILLING_FEATURE_CHECKOUT_" + test.option: "value",
+				"BILLING_FEATURE_CHECKOUT_DRIVER": test.driver, "BILLING_FEATURE_CHECKOUT_" + test.option: "retained",
 			})
-			if count, err := generateFeatureFiles(input); err == nil || count != 0 || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("generate: count=%d err=%v, want %s", count, err, test.want)
+			if count, err := generateFeatureFiles(input); err != nil || count != 2 {
+				t.Fatalf("generate: %d %v", count, err)
+			}
+			if count, err := generateFeatureFiles(input); err != nil || count != 0 {
+				t.Fatalf("regenerate: %d %v", count, err)
 			}
 		})
+	}
+}
+
+// TestFeatureOverlayRejectsUnsupportedDrivers keeps inactive settings from bypassing driver validation.
+func TestFeatureOverlayRejectsUnsupportedDrivers(t *testing.T) {
+	for _, values := range []map[string]string{
+		{"FEATURE_CHECKOUT_DRIVER": "hosted", "FEATURE_CHECKOUT_PATH": "retained"},
+		{"BILLING_FEATURE_CHECKOUT_DRIVER": "hosted", "BILLING_FEATURE_CHECKOUT_DOCUMENT": "retained"},
+		{"FEATURE_SUPPORTED_DRIVERS": "memory,hosted", "FEATURE_CHECKOUT_PATH": "retained"},
+	} {
+		if count, err := generateFeatureFiles(fixtureGenerationInput(t.TempDir(), values)); err == nil || count != 0 || !strings.Contains(err.Error(), "unsupported") {
+			t.Fatalf("generate: %d %v", count, err)
+		}
 	}
 }
 

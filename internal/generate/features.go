@@ -60,7 +60,7 @@ func generateFeatureFiles(input generationInput) (int, error) {
 		ChildNames: func(environment generationEnvironment) []string {
 			return appScopedChildNames(input, "FEATURE", "", featureRootKeys)
 		},
-		AllowInactiveRootKeys: true, EagerNamedResources: true,
+		AllowInactiveRootKeys: true, AllowInactiveNamedKeys: true, EagerNamedResources: true,
 	}); err != nil {
 		return 0, err
 	}
