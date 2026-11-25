@@ -81,6 +81,7 @@ var pinnedModuleVersions = map[string]string{
 	"github.com/goforj/str/v2":                                        "v2.0.1",
 	"github.com/goforj/web":                                           "v0.6.5",
 	"github.com/goforj/wire":                                          "v1.3.1",
+	"github.com/gorilla/websocket":                                    "v1.5.4-0.20240701034025-d67f41855da4",
 	"github.com/klauspost/compress":                                   "v1.20.3",
 	"github.com/labstack/echo/v5":                                     "v5.4.4",
 	"github.com/nats-io/nats.go":                                      "v1.55.0",
@@ -96,7 +97,7 @@ var pinnedModuleVersions = map[string]string{
 // UsesMinimumVersion identifies ecosystem fixes that must not downgrade a caller-selected newer version.
 func UsesMinimumVersion(module string) bool {
 	switch module {
-	case "google.golang.org/grpc", "github.com/andybalholm/brotli":
+	case "google.golang.org/grpc", "github.com/andybalholm/brotli", "github.com/gorilla/websocket":
 		return true
 	case "go.opentelemetry.io/otel", "go.opentelemetry.io/otel/trace",
 		"go.opentelemetry.io/otel/log", "go.opentelemetry.io/otel/sdk/log",
@@ -149,6 +150,7 @@ var rendererSyncModules = []string{
 	"github.com/goforj/str",
 	"github.com/goforj/null/v6",
 	"github.com/goforj/wire",
+	"github.com/gorilla/websocket",
 }
 
 var cacheRendererSyncModules = []string{

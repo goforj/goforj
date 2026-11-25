@@ -30,7 +30,7 @@ require (
 	github.com/goforj/str/v2 v2.0.1
 	github.com/goforj/web v0.6.5
 	github.com/goforj/wire v1.3.1
-	github.com/gorilla/websocket v1.5.3
+	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4
 	github.com/imroc/req/v3 v3.61.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/joho/godotenv v1.5.1

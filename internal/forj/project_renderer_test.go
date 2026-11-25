@@ -2648,6 +2648,9 @@ func TestCoreModulesNeedingSyncPreservesNewerMinimums(t *testing.T) {
 		pending                                     bool
 	}{
 		{name: "older minimum", module: "golang.org/x/net", current: "v0.58.0", desired: "v0.61.0", pending: true},
+		{name: "older WebSocket minimum", module: "github.com/gorilla/websocket", current: "v1.5.3", desired: "v1.5.4-0.20240701034025-d67f41855da4", pending: true},
+		{name: "equal WebSocket minimum", module: "github.com/gorilla/websocket", current: "v1.5.4-0.20240701034025-d67f41855da4", desired: "v1.5.4-0.20240701034025-d67f41855da4"},
+		{name: "newer WebSocket minimum", module: "github.com/gorilla/websocket", current: "v1.5.4", desired: "v1.5.4-0.20240701034025-d67f41855da4"},
 		{name: "equal minimum", module: "golang.org/x/net", current: "v0.61.0", desired: "v0.61.0"},
 		{name: "newer minimum", module: "golang.org/x/net", current: "v0.62.0", desired: "v0.61.0"},
 		{name: "newer prerelease", module: "golang.org/x/net", current: "v0.62.0-rc.1", desired: "v0.61.0"},
