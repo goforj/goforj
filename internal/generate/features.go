@@ -338,8 +338,8 @@ func featureWatchComponent(directory, part string, info os.FileInfo) (string, er
     return "", os.ErrNotExist
 }
 
-// featureWatchTopology covers every replaceable ancestor and retains exact event paths to exclude unrelated churn.
-// Resolved symlink targets need the same ancestor coverage as the configured path.
+// featureWatchTopology covers replaceable ancestors and retains exact event paths to exclude unrelated churn.
+// Kqueue also needs explicit regular-file coverage because directory registration can silently skip unreadable children.
 func featureWatchTopology(path string) ([]string, map[string]bool, error) {
     path, err := filepath.Abs(path)
     if err != nil { return nil, nil, err }
@@ -348,6 +348,7 @@ func featureWatchTopology(path string) ([]string, map[string]bool, error) {
     resolved := volume + string(filepath.Separator)
     directories := map[string]bool{}
     controls := map[string]bool{}
+    regularSource := false
     links := 0
     for len(remaining) > 0 {
         part := remaining[0]
@@ -363,7 +364,11 @@ func featureWatchTopology(path string) ([]string, map[string]bool, error) {
         next, err = featureWatchComponent(resolved,part,info)
         if err != nil { return nil, nil, err }
         controls[next] = controls[next] || len(remaining) == 0
-        if info.Mode() & os.ModeSymlink == 0 { resolved = next; continue }
+        if info.Mode() & os.ModeSymlink == 0 {
+            resolved = next
+            if len(remaining) == 0 { regularSource = info.Mode().IsRegular() }
+            continue
+        }
         // Kqueue follows link targets and can miss replacement of an existing directory entry.
         if runtime.GOOS != "linux" && runtime.GOOS != "windows" { return nil, nil, errors.New("feature symlink replacement requires polling on this platform") }
         links++
@@ -378,6 +383,10 @@ func featureWatchTopology(path string) ([]string, map[string]bool, error) {
         remaining = append(strings.Split(target, string(filepath.Separator)), remaining...)
     }
     directories[filepath.Dir(resolved)] = true
+    switch runtime.GOOS {
+    case "darwin", "dragonfly", "freebsd", "netbsd", "openbsd":
+        if regularSource { directories[resolved] = true }
+    }
     result := make([]string, 0, len(directories))
     for directory := range directories { result = append(result, directory) }
     sort.Slice(result,func(left,right int) bool {

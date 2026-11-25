@@ -65,6 +65,26 @@ func AppResourceEnvironmentOwner(key string, knownAppPrefixes []string, componen
 	return owner, true
 }
 
+// SharedResourceEnvironmentSetting recognizes legacy root settings consumed by remaining Apps after Feature ownership is resolved.
+func SharedResourceEnvironmentSetting(key string, components project.Components) bool {
+	for _, definition := range project.ResourceCatalog() {
+		prefix := definition.EnvironmentPrefix + "_"
+		if definition.Key == project.ResourceFeature || !definition.AppliesTo(components) || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if key == definition.EnvironmentKey("SUPPORTED_DRIVERS") {
+			return true
+		}
+		for _, resource := range generationEnvironmentResources() {
+			if resource.prefix == definition.EnvironmentPrefix {
+				_, recognized := splitScopedEnvKey(strings.TrimPrefix(key, prefix), resource.rootKeys)
+				return recognized
+			}
+		}
+	}
+	return false
+}
+
 // legacyResourceGenerationInput excludes settings consumed by enabled App Feature managers from legacy resource interpretation.
 func legacyResourceGenerationInput(input generationInput, resourcePrefix string) generationInput {
 	if resourcePrefix == "FEATURE" {

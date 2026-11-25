@@ -1415,14 +1415,26 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	for _, knownApp := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
 		knownAppNames = append(knownAppNames, knownApp.Name)
 	}
+	removedComponents := appRenderComponents(p.config, app)
 	var knownAppPrefixes []string
 	for _, name := range resourceenv.KnownAppNames(p.config, knownAppNames...) {
 		knownAppPrefixes = append(knownAppPrefixes, project.AppEnvironmentPrefix(name))
 	}
+	// Shared fallbacks can belong to surviving Apps even when the default App does not enable the resource.
+	configChanged := p.removeAppConfig(app.Name)
+	afterProjectComponents := project.ProjectComponents(p.config)
 	preserveResourceSetting := func(key string) bool {
 		owner, managed := generate.AppResourceEnvironmentOwner(key, knownAppPrefixes, beforeProjectComponents)
 		if managed {
-			return owner != removedPrefix
+			if owner != removedPrefix {
+				return true
+			}
+			if removedComponents.Feature {
+				return false
+			}
+		}
+		if beforeProjectComponents.Feature && generate.SharedResourceEnvironmentSetting(key, afterProjectComponents) {
+			return true
 		}
 		for _, prefix := range knownAppPrefixes {
 			if len(prefix) > len(removedPrefix) && strings.HasPrefix(key, prefix+"_") {
@@ -1475,7 +1487,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 			result.Updated = append(result.Updated, path)
 		}
 	}
-	if p.removeAppConfig(app.Name) {
+	if configChanged {
 		if err := p.workspace.writeProjectConfig(p.config); err != nil {
 			return result, err
 		}
@@ -1484,7 +1496,6 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	if !result.Changed() {
 		return result, nil
 	}
-	afterProjectComponents := project.ProjectComponents(p.config)
 	if beforeProjectComponents.Cache && !afterProjectComponents.Cache {
 		if err := p.Render(ComponentRenderInput{renderAll: true, root: p.workspace.root}); err != nil {
 			return result, fmt.Errorf("reconcile shared Cache surface after removing App %q: %w", app.Name, err)

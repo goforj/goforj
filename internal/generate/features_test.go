@@ -275,7 +275,8 @@ func waitFeatureCondition(t *testing.T, condition func() bool) {
     for !condition() { select { case <-deadline.C: t.Fatal("feature refresh did not converge"); case <-tick.C: } }
 }
 
-// requireFeatureWatcher retries transient native registration failures caused by unrelated ancestor entry churn.
+// requireFeatureWatcher requires native coverage despite transient registration failures from unrelated ancestor entry churn.
+// Recovery tests still use a short fallback because a later registration can fail independently of this probe.
 func requireFeatureWatcher(t *testing.T, path string) *featureWatcher {
     t.Helper()
     var watcher *featureWatcher
@@ -293,10 +294,12 @@ func writeFeatureDefinition(t *testing.T, path string, enabled bool) {
     if err := os.Rename(temp,path); err != nil { t.Fatal(err) }
 }
 
-// TestManagedFeatureFileNotifications observes writes and repeated atomic replacement before the safety interval.
+// TestManagedFeatureFileNotifications observes writes and repeated atomic replacement across source recovery.
 func TestManagedFeatureFileNotifications(t *testing.T) {
     path := configureFeatureFixture(t)
-    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
+    watcher := requireFeatureWatcher(t,path)
+    _ = watcher.Close()
+    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
     initial := manager.Instances()[1].Status.LastSuccess
     if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
@@ -400,7 +403,9 @@ func TestManagedFeatureMountedSymlink(t *testing.T) {
 // TestManagedFeatureParentReplacement reacquires a directory watch after the watched directory is replaced.
 func TestManagedFeatureParentReplacement(t *testing.T) {
     path := configureFeatureFixture(t)
-    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","100ms")
+    watcher := requireFeatureWatcher(t,path)
+    _ = watcher.Close()
+    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
     if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
     parent := filepath.Dir(path)
@@ -429,23 +434,27 @@ func TestFeatureWatchRegistrationOrder(t *testing.T) {
         previous := directories[index-1]
         if featureWatchDepth(previous) > featureWatchDepth(directory) || (featureWatchDepth(previous) == featureWatchDepth(directory) && previous >= directory) { t.Fatal("directory controls are not ordered from ancestors to descendants") }
     }
-    registered := map[string]bool{}
     replaced := false
-    watcher := registerFeatureDirectory(path,func(backend *fsnotify.Watcher,directory string) error {
-        if directory != filepath.Dir(directory) && !registered[filepath.Dir(directory)] { t.Fatalf("parent control missing before %s",directory) }
-        if err := backend.Add(directory); err != nil { return err }
-        registered[directory] = true
-        if directory == parent {
-            replaced = true
-            if err := os.Rename(ancestor,ancestor+".old"); err != nil { t.Fatal(err) }
-            if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
-            writeFeatureDefinition(t,path,true)
-        }
-        return nil
+    var watcher *featureWatcher
+    // Retry only setup failures before mutation, since native ancestor registration can race unrelated entry removal.
+    waitFeatureCondition(t,func() bool {
+        registered := map[string]bool{}
+        watcher = registerFeatureDirectory(path,func(backend *fsnotify.Watcher,directory string) error {
+            if directory != filepath.Dir(directory) && !registered[filepath.Dir(directory)] { t.Fatalf("parent control missing before %s",directory) }
+            if err := backend.Add(directory); err != nil { return err }
+            registered[directory] = true
+            if directory == parent && !replaced {
+                replaced = true
+                if err := os.Rename(ancestor,ancestor+".old"); err != nil { t.Fatal(err) }
+                if err := os.MkdirAll(parent,0700); err != nil { t.Fatal(err) }
+                writeFeatureDefinition(t,path,true)
+            }
+            return nil
+        })
+        if !replaced && watcher != nil { _ = watcher.Close(); watcher = nil }
+        return replaced
     })
-    if !replaced { t.Fatal("registration did not exercise ancestor replacement") }
     resource := manager.resources[1]; resource.interval = 20*time.Millisecond
-    if watcher != nil { resource.interval = time.Hour }
     ctx,cancel := context.WithCancel(context.Background())
     done := make(chan struct{})
     initial := manager.Instances()[1].Status.LastSuccess
@@ -468,7 +477,9 @@ func TestManagedFeatureAncestorReplacement(t *testing.T) {
     path := filepath.Join(parent,"flags.json")
     writeFeatureDefinition(t,path,true)
     t.Setenv("FEATURE_CHECKOUT_PATH",path)
-    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
+    watcher := requireFeatureWatcher(t,path)
+    _ = watcher.Close()
+    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
     initial := manager.Instances()[1].Status.LastSuccess
     if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
@@ -496,7 +507,9 @@ func TestManagedFeaturePathCase(t *testing.T) {
         if mode == "ancestor" { configured = filepath.Join(filepath.Dir(ancestor),"REVISION","NESTED","FLAGS.JSON") }
         if _,err := os.Stat(configured); err != nil { t.Skip("case-sensitive filesystem") }
         t.Setenv("FEATURE_CHECKOUT_PATH",configured)
-        t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
+        watcher := requireFeatureWatcher(t,configured)
+        _ = watcher.Close()
+        t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
         manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
         initial := manager.Instances()[1].Status.LastSuccess
         if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
@@ -533,7 +546,7 @@ func TestManagedFeatureUnicodeSpelling(t *testing.T) {
         watcher := requireFeatureWatcher(t,configured)
         _ = watcher.Close()
         t.Setenv("FEATURE_CHECKOUT_PATH",configured)
-        t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
+        t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
         manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
         initial := manager.Instances()[1].Status.LastSuccess
         if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
@@ -581,6 +594,39 @@ func TestFeatureCaseDistinctPaths(t *testing.T) {
     if err != nil || canonical != path { t.Fatalf("canonical source = %q, error = %v",canonical,err) }
 }
 
+// TestFeatureUnreadableLeafRecovery retains fallback until kqueue can register the source file itself.
+func TestFeatureUnreadableLeafRecovery(t *testing.T) {
+    switch runtime.GOOS {
+    case "darwin", "dragonfly", "freebsd", "netbsd", "openbsd":
+    default:
+        t.Skip("kqueue leaf coverage required")
+    }
+    path := configureFeatureFixture(t)
+    watcher := requireFeatureWatcher(t,path)
+    _ = watcher.Close()
+    var loads atomic.Int64
+    source := feature.NewFileSource(path)
+    client,err := feature.Open(context.Background(),feature.SourceFunc(func(ctx context.Context)(feature.Document,error) {
+        loads.Add(1)
+        return source.Load(ctx)
+    }))
+    if err != nil { t.Fatal(err) }
+    flags := feature.New(client)
+    if !flags.Enabled(context.Background(),"checkout-v2") { t.Fatal("initial source was not loaded") }
+    writeFeatureDefinition(t,path,false)
+    if err := os.Chmod(path,0200); err != nil { t.Fatal(err) }
+    defer os.Chmod(path,0600)
+    if probe,err := os.Open(path); err == nil { _ = probe.Close(); t.Skip("process bypasses filesystem permissions") }
+    resource := managedEvaluator{driver:"file",path:path,client:client,flags:flags,interval:20*time.Millisecond}
+    ctx,cancel := context.WithCancel(context.Background())
+    done := make(chan struct{})
+    go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,nil) }()
+    defer func(){ cancel(); <-done }()
+    waitFeatureCondition(t,func() bool { return loads.Load() >= 3 && client.Status().LastError != nil })
+    if err := os.Chmod(path,0600); err != nil { t.Fatal(err) }
+    waitFeatureCondition(t,func() bool { return client.Status().LastError == nil && !flags.Enabled(context.Background(),"checkout-v2") })
+}
+
 // TestManagedFeaturePermissionRecovery retries failed sources when file or ancestor access is restored.
 func TestManagedFeaturePermissionRecovery(t *testing.T) {
     if runtime.GOOS == "windows" { t.Skip("POSIX permission semantics required") }
@@ -592,7 +638,9 @@ func TestManagedFeaturePermissionRecovery(t *testing.T) {
         path := filepath.Join(parent,"flags.json")
         writeFeatureDefinition(t,path,true)
         t.Setenv("FEATURE_CHECKOUT_PATH",path)
-        t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","1h")
+        watcher := requireFeatureWatcher(t,path)
+        _ = watcher.Close()
+        t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL","20ms")
         manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
         initial := manager.Instances()[1].Status.LastSuccess
         if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
@@ -649,7 +697,9 @@ func TestFeatureNotificationDebounce(t *testing.T) {
 // TestFeatureNotificationChurn bounds refresh latency even while unrelated entries keep changing.
 func TestFeatureNotificationChurn(t *testing.T) {
     path := configureFeatureFixture(t)
-    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL", "1h")
+    watcher := requireFeatureWatcher(t,path)
+    _ = watcher.Close()
+    t.Setenv("FEATURE_CHECKOUT_REFRESH_INTERVAL", "20ms")
     manager, err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
     initial := manager.Instances()[1].Status.LastSuccess
     if err := manager.Start(context.Background()); err != nil { t.Fatal(err) }
