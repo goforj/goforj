@@ -163,6 +163,9 @@ jobs:
       - name: run platform-sensitive tests
         run: go test -count=1 ./internal/devwatch ./internal/build ./internal/envfile ./internal/projectlayout ./internal/projectupgrade ./internal/testexec ./project ./tools/upgradespike
 
+      - name: run generated feature runtime tests
+        run: go test -count=1 -timeout=3m ./internal/generate -run '^TestGeneratedFeatureManagerExercisesNativeLifecycle$'
+
       - name: run dev command tests
         run: go test -count=1 ./internal/forj -run '^TestDev'
 
