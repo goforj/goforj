@@ -161,6 +161,8 @@ github.com/goforj/atlas v0.4.14-0.20261126213856-7bd2ed9ea743 h1:YTzoCHw4zxXk98S
 github.com/goforj/atlas v0.4.14-0.20261126213856-7bd2ed9ea743/go.mod h1:nw719u1iH17OuL5iKTNSe10Dbn4ZzC4MurNofWoZmXo=
 github.com/goforj/atlas v0.4.14-0.20261126214839-8b62c2d13d1b h1:efTeG6QPG+mQRUSSGI0oKhxbSC0iaFSRlAgbjjtv6OE=
 github.com/goforj/atlas v0.4.14-0.20261126214839-8b62c2d13d1b/go.mod h1:nw719u1iH17OuL5iKTNSe10Dbn4ZzC4MurNofWoZmXo=
+github.com/goforj/atlas v0.4.14-0.20261126220156-b562c3886461 h1:DTUeVuG83GwdMyftiH11gIRHpDt8+lDNdEMJcA185Po=
+github.com/goforj/atlas v0.4.14-0.20261126220156-b562c3886461/go.mod h1:nw719u1iH17OuL5iKTNSe10Dbn4ZzC4MurNofWoZmXo=
 github.com/goforj/cache v0.4.0 h1:d8Mofh8OtQABkuKqnXiH/c4CHxjCRXqwVhou2GapDrw=
 github.com/goforj/cache v0.4.0/go.mod h1:4vCZ2c/sKCprsogMw23X0N/8MMWnmWenhhqVciWAWxM=
 github.com/goforj/cache/cachecore v0.4.3 h1:xth/bOPnJzQ4Xe2C2hd2xZKbAO2q+tee05xor8kmVgM=

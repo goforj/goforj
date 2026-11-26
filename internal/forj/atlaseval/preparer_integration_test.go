@@ -419,6 +419,7 @@ type majorSurfaceVerifierCase struct {
 	mutant               string
 	additional           []evaluationMutation
 	behavior             *evaluationBehaviorMutation
+	additionalBehavior   *evaluationBehaviorMutation
 	alternates           []evaluationFileMutation
 	alternateRenames     []evaluationPathRename
 	disconnectedProvider string
@@ -1137,6 +1138,12 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		}
 		verifyEvaluationBehaviorMutant(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, *test.behavior, environment)
 	}
+	if test.additionalBehavior != nil {
+		if err := os.WriteFile(path, body, 0644); err != nil {
+			t.Fatal(err)
+		}
+		verifyEvaluationBehaviorMutant(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, *test.additionalBehavior, environment)
+	}
 	return result
 }
 
@@ -1677,6 +1684,12 @@ func TestTaxRateResilienceVerifierCalibration(t *testing.T) {
 		mutant:            "attempt == 0",
 		wantFailed:        "tax-rate-resilience-behavior",
 		wantCompile:       true,
+		additionalBehavior: &evaluationBehaviorMutation{
+			path:       "internal/taxrates/client.go",
+			old:        "case <-time.After(10 * time.Millisecond):",
+			mutant:     "case <-func() <-chan time.Time { time.Sleep(time.Second); return time.After(time.Nanosecond) }():",
+			wantFailed: "tax-rate-resilience-behavior", wantCompile: true,
+		},
 		behavior: &evaluationBehaviorMutation{
 			path:        "internal/taxrates/client.go",
 			old:         "status.StatusCode == http.StatusBadGateway || status.StatusCode == http.StatusServiceUnavailable",
