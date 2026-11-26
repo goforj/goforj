@@ -137,6 +137,9 @@ jobs:
     name: platform (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    env:
+      # Bound nested race-build fan-out within hosted Windows process limits.
+      GOMAXPROCS: ${{ matrix.name == 'windows' && '2' || '' }}
     strategy:
       fail-fast: false
       max-parallel: 2
