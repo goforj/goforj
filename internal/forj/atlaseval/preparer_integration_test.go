@@ -1674,10 +1674,18 @@ func TestCheckoutBusinessMetricsVerifierCalibration(t *testing.T) {
 	}{
 		{name: "registration-only", path: "internal/checkout/service.go", old: "service.completed.WithLabelValues(\"success\").Inc()", replacement: "_ = start", failed: "business-metrics-behavior", additional: []evaluationMutation{{old: "service.duration.WithLabelValues(\"success\").ObserveDuration(service.now().Sub(start))", mutant: "_ = start"}}},
 		{name: "unbounded-label", path: "internal/checkout/service.go", old: "service.completed.WithLabelValues(\"success\").Inc()", replacement: "service.completed.WithLabelValues(tenantID).Inc()", failed: "business-metrics-behavior"},
-		{name: "detached-registry", path: "app/wire/inject_services_app.go", old: "manager.Registry()", replacement: "metrics.NewManagerWithConfig(metrics.Config{}).Registry()", failed: "business-metrics-app-registry"},
+		{name: "detached-registry", path: "app/wire/inject_services_app.go", old: "manager.Registry()", replacement: "metrics.NewManagerWithConfig(metrics.Config{}).Registry()", failed: "business-metrics-app-runtime"},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
-			result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{unusedAppProvider: "provideCheckoutService", evaluation: "instrument-checkout-metrics", scenario: "checkout-business-metrics", path: mutation.path, old: mutation.old, mutant: mutation.replacement, additional: mutation.additional, wantFailed: mutation.failed, wantCompile: true})
+			var alternates []evaluationFileMutation
+			if mutation.name == "registration-only" {
+				alternates = []evaluationFileMutation{
+					{path: "app/wire/inject_services_app.go", old: "provideCheckoutService(manager *metrics.Manager)", replacement: "provideCheckoutService(manager *metrics.Manager, processor checkout.Processor)"},
+					{path: "app/wire/inject_services_app.go", old: "checkout.NewProcessor(), time.Now)", replacement: "processor, time.Now)"},
+					{path: "app/wire/inject_services_app.go", old: "\tprovideCheckoutService,\n", replacement: "\tprovideCheckoutService,\n\tcheckout.NewProcessor,\n"},
+				}
+			}
+			result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{alternates: alternates, unusedAppProvider: "provideCheckoutService", evaluation: "instrument-checkout-metrics", scenario: "checkout-business-metrics", path: mutation.path, old: mutation.old, mutant: mutation.replacement, additional: mutation.additional, wantFailed: mutation.failed, wantCompile: true})
 			for _, id := range []string{"metrics-library-adoption", "test-function-added"} {
 				if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
 					t.Fatalf("golden quality %s did not pass: %#v", id, result.Checks)
