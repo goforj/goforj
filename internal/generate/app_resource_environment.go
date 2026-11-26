@@ -99,15 +99,15 @@ func SharedResourceEnvironmentSetting(key string, components project.Components)
 
 // legacyResourceGenerationInput preserves configless prefix boundaries and excludes settings consumed by enabled App Feature managers.
 func legacyResourceGenerationInput(input generationInput, resourcePrefix string) generationInput {
-	if resourcePrefix == "NOTIFICATION" || resourcePrefix == "SEARCH" {
+	if resourcePrefix == "SEARCH" {
 		return input
 	}
-	if resourcePrefix == "FEATURE" {
+	if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" {
 		if _, err := input.projectConfig(); os.IsNotExist(err) {
-			// Feature predates Notification and Search, so configless Feature inference must retain its original App vocabulary.
+			// Configless inference retains each resource's original App vocabulary as newer resources are added.
 			resources := []generationEnvironmentResource{}
 			for _, resource := range generationEnvironmentResources() {
-				if resource.prefix != "NOTIFICATION" && resource.prefix != "SEARCH" {
+				if resource.prefix != "SEARCH" && (resourcePrefix != "FEATURE" || resource.prefix != "NOTIFICATION") {
 					resources = append(resources, resource)
 				}
 			}

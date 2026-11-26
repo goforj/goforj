@@ -1600,7 +1600,6 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 		residues []string
 	}{
 		{name: "Events", removed: before.Events && !after.Events, residues: projectEventsResiduePaths()},
-		{name: "Search", removed: before.Search && !after.Search, residues: []string{filepath.Join("internal", "searches")}},
 		{name: "Feature", removed: before.Feature && !after.Feature, residues: []string{filepath.Join("internal", "features")}},
 		{name: "Storage", removed: before.Storage && !after.Storage, residues: projectStorageResiduePaths()},
 	}
@@ -1637,6 +1636,23 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 	if before.Cache && !after.Cache {
 		if err := p.validateCacheRenderTransition(after, app); err != nil {
 			return fmt.Errorf("cannot remove App %q because it is the last App using Cache: %w", app.Name, err)
+		}
+	}
+	if before.Search && !after.Search {
+		residue, err := p.workspace.searchGeneratedResiduePath()
+		if err != nil {
+			return err
+		}
+		if residue != "" {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Search while %s exists; automatic Search removal is not supported", app.Name, residue)
+		}
+		path := filepath.Join(projectlayout.WireDir(".", app), "app.go")
+		file, exists, err := p.workspace.parsedRenderGoFile(path)
+		if err != nil {
+			return fmt.Errorf("parse Search transition path %s: %w", path, err)
+		}
+		if exists && searchManagerAccessor(file) {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Search while %s exposes the generated Searches API; automatic Search removal is not supported", app.Name, path)
 		}
 	}
 	if before.Notification && !after.Notification {

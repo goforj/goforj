@@ -51,6 +51,10 @@ func TestSearchAppCreationRemovalRuntime(t *testing.T) {
 	if !strings.Contains(string(accessors), "Only()") {
 		t.Fatal("App index accessor not generated")
 	}
+	// The temporary consumer must release the App-only registration before removal.
+	if err := os.Remove(filepath.Join(checkDir, "main.go")); err != nil {
+		t.Fatal(err)
+	}
 	run(forj, "make:app", "search", "--remove")
 	manager, err := os.ReadFile(filepath.Join(root, "internal/searches/manager_gen.go"))
 	if err != nil {
@@ -72,6 +76,9 @@ func TestSearchAppCreationRemovalRuntime(t *testing.T) {
 	}
 	if !strings.Contains(string(environment), "SEARCH_DRIVER=") || !strings.Contains(string(environment), "SEARCH_PATH=") {
 		t.Fatal("removing App erased default Search configuration")
+	}
+	if err := os.WriteFile(filepath.Join(checkDir, "main.go"), []byte(searchAppLifecycleProgram), 0600); err != nil {
+		t.Fatal(err)
 	}
 	run("go", "run", "./.checks/search")
 }

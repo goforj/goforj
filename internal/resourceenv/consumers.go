@@ -265,14 +265,14 @@ func resourceAppPrefixes(values map[string]string, appNames []string, components
 		markerIndex := -1
 		var markerDefinition project.ResourceDefinition
 		for _, definition := range project.ResourceCatalog() {
-			// Feature scopes require known Apps; disabled Notification markers must preserve legacy App names.
-			if definition.Key == project.ResourceFeature || (definition.Key == project.ResourceNotification && !components.Notification) {
+			// Feature scopes require known Apps; disabled Notification and Search markers preserve legacy App names.
+			if definition.Key == project.ResourceFeature || (definition.Key == project.ResourceNotification && !components.Notification) || (definition.Key == project.ResourceSearch && !components.Search) {
 				continue
 			}
 			marker := "_" + definition.EnvironmentPrefix + "_"
 			index := strings.Index(key, marker)
-			// Notification markers inside known App names cannot shorten their legacy resource scopes.
-			if definition.Key == project.ResourceNotification && owner != "" && index < len(owner) {
+			// Notification and Search markers inside known App names cannot shorten their legacy resource scopes.
+			if (definition.Key == project.ResourceNotification || definition.Key == project.ResourceSearch) && owner != "" && index < len(owner) {
 				continue
 			}
 			if index > 0 && (markerIndex < 0 || index < markerIndex) {
@@ -303,7 +303,7 @@ func resourceAppPrefixes(values map[string]string, appNames []string, components
 // resourceFirstAppPrefix reserves legacy namespaces and App-aware defaults enabled by any participating App.
 func resourceFirstAppPrefix(prefix string, components project.Components) bool {
 	for _, definition := range project.ResourceCatalog() {
-		if (definition.Key == project.ResourceFeature && !components.Feature) || (definition.Key == project.ResourceNotification && !components.Notification) {
+		if (definition.Key == project.ResourceFeature && !components.Feature) || (definition.Key == project.ResourceNotification && !components.Notification) || (definition.Key == project.ResourceSearch && !components.Search) {
 			continue
 		}
 		resourcePrefix := definition.EnvironmentPrefix
