@@ -32,9 +32,6 @@ type appPrimitiveDriverScope struct {
 	appPrefixes    []string
 }
 
-// generationDriverResourcePrefixes bounds App-prefix inference to resources whose overlays generated apps consume.
-var generationDriverResourcePrefixes = []string{"FEATURE", "CACHE", "DB", "EVENTS", "MAIL", "QUEUE", "STORAGE"}
-
 // generationEnvironmentResource pairs an App-overlay marker with the keys that provide trustworthy prefix evidence.
 type generationEnvironmentResource struct {
 	prefix   string
@@ -453,6 +450,11 @@ func generationAppEnvPrefixes(input generationInput) []string {
 
 // generationAppEnvPrefixSet combines configured Apps with conservative evidence from valid App-before-resource keys.
 func generationAppEnvPrefixSet(projectDir string, environment generationEnvironment) map[string]struct{} {
+	return generationAppEnvPrefixSetForResources(projectDir, environment, generationEnvironmentResources())
+}
+
+// generationAppEnvPrefixSetForResources preserves prefix boundaries for the resource vocabulary consumed by a generator.
+func generationAppEnvPrefixSetForResources(projectDir string, environment generationEnvironment, resources []generationEnvironmentResource) map[string]struct{} {
 	configured := configuredGenerationAppEnvPrefixes(projectDir)
 	prefixes := map[string]struct{}{}
 	for prefix := range configured {
@@ -462,8 +464,8 @@ func generationAppEnvPrefixSet(projectDir string, environment generationEnvironm
 		if generationKeyMatchesConfiguredApp(entry.key, configured) {
 			continue
 		}
-		prefix, ok := inferredGenerationAppPrefix(entry.key)
-		if !ok || generationResourceFirstPrefix(prefix) {
+		prefix, ok := inferredGenerationAppPrefix(entry.key, resources)
+		if !ok || generationResourceFirstPrefix(prefix, resources) {
 			continue
 		}
 		prefixes[prefix] = struct{}{}
@@ -521,10 +523,10 @@ func isGenerationAppResourceKey(key string, appPrefix string) bool {
 }
 
 // inferredGenerationAppPrefix uses the earliest valid resource marker so ambiguous unconfigured names retain the historical boundary.
-func inferredGenerationAppPrefix(key string) (string, bool) {
+func inferredGenerationAppPrefix(key string, resources []generationEnvironmentResource) (string, bool) {
 	bestIndex := -1
 	bestPrefix := ""
-	for _, resource := range generationEnvironmentResources() {
+	for _, resource := range resources {
 		marker := "_" + resource.prefix + "_"
 		searchFrom := 0
 		for searchFrom < len(key) {
@@ -625,9 +627,9 @@ func validGenerationAppEnvPrefix(prefix string) bool {
 }
 
 // generationResourceFirstPrefix keeps ordinary RESOURCE_<NAME>_DRIVER scopes out of App-prefix inference.
-func generationResourceFirstPrefix(prefix string) bool {
-	for _, resourcePrefix := range generationDriverResourcePrefixes {
-		if prefix == resourcePrefix || strings.HasPrefix(prefix, resourcePrefix+"_") {
+func generationResourceFirstPrefix(prefix string, resources []generationEnvironmentResource) bool {
+	for _, resource := range resources {
+		if prefix == resource.prefix || strings.HasPrefix(prefix, resource.prefix+"_") {
 			return true
 		}
 	}

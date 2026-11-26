@@ -85,12 +85,20 @@ func SharedResourceEnvironmentSetting(key string, components project.Components)
 	return false
 }
 
-// legacyResourceGenerationInput excludes settings consumed by enabled App Feature managers from legacy resource interpretation.
+// legacyResourceGenerationInput preserves configless prefix boundaries and excludes settings consumed by enabled App Feature managers.
 func legacyResourceGenerationInput(input generationInput, resourcePrefix string) generationInput {
 	if resourcePrefix == "FEATURE" {
 		return input
 	}
 	if _, err := project.LoadProjectConfigAt(input.projectDir); err != nil {
+		// Legacy projects used Feature words as App names before Feature became a resource marker.
+		resources := make([]generationEnvironmentResource, 0, len(generationEnvironmentResources())-1)
+		for _, resource := range generationEnvironmentResources() {
+			if resource.prefix != "FEATURE" {
+				resources = append(resources, resource)
+			}
+		}
+		input.appPrefixes = sortStrings(generationAppEnvPrefixSetForResources(input.projectDir, input.environment, resources))
 		return input
 	}
 	enabled := makeSet(generationAppEnvPrefixesForResource(input, "FEATURE")...)

@@ -8,7 +8,8 @@ import (
 // TestFeatureDiscoveryExcludesOtherAppResourceFamilies keeps App component settings out of default evaluator discovery and validation.
 func TestFeatureDiscoveryExcludesOtherAppResourceFamilies(t *testing.T) {
 	root := featureInventoryProject(t, "", "feature", "feature-child")
-	for _, resource := range generationDriverResourcePrefixes {
+	for _, definition := range generationEnvironmentResources() {
+		resource := definition.prefix
 		if resource == "FEATURE" {
 			continue
 		}
