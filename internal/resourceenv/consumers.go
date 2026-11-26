@@ -390,8 +390,8 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 			continue
 		}
 		if !strings.HasSuffix(baseKey, "_DRIVER") {
-			name, endpointScope := namedResourceEndpointScope(baseKey, resource)
-			if endpointScope {
+			name, namedScope := namedResourceSettingScope(baseKey, resource)
+			if namedScope {
 				if _, exists := drivers[name]; !exists {
 					drivers[name] = definition.NamedDriverDefault(rootDriver)
 				}
@@ -419,15 +419,15 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 	return drivers
 }
 
-// namedResourceEndpointScope extracts a named resource from endpoint-only configuration such as DB_REPORTING_HOST.
-func namedResourceEndpointScope(key string, resource project.ResourceKey) (string, bool) {
+// namedResourceSettingScope recognizes declarations that select a named resource without an explicit driver.
+func namedResourceSettingScope(key string, resource project.ResourceKey) (string, bool) {
 	definition, ok := project.ResourceDefinitionByKey(resource)
 	if !ok {
 		return "", false
 	}
 	resourcePrefix := definition.EnvironmentPrefix + "_"
 	scopedKey := strings.TrimPrefix(key, resourcePrefix)
-	for _, suffix := range resourceEndpointSuffixes(definition) {
+	for _, suffix := range resourceSettingSuffixes(definition) {
 		marker := "_" + suffix
 		if !strings.HasSuffix(scopedKey, marker) {
 			continue
@@ -440,8 +440,8 @@ func namedResourceEndpointScope(key string, resource project.ResourceKey) (strin
 	return "", false
 }
 
-// resourceEndpointSuffixes returns the endpoint keys that can distinguish a named resource connection.
-func resourceEndpointSuffixes(definition project.ResourceDefinition) []string {
+// resourceSettingSuffixes retains endpoint discovery and includes native evaluator configuration declarations.
+func resourceSettingSuffixes(definition project.ResourceDefinition) []string {
 	suffixes := []string{}
 	seen := map[string]bool{}
 	add := func(suffix string) {
@@ -457,6 +457,11 @@ func resourceEndpointSuffixes(definition project.ResourceDefinition) []string {
 		add(str.Of(endpoint.Key).ToUpper().TrimPrefix(resourcePrefix).String())
 	}
 	switch definition.Key {
+	case project.ResourceFeature:
+		add("DOCUMENT")
+		add("PATH")
+		add("REFRESH_INTERVAL")
+		add("INITIALIZATION_TIMEOUT")
 	case project.ResourceDatabase:
 		add("DSN")
 		add("HOST")

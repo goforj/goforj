@@ -102,7 +102,7 @@ func resources(root string, config *project.Config, values map[string]string) []
 	return out
 }
 
-// resourceNamesForScope preserves root inheritance without promoting another App's declarations.
+// resourceNamesForScope keeps legacy manager names global while limiting Feature names to inherited App declarations.
 func resourceNamesForScope(root string, config *project.Config, values map[string]string, app string) map[project.ResourceKey][]string {
 	scoped := map[string]string{}
 	for key, value := range values {
@@ -119,7 +119,8 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 			}
 		}
 	}
-	names := generate.ResourceNamesInScope(scoped)
+	names := generate.ResourceNames(root, values)
+	names[project.ResourceFeature] = generate.ResourceNamesInScope(scoped)[project.ResourceFeature]
 	for _, definition := range project.ResourceCatalog() {
 		for _, named := range definition.NamedResources {
 			if named.RequiredComponent != "" && !project.ProjectComponents(config).Enabled(named.RequiredComponent) {
