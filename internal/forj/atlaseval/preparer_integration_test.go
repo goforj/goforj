@@ -1698,11 +1698,15 @@ func TestTenantRequestRateLimitVerifierCalibration(t *testing.T) {
 func TestTenantRequestRateLimitWindowCalibration(t *testing.T) {
 	for _, mutation := range []struct{ name, old, replacement string }{
 		{"short-ttl", "Increment(key, 1, 2*time.Minute)", "Increment(key, 1, time.Second)"},
-		{"infinite-ttl", "Increment(key, 1, 2*time.Minute)", "Increment(key, 1, 0)"},
+		{"excessive-retention", "Increment(key, 1, 2*time.Minute)", "Increment(key, 1, 48*time.Hour)"},
 		{"local-time-bucket", "bucket := now.Unix() / 60", "bucket := now.Unix()/60 + int64(now.Hour())"},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
-			testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "tenant-request-rate-limits", scenario: "tenant-request-rate-limits", path: "internal/requests/limiter.go", old: mutation.old, mutant: mutation.replacement, wantFailed: "tenant-rate-limit-behavior", wantCompile: true})
+			var alternates []evaluationFileMutation
+			if mutation.name == "excessive-retention" {
+				alternates = []evaluationFileMutation{{path: "internal/requests/limiter.go", old: "Increment(key, 1, 2*time.Minute)", replacement: "Increment(key, 1, 0)"}}
+			}
+			testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{alternates: alternates, evaluation: "tenant-request-rate-limits", scenario: "tenant-request-rate-limits", path: "internal/requests/limiter.go", old: mutation.old, mutant: mutation.replacement, wantFailed: "tenant-rate-limit-behavior", wantCompile: true})
 		})
 	}
 }
