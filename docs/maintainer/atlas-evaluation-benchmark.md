@@ -329,12 +329,24 @@ guidance-attribution question, and preserve previous scorecards in Git history.
 The `catalog-search` evaluation adds a bounded product projection task after the published matrix. It has no retained live provider attempts and does not change any score above. The prepared `catalog-search-domain` scenario installs `github.com/goforj/search@v0.1.1` and the separately tagged `github.com/goforj/search/driver/blevesearch@v0.1.1` before candidate execution, so dependency installation is outside the measurement. The root requires Go 1.24 and the embedded driver requires Go 1.25; the generated Project already targets Go 1.26.
 
 The service obtains its index through the generated manager's named Catalog accessor and App-owned schema registry. A supervisor-only helper wraps the original backend after sealing, preserving the manager's real backend ownership while observing root API calls and controlling terminal-outcome cases. This helper is absent from the candidate-visible Project API. The real local backend calibration checks exact category filtering, stable pages, total precision, replacement visibility, cancellation, and terminal failure. A separate quality observation records executed search-library calls without changing the application outcome. Compiling semantic mutants remove category isolation or skip visibility confirmation. The existing diagnostic trust limits apply. Durable database writes, persistent index lifecycle, facets, highlight rendering, other drivers, and backend-specific ranking are outside this contract.
-## Startup configuration contract awaiting live measurement
+## Startup configuration diagnostic
 
-`configure-dispatch-startup` adds a typed application configuration task with
-required startup values, deliberate optional fallbacks, process/file precedence,
-credential-safe diagnostics, and immutable service snapshots. Golden and
-compiling semantic mutant calibration use the real Wire initializer with fake
-credentials; source API attribution is separate from behavior. The Project's
-existing env/v2 dependency is staged before candidate execution. No provider
-attempts are included, and the historical benchmark matrix is unchanged.
+`configure-dispatch-startup` exercises typed startup policy, deliberate optional
+fallbacks, process/file precedence, credential-safe diagnostics, and immutable
+service snapshots. The prepared Project retains env/v2 v2.6.1. Golden and
+compiling semantic mutants cover required values and defaults; the actual
+native App gate rejects a compiling provider moved into an unused Wire set
+while standalone loader behavior still passes. Owning composition tests are
+permitted without weakening production source ownership.
+
+A fresh native Codex `gpt-6.1-sol` sample with Atlas guidance passed all executable
+acceptance and eligible quality checks on 2026-11-26 at Atlas `a7b24d5ce877` and
+GoForj `8fa6755b`. The authenticated report includes real Atlas use, actor tests
+and build, original App startup, and resolved service snapshots. An earlier
+completed sample at `c34b6dccb7b8` / `a28ce562` exposed a false ownership rejection
+of its App Wire regression test before behavior checks. Both attempts remain
+retained at their exact measured revisions.
+
+The local backend lacks trusted isolation and file-read evidence. These samples
+remain diagnostic and do not establish authoritative outcomes, reliability, or
+a guidance treatment effect. The historical benchmark matrix is unchanged.
