@@ -129,3 +129,24 @@ func assertLegacyComponentMapping(t *testing.T, scope string, mapping *yaml.Node
 		}
 	}
 }
+
+// TestLegacyRenderSentinelRoundTripsSelections keeps expected selections representable by the actual historical fixture format.
+func TestLegacyRenderSentinelRoundTripsSelections(t *testing.T) {
+	combo := legacyComponentMappingRenderCombo()
+	source, err := encodeLegacyRenderComboConfig(project.Config{Render: project.RenderConfig{Components: combo.components}, Apps: combo.apps})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded project.Config
+	if err := yaml.Unmarshal(source, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Render.Components != combo.components {
+		t.Fatalf("default App selection=%#v want=%#v", decoded.Render.Components, combo.components)
+	}
+	for name, app := range combo.apps {
+		if got := decoded.Apps[name].Components; got != app.Components {
+			t.Fatalf("App %s selection=%#v want=%#v", name, got, app.Components)
+		}
+	}
+}

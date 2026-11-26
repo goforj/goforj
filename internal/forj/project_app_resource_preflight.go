@@ -31,6 +31,7 @@ type appResourceFamily struct {
 func appResourceFamilies() []appResourceFamily {
 	return []appResourceFamily{
 		{project.ResourceFeature, "internal/features", "feature"},
+		{project.ResourceNotification, "internal/notifications", "notification"},
 		{project.ResourceCache, "internal/caches", "cache"},
 		{project.ResourceDatabase, "internal/database", "db"},
 		{project.ResourceQueue, "internal/queues", "queue"},
@@ -326,6 +327,8 @@ func (p *ProjectRenderer) appResourceOwnerDependency(family appResourceFamily, a
 // appResourceGetterMatches identifies the public App boundaries for same-package owner extensions.
 func appResourceGetterMatches(key project.ResourceKey, name string) bool {
 	switch key {
+	case project.ResourceNotification:
+		return name == "Notifications"
 	case project.ResourceFeature:
 		return name == "Features"
 	case project.ResourceCache:
@@ -348,6 +351,8 @@ func appResourceGetterMatches(key project.ResourceKey, name string) bool {
 // appResourcePrivateFieldMatches protects owner extensions that access App managers within the Wire package.
 func appResourcePrivateFieldMatches(key project.ResourceKey, name string) bool {
 	switch key {
+	case project.ResourceNotification:
+		return name == "notifications"
 	case project.ResourceFeature:
 		return name == "features"
 	case project.ResourceCache:

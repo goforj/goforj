@@ -121,6 +121,7 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 	}
 	names := generate.ResourceNames(root, values)
 	names[project.ResourceFeature] = generate.ResourceNamesInScope(scoped)[project.ResourceFeature]
+	names[project.ResourceNotification] = generate.ResourceNamesInScope(scoped)[project.ResourceNotification]
 	for _, definition := range project.ResourceCatalog() {
 		for _, named := range definition.NamedResources {
 			if named.RequiredComponent != "" && !project.ProjectComponents(config).Enabled(named.RequiredComponent) {
@@ -134,7 +135,7 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 	return names
 }
 
-// resourceKey gives Feature keys their known App owner while preserving participation-based legacy resource scopes.
+// resourceKey gives App-aware resource keys their known owner while preserving participation-based legacy scopes.
 func resourceKey(config *project.Config, key string) string {
 	if owner, _ := managedAppResourceOwner(config, key); owner != "" {
 		return strings.TrimPrefix(key, owner+"_")
@@ -185,7 +186,7 @@ func knownAppResourceOwner(config *project.Config, key string) string {
 func managedAppResourceOwner(config *project.Config, key string) (string, bool) {
 	owner := knownAppResourceOwner(config, key)
 	base := strings.TrimPrefix(key, owner+"_")
-	if owner == "" || (!strings.HasPrefix(base, "FEATURE_") && !strings.HasPrefix(key, "FEATURE_")) {
+	if owner == "" || (!strings.HasPrefix(base, "FEATURE_") && !strings.HasPrefix(key, "FEATURE_") && !strings.HasPrefix(base, "NOTIFICATION_") && !strings.HasPrefix(key, "NOTIFICATION_")) {
 		return "", false
 	}
 	for name, app := range config.Apps {
@@ -193,7 +194,7 @@ func managedAppResourceOwner(config *project.Config, key string) (string, bool) 
 			continue
 		}
 		enabled := resourceAppliesTo(base, project.NormalizeConfiguredAppComponents(config, app.Components))
-		if !enabled && !strings.HasPrefix(key, "FEATURE_") && resourceAppliesTo(key, project.ProjectComponents(config)) {
+		if !enabled && !strings.HasPrefix(key, "FEATURE_") && !strings.HasPrefix(key, "NOTIFICATION_") && resourceAppliesTo(key, project.ProjectComponents(config)) {
 			return "", false
 		}
 		return owner, enabled
@@ -201,14 +202,19 @@ func managedAppResourceOwner(config *project.Config, key string) (string, bool) 
 	return "", false
 }
 
+// appAwareResource identifies families whose runtime assigns settings to a single App owner.
+func appAwareResource(key project.ResourceKey) bool {
+	return key == project.ResourceFeature || key == project.ResourceNotification
+}
+
 // resourceScopeAllowed aligns independent family interpretations with App-aware generator ownership.
 func resourceScopeAllowed(config *project.Config, key string, definition project.ResourceDefinition, scope string) bool {
 	owner := knownAppResourceOwner(config, key)
-	if definition.Key == project.ResourceFeature {
+	if appAwareResource(definition.Key) {
 		return owner == strings.TrimSuffix(scope, "_")
 	}
 	managedOwner, enabled := managedAppResourceOwner(config, key)
-	return !enabled || managedOwner == "" || !strings.HasPrefix(key, managedOwner+"_FEATURE_")
+	return !enabled || managedOwner == "" || (!strings.HasPrefix(key, managedOwner+"_FEATURE_") && !strings.HasPrefix(key, managedOwner+"_NOTIFICATION_"))
 }
 
 // resourceAppliesTo distinguishes live resource scopes while allowing definitions for future components to retain their fallback interpretation.
@@ -236,7 +242,7 @@ func rootResourceKey(config *project.Config, key string) bool {
 		return true
 	}
 	for _, definition := range project.ResourceCatalog() {
-		if definition.Key == project.ResourceFeature && !definition.AppliesTo(project.ProjectComponents(config)) {
+		if appAwareResource(definition.Key) && !definition.AppliesTo(project.ProjectComponents(config)) {
 			continue
 		}
 		if strings.HasPrefix(key, definition.EnvironmentPrefix+"_") {

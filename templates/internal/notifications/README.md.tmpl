@@ -1,0 +1,13 @@
+# Notifications
+
+`App.Notifications()` exposes configured synchronous `notification.Sender` instances. Inject `*notifications.Manager` into application providers and select `Default()` or a generated named accessor before calling feature services.
+
+Enable the opt-in `notification` component, then use `NOTIFICATION_DRIVER=log` for redacted local capture. A nil send error means capture or provider acceptance, never proof of recipient receipt. The manager adds no background execution, retries, fallback, or fanout.
+
+This initial integration supports `log` and `webhook`. `NOTIFICATION_SUPPORTED_DRIVERS` is the compile-time manifest; changing an active driver within that manifest requires configuration and restart. Adding another supported driver requires `forj generate --notification` and rebuilding. Unsupported library drivers are not available through this manager.
+
+Named senders use `NOTIFICATION_<NAME>_DRIVER` and corresponding settings. For example, `NOTIFICATION_ALERTS_DRIVER=webhook` produces `manager.Alerts()`. App environment overlays follow the existing resource scope, such as `REPORTS_NOTIFICATION_DRIVER` and `REPORTS_NOTIFICATION_ALERTS_WEBHOOK_URL`. Each App initializes its own manager through NewManagerForApp using the existing environment prefix. Root-declared named resources are inherited; names declared only by another App are neither initialized nor advertised. Requesting another App's typed accessor fails fast instead of silently selecting local capture.
+
+Webhook settings are `WEBHOOK_URL`, `WEBHOOK_FORMAT` (`generic` or `slack`), `WEBHOOK_TIMEOUT` (positive duration, default `5s`), `WEBHOOK_BEARER_TOKEN`, and `WEBHOOK_ALLOW_PRIVATE` (default `false`), under the sender's prefix. Destinations and credentials belong to deployment configuration. Construction performs no network requests; shutdown closes only owned transport resources.
+
+Choose mail for email composition, events for reactions, and queue for durable deferred work. Application providers can explicitly compose selected senders with `notification.Fallback` or `notification.Fanout`. Uncertain acceptance must not automatically trigger another send. Use recording senders or a local HTTP server for tests.

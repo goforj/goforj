@@ -26,11 +26,11 @@ func (s *Session) resourceSetting(values map[string]string, key, suffix, app str
 			value = values[source]
 		}
 		if overlay, present := values[app+source]; app != "" && present && resourceScopeAllowed(s.config, app+source, definition, app) {
-			if definition.Key != project.ResourceFeature || overlay != "" {
+			if !appAwareResource(definition.Key) || overlay != "" {
 				value = overlay
 			}
 		}
-		if definition.Key == project.ResourceFeature && suffix == "DRIVER" {
+		if appAwareResource(definition.Key) && suffix == "DRIVER" {
 			value = strings.ToLower(strings.TrimSpace(value))
 			if value == "" {
 				return definition.DefaultDriver

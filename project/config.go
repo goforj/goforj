@@ -242,6 +242,7 @@ type Components struct {
 	Feature          bool `yaml:"feature" json:"feature,omitempty"`
 	CLI              bool `yaml:"cli" json:"cli"`
 	DemoApp          bool `yaml:"demo_app" json:"demo_app"`
+	Notification     bool `yaml:"notification" json:"notification,omitempty"`
 	Mail             bool `yaml:"mail" json:"mail"`
 	Auth             bool `yaml:"auth" json:"auth"`
 	OAuth            bool `yaml:"oauth" json:"oauth"`
@@ -268,6 +269,8 @@ func (c Components) Enabled(key ComponentKey) bool {
 		return c.CLI
 	case ComponentDemoApp:
 		return c.DemoApp
+	case ComponentNotification:
+		return c.Notification
 	case ComponentMail:
 		return c.Mail
 	case ComponentAuth:
@@ -316,6 +319,8 @@ func (c *Components) SetEnabled(key ComponentKey, enabled bool) {
 		c.CLI = enabled
 	case ComponentDemoApp:
 		c.DemoApp = enabled
+	case ComponentNotification:
+		c.Notification = enabled
 	case ComponentMail:
 		c.Mail = enabled
 	case ComponentAuth:

@@ -263,6 +263,13 @@ func TestCmdRunFollowsPrimitiveComponentIntent(t *testing.T) {
 	enabled := true
 	resources := []primitiveGenerationResource{
 		{
+			name: "Notifications", componentKey: "notification", generatedPackage: filepath.Join("internal", "notifications"),
+			stalePackages: []string{filepath.Join("internal", "notifications")},
+			environment:   "NOTIFICATION_DRIVER=log\nNOTIFICATION_SUPPORTED_DRIVERS=log\n",
+			disabledError: "Notifications component is disabled", legacyDirectoryFallback: true,
+			selectExplicitly: func(cmd *Cmd) { cmd.Notification = true },
+		},
+		{
 			name: "Cache", componentKey: "cache", generatedPackage: filepath.Join("internal", "caches"),
 			stalePackages: []string{filepath.Join("internal", "caches")},
 			environment:   "CACHE_DRIVER=memory\nCACHE_SUPPORTED_DRIVERS=memory\n",

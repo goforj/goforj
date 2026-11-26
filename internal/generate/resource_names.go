@@ -16,13 +16,14 @@ func ResourceNames(root string, values map[string]string) map[project.ResourceKe
 // resourceNames keeps all inventory callers on the generator's named-resource discovery paths.
 func resourceNames(input generationInput) map[project.ResourceKey][]string {
 	return map[project.ResourceKey][]string{
-		project.ResourceFeature:  discoverFeatureNames(input),
-		project.ResourceDatabase: discoverDBConnectionNames(input),
-		project.ResourceCache:    discoverCacheStoreNames(input),
-		project.ResourceQueue:    discoverQueueNames(input),
-		project.ResourceEvents:   discoverEventNames(input),
-		project.ResourceStorage:  discoverStorageDiskNames(input),
-		project.ResourceMail:     discoverMailNames(input),
+		project.ResourceNotification: discoverNotificationNames(input),
+		project.ResourceFeature:      discoverFeatureNames(input),
+		project.ResourceDatabase:     discoverDBConnectionNames(input),
+		project.ResourceCache:        discoverCacheStoreNames(input),
+		project.ResourceQueue:        discoverQueueNames(input),
+		project.ResourceEvents:       discoverEventNames(input),
+		project.ResourceStorage:      discoverStorageDiskNames(input),
+		project.ResourceMail:         discoverMailNames(input),
 	}
 }
 
@@ -51,6 +52,17 @@ func ResourceNamesByApp(root string, values map[string]string, config *project.C
 			// Explicit configuration makes ownership discovery independent of config loading errors.
 			featureScopes, _ := generationFeatureScopes(input)
 			for _, scope := range featureScopes {
+				scoped := make([]string, len(scope.Names))
+				for index, name := range scope.Names {
+					scoped[index] = strings.ToLower(name)
+				}
+				scopes[scope.Prefix] = scoped
+			}
+			continue
+		}
+		if definition.Key == project.ResourceNotification {
+			notificationScopes, _ := generationNotificationScopes(input)
+			for _, scope := range notificationScopes {
 				scoped := make([]string, len(scope.Names))
 				for index, name := range scope.Names {
 					scoped[index] = strings.ToLower(name)

@@ -22,6 +22,8 @@ func BaselineDrivers(resource project.ResourceKey) []string {
 		drivers = eventLocalDrivers
 	case project.ResourceStorage:
 		drivers = storageLocalDrivers
+	case project.ResourceNotification:
+		drivers = notificationLocalDrivers
 	case project.ResourceMail:
 		drivers = mailLocalDrivers
 	}

@@ -404,6 +404,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.validateFeatureRenderTransition(projectComponents); err != nil {
 		return err
 	}
+	if err := p.validateNotificationRenderTransition(projectComponents); err != nil {
+		return err
+	}
 	if err := p.validateStorageRenderTransition(projectComponents); err != nil {
 		return err
 	}
@@ -894,6 +897,7 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				return p.writeTemplates(templates)
 			},
 		},
+		{title: "Notification Components Rendering", enabled: projectComponents.Notification, templates: []string{"internal/notifications/README.md.tmpl"}},
 		{
 			title:   "Mail Components Rendering",
 			enabled: projectComponents.Mail,
@@ -1296,6 +1300,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
+	if err := p.validateNotificationRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
 	if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
@@ -1322,6 +1329,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 			return err
 		}
 		if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
+		if err := p.validateNotificationRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
@@ -1367,9 +1377,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.renderApp(app); err != nil {
 		return err
 	}
-	if appConfigChanged && !projectCapabilitiesChanged && p.projectRenderComponents().Feature {
-		// App Feature scopes can also claim keys previously interpreted as another resource family's named resources.
-		if err := p.runGenerateAll(); err != nil {
+	if appConfigChanged && !projectCapabilitiesChanged {
+		// App ownership changes even when adding an App leaves the project capability union unchanged.
+		if _, err := p.runGenerateAppResources(); err != nil {
 			return err
 		}
 	}
@@ -1504,12 +1514,11 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (removeResult makeapp.Remov
 	if err := p.publishPendingResourceEnvironment(); err != nil {
 		return result, err
 	}
-	if afterProjectComponents.Feature {
-		if err := p.runGenerateAll(); err != nil {
-			return result, err
-		}
-		result.Updated = append(result.Updated, generate.OutputPaths(generate.GenerationSelectionFromComponents(afterProjectComponents))...)
+	updated, err := p.runGenerateAppResources()
+	if err != nil {
+		return result, err
 	}
+	result.Updated = append(result.Updated, updated...)
 	if err := p.writeTemplates([]string{
 		"internal/runtime/apps.go.tmpl",
 		"internal/runtime/apps_test.go.tmpl",
@@ -1543,11 +1552,12 @@ func (p *ProjectRenderer) appRemovalResourceSettingPredicate(app project.App, ca
 			if owner != removedPrefix {
 				return true
 			}
-			if removedComponents.Feature {
+			relative := strings.TrimPrefix(key, removedPrefix+"_")
+			if (removedComponents.Feature && strings.HasPrefix(relative, "FEATURE_")) || (removedComponents.Notification && strings.HasPrefix(relative, "NOTIFICATION_")) {
 				return false
 			}
 		}
-		if beforeProjectComponents.Feature && generate.SharedResourceEnvironmentSetting(key, afterProjectComponents) {
+		if (beforeProjectComponents.Feature || beforeProjectComponents.Notification) && generate.SharedResourceEnvironmentSetting(key, afterProjectComponents) {
 			return true
 		}
 		for _, prefix := range knownAppPrefixes {
@@ -1613,6 +1623,23 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 	if before.Cache && !after.Cache {
 		if err := p.validateCacheRenderTransition(after, app); err != nil {
 			return fmt.Errorf("cannot remove App %q because it is the last App using Cache: %w", app.Name, err)
+		}
+	}
+	if before.Notification && !after.Notification {
+		residue, err := p.workspace.notificationGeneratedResiduePath()
+		if err != nil {
+			return err
+		}
+		if residue != "" {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Notifications while %s exists; automatic Notifications removal is not supported", app.Name, residue)
+		}
+		path := filepath.Join(projectlayout.WireDir(".", app), "app.go")
+		exists, err := p.notificationAccessorExists(path)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Notifications while %s exposes the generated Notifications API; automatic Notifications removal is not supported", app.Name, path)
 		}
 	}
 	return nil
@@ -3427,6 +3454,18 @@ func (p *ProjectRenderer) runGenerateAll() error {
 	}
 	p.lines = append(p.lines, renderCountsLine("forj generate", result.TotalFiles, 0, "files"))
 	return nil
+}
+
+// runGenerateAppResources reconciles managers whose names can change with App ownership.
+func (p *ProjectRenderer) runGenerateAppResources() ([]string, error) {
+	components := p.projectRenderComponents()
+	if !components.Feature && !components.Notification {
+		return nil, nil
+	}
+	if err := p.runGenerateAll(); err != nil {
+		return nil, err
+	}
+	return generate.OutputPaths(generate.GenerationSelectionFromComponents(components)), nil
 }
 
 // scaffoldDemoFrontend centralizes scaffold demo frontend behavior so callers follow the same contract.
