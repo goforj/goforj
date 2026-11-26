@@ -420,6 +420,7 @@ type majorSurfaceVerifierCase struct {
 	additional           []evaluationMutation
 	behavior             *evaluationBehaviorMutation
 	alternates           []evaluationFileMutation
+	rebuildAlternate     bool
 	alternateRenames     []evaluationPathRename
 	disconnectedProvider string
 	unusedAppProvider    string
@@ -1054,6 +1055,9 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 	}
 	if len(test.alternates) > 0 {
 		originals := applyEvaluationAlternates(t, projectRoot, test.alternates)
+		if test.rebuildAlternate {
+			buildEvaluationAlternate(t, projectRoot, forjExecutable, environment)
+		}
 		alternateChanges := evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)
 		alternateResult, verifyErr := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, Changes: alternateChanges})
 		if verifyErr != nil {
@@ -1063,6 +1067,9 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 			t.Fatalf("alternate outcome = %#v; checks = %#v", alternateResult.FrameworkOutcome, alternateResult.Checks)
 		}
 		restoreEvaluationAlternates(t, originals)
+		if test.rebuildAlternate {
+			buildEvaluationAlternate(t, projectRoot, forjExecutable, environment)
+		}
 	}
 	if len(test.alternateRenames) > 0 {
 		func() {
@@ -1138,6 +1145,19 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		verifyEvaluationBehaviorMutant(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, *test.behavior, environment)
 	}
 	return result
+}
+
+// buildEvaluationAlternate regenerates and tests App composition when a legitimate alternative changes constructor dependencies.
+func buildEvaluationAlternate(t *testing.T, root, forjExecutable string, environment []string) {
+	t.Helper()
+	for _, arguments := range [][]string{{forjExecutable, "build"}, {"go", "test", "./..."}} {
+		command := exec.CommandContext(t.Context(), arguments[0], arguments[1:]...)
+		command.Dir = root
+		command.Env = append([]string(nil), environment...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("validate App alternative: %v\n%s", err, output)
+		}
+	}
 }
 
 // verifyUnusedAppServiceProvider proves an unused Wire set cannot satisfy actual App resource ownership.
@@ -1683,9 +1703,15 @@ func TestCheckoutBusinessMetricsVerifierCalibration(t *testing.T) {
 					{path: "app/wire/inject_services_app.go", old: "provideCheckoutService(manager *metrics.Manager)", replacement: "provideCheckoutService(manager *metrics.Manager, processor checkout.Processor)"},
 					{path: "app/wire/inject_services_app.go", old: "checkout.NewProcessor(), time.Now)", replacement: "processor, time.Now)"},
 					{path: "app/wire/inject_services_app.go", old: "\tprovideCheckoutService,\n", replacement: "\tprovideCheckoutService,\n\tcheckout.NewProcessor,\n"},
+					{path: "app/lifecycle.go", old: "\t\"context\"", replacement: "\t\"context\"\n\t\"example.com/invoiceeval/internal/checkout\""},
+					{path: "app/lifecycle.go", old: "type LifecycleRegistry struct{}", replacement: "type LifecycleRegistry struct{ checkout *checkout.Service }"},
+					{path: "app/lifecycle.go", old: "func NewLifecycleRegistry() *LifecycleRegistry {\n\treturn &LifecycleRegistry{}\n}", replacement: "func NewLifecycleRegistry(service *checkout.Service) *LifecycleRegistry {\n\treturn &LifecycleRegistry{checkout:service}\n}"},
+					{path: "internal/http/metrics_test.go", old: "import (", replacement: "import (\n\t\"context\"\n\t\"time\"\n\t\"example.com/invoiceeval/internal/checkout\""},
+					{path: "internal/http/metrics_test.go", old: "metricsManager := metrics.NewManager()", replacement: "metricsManager := metrics.NewManager()\nservice:=checkout.NewService(metricsManager.Registry(),checkout.NewProcessor(),time.Now)\nif err:=service.Complete(context.Background(),\"tenant:calibration\",\"request:calibration\");err!=nil {t.Fatal(err)}"},
+					{path: "internal/http/metrics_test.go", old: "assert.True(t, strings.Contains(rec.Body.String(), \"# TYPE http_request_duration_seconds histogram\"))", replacement: "assert.True(t, strings.Contains(rec.Body.String(), \"# TYPE http_request_duration_seconds histogram\"))\nassert.Contains(t,rec.Body.String(),\"checkout_completed_total{outcome=\\\"success\\\"} 1\")\nassert.Contains(t,rec.Body.String(),\"checkout_duration_seconds_count{outcome=\\\"success\\\"} 1\")"},
 				}
 			}
-			result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{alternates: alternates, unusedAppProvider: "provideCheckoutService", evaluation: "instrument-checkout-metrics", scenario: "checkout-business-metrics", path: mutation.path, old: mutation.old, mutant: mutation.replacement, additional: mutation.additional, wantFailed: mutation.failed, wantCompile: true})
+			result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{rebuildAlternate: mutation.name == "registration-only", alternates: alternates, unusedAppProvider: "provideCheckoutService", evaluation: "instrument-checkout-metrics", scenario: "checkout-business-metrics", path: mutation.path, old: mutation.old, mutant: mutation.replacement, additional: mutation.additional, wantFailed: mutation.failed, wantCompile: true})
 			for _, id := range []string{"metrics-library-adoption", "test-function-added"} {
 				if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
 					t.Fatalf("golden quality %s did not pass: %#v", id, result.Checks)
