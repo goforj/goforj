@@ -424,6 +424,7 @@ type majorSurfaceVerifierCase struct {
 	alternateRenames     []evaluationPathRename
 	disconnectedProvider string
 	unusedAppProvider    string
+	unrootAppDependency  []evaluationFileMutation
 	wantFailed           string
 	wantCompile          bool
 }
@@ -1055,7 +1056,7 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 	}
 	for _, id := range test.requiredQuality {
 		if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
-			t.Fatalf("golden quality check %q did not pass: %#v", id, result.Checks)
+			t.Fatalf("golden quality %s did not pass: %#v", id, result.Checks)
 		}
 	}
 	if len(test.alternates) > 0 {
@@ -1088,7 +1089,9 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		}()
 	}
 	if test.unusedAppProvider != "" {
+		originals := applyEvaluationAlternates(t, projectRoot, test.unrootAppDependency)
 		verifyUnusedAppServiceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.unusedAppProvider, result.Checks, forjExecutable, environment)
+		restoreEvaluationAlternates(t, originals)
 	}
 	if test.disconnectedProvider != "" {
 		verifyDisconnectedNamedResourceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.disconnectedProvider, test.wantFailed, environment)
@@ -1184,7 +1187,7 @@ func verifyUnusedAppServiceProvider(t *testing.T, verifier eval.Verifier, baseli
 			t.Errorf("restore App services Wire: %v", err)
 		}
 	}()
-	for _, arguments := range [][]string{{"go", "test", "-run", "^$", "./..."}, {forjExecutable, "build"}} {
+	for _, arguments := range [][]string{{forjExecutable, "build"}, {"go", "test", "-run", "^$", "./..."}} {
 		command := exec.CommandContext(t.Context(), arguments[0], arguments[1:]...)
 		command.Dir = projectRoot
 		command.Env = append([]string(nil), environment...)
@@ -1600,7 +1603,6 @@ func evaluationCheckHasStatus(checks []eval.EndpointResult, id string, status ev
 	return false
 }
 
-<<<<<<< HEAD
 // TestCatalogSearchVerifierCalibration proves real-backend filtering and receipt visibility reject compiling semantic mutants.
 func TestCatalogSearchVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
@@ -1641,29 +1643,10 @@ func TestIncidentNotificationVerifierCalibration(t *testing.T) {
 			old:         "return NewAlertService(notifications.Primary(), notifications.Secondary())",
 			mutant:      "_ = notifications.Primary(); return NewAlertService(notifications.Default(), notifications.Secondary())",
 			wantFailed:  "incident-notification-behavior",
-=======
-// TestConfigureDispatchStartupVerifierCalibration proves required configuration and optional defaults survive real composition.
-func TestConfigureDispatchStartupVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
-		requiredQuality: []string{"dispatch-env-api"},
-		evaluation:      "configure-dispatch-startup",
-		scenario:        "dispatch-startup-config",
-		path:            "internal/dispatch/config.go",
-		old:             `if strings.TrimSpace(config.Token) == "" {`,
-		mutant:          `if false && strings.TrimSpace(config.Token) == "" {`,
-		wantFailed:      "dispatch-startup-behavior",
-		wantCompile:     true,
-		behavior: &evaluationBehaviorMutation{
-			path:        "internal/dispatch/config.go",
-			old:         `scope.GetBool("ENABLED", "true")`,
-			mutant:      `scope.GetBool("ENABLED", "false")`,
-			wantFailed:  "dispatch-startup-behavior",
->>>>>>> 9f7c7b29 (feat: calibrate typed startup configuration)
 			wantCompile: true,
 		},
 	})
 }
-<<<<<<< HEAD
 
 // TestTargetFeatureRolloutVerifierCalibration rejects compiling targeting, snapshot, and resource-wiring mutations.
 func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
@@ -1691,5 +1674,31 @@ func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
 		})
 	}
 }
-=======
->>>>>>> 9f7c7b29 (feat: calibrate typed startup configuration)
+
+// TestConfigureDispatchStartupVerifierCalibration proves required configuration and optional defaults survive real composition.
+func TestConfigureDispatchStartupVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		requiredQuality:   []string{"dispatch-env-api"},
+		unusedAppProvider: "dispatch.NewService",
+		unrootAppDependency: []evaluationFileMutation{
+			{path: "app/lifecycle.go", old: `"example.com/invoiceeval/internal/dispatch"`, replacement: ""},
+			{path: "app/lifecycle.go", old: `type LifecycleRegistry struct{ dispatch *dispatch.Service }`, replacement: `type LifecycleRegistry struct{}`},
+			{path: "app/lifecycle.go", old: `func NewLifecycleRegistry(service *dispatch.Service) *LifecycleRegistry`, replacement: `func NewLifecycleRegistry() *LifecycleRegistry`},
+			{path: "app/lifecycle.go", old: `&LifecycleRegistry{dispatch: service}`, replacement: `&LifecycleRegistry{}`},
+		},
+		evaluation:  "configure-dispatch-startup",
+		scenario:    "dispatch-startup-config",
+		path:        "internal/dispatch/config.go",
+		old:         `if strings.TrimSpace(config.Token) == "" {`,
+		mutant:      `if false && strings.TrimSpace(config.Token) == "" {`,
+		wantFailed:  "dispatch-startup-behavior",
+		wantCompile: true,
+		behavior: &evaluationBehaviorMutation{
+			path:        "internal/dispatch/config.go",
+			old:         `scope.GetBool("ENABLED", "true")`,
+			mutant:      `scope.GetBool("ENABLED", "false")`,
+			wantFailed:  "dispatch-startup-behavior",
+			wantCompile: true,
+		},
+	})
+}
