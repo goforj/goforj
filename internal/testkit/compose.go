@@ -439,7 +439,7 @@ func prepareRenderedComposeTestEnv(projectDir string) error {
 	}
 	overrides := map[string]string{}
 	if _, ok := model.Services["mysql"]; ok {
-		port, err := findOpenPortInRange()
+		port, err := AllocateRenderedComposePort()
 		if err != nil {
 			return fmt.Errorf("allocate mysql test port: %w", err)
 		}
@@ -447,7 +447,7 @@ func prepareRenderedComposeTestEnv(projectDir string) error {
 		overrides["DB_PORT"] = strconv.Itoa(port)
 	}
 	if _, ok := model.Services["postgres"]; ok {
-		port, err := findOpenPortInRange()
+		port, err := AllocateRenderedComposePort()
 		if err != nil {
 			return fmt.Errorf("allocate postgres test port: %w", err)
 		}
@@ -455,7 +455,7 @@ func prepareRenderedComposeTestEnv(projectDir string) error {
 		overrides["DB_PORT"] = strconv.Itoa(port)
 	}
 	if _, ok := model.Services["redis"]; ok {
-		port, err := findOpenPortInRange()
+		port, err := AllocateRenderedComposePort()
 		if err != nil {
 			return fmt.Errorf("allocate redis test port: %w", err)
 		}
@@ -463,7 +463,7 @@ func prepareRenderedComposeTestEnv(projectDir string) error {
 		overrides["REDIS_PORT"] = strconv.Itoa(port)
 	}
 	if _, ok := model.Services["rustfs"]; ok {
-		port, err := findOpenPortInRange()
+		port, err := AllocateRenderedComposePort()
 		if err != nil {
 			return fmt.Errorf("allocate RustFS API test port: %w", err)
 		}
@@ -471,11 +471,11 @@ func prepareRenderedComposeTestEnv(projectDir string) error {
 		overrides["STORAGE_ENDPOINT"] = "http://" + net.JoinHostPort("localhost", strconv.Itoa(port))
 	}
 	if _, ok := model.Services["mailpit"]; ok {
-		smtpPort, err := findOpenPortInRange()
+		smtpPort, err := AllocateRenderedComposePort()
 		if err != nil {
 			return fmt.Errorf("allocate mailpit smtp test port: %w", err)
 		}
-		httpPort, err := findOpenPortInRange()
+		httpPort, err := AllocateRenderedComposePort()
 		if err != nil {
 			return fmt.Errorf("allocate mailpit http test port: %w", err)
 		}
@@ -555,8 +555,9 @@ func composeServiceProfileEnabled(service composeService, activeProfiles map[str
 	return false
 }
 
-// findOpenPortInRange centralizes find open port in range behavior so callers follow the same contract.
-func findOpenPortInRange() (int, error) {
+// AllocateRenderedComposePort selects an available port from the shared test range without reusing it in this process.
+// The low default range avoids Docker's automatic ephemeral host-port allocations.
+func AllocateRenderedComposePort() (int, error) {
 	start, end := renderedComposePortRange()
 	width := end - start + 1
 	renderedComposePortsMu.Lock()

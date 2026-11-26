@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -460,24 +459,7 @@ func TestRenderedObservabilityComposeStartsAndSeedsGrafana(t *testing.T) {
 		t.Fatalf("generate observability files: %v", err)
 	}
 
-	vmPort := freeTCPPort(t)
-	grafanaPort := freeTCPPort(t)
-	mailpitSMTPPort := freeTCPPort(t)
-	mailpitHTTPPort := freeTCPPort(t)
-	databasePort := freeTCPPort(t)
-	redisPort := freeTCPPort(t)
-	portOverrides := map[string]string{
-		"OBSERVABILITY_VM_PORT": vmPort,
-		"GRAFANA_PORT":          grafanaPort,
-		"MAILPIT_SMTP_PORT":     mailpitSMTPPort,
-		"MAILPIT_HTTP_PORT":     mailpitHTTPPort,
-		"DB_MYSQL_PORT":         databasePort,
-		"REDIS_PORT":            redisPort,
-		"TEMPO_HTTP_PORT":       freeTCPPort(t),
-		"TEMPO_OTLP_HTTP_PORT":  freeTCPPort(t),
-		"TEMPO_OTLP_GRPC_PORT":  freeTCPPort(t),
-		"LOKI_HTTP_PORT":        freeTCPPort(t),
-	}
+	portOverrides := observabilityComposePortOverrides(t)
 	if err := testkit.ReplaceOrAppendEnvValues([]string{filepath.Join(projectDir, ".env")}, portOverrides); err != nil {
 		t.Fatalf("set observability smoke ports: %v", err)
 	}
@@ -629,15 +611,50 @@ func TestRenderedObservabilityTargetsIncludeConventionalApps(t *testing.T) {
 	assertRenderedMetricsTargets(t, targets, "Observability Target Test", "local", want)
 }
 
-// freeTCPPort centralizes free tcpport behavior so callers follow the same contract.
-func freeTCPPort(t *testing.T) string {
+// observabilityComposePortOverrides uses the shared Compose test pool to avoid ephemeral collisions and repeated ports.
+func observabilityComposePortOverrides(t *testing.T) map[string]string {
 	t.Helper()
-	addr := findFreeAddr(t)
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		t.Fatalf("split free addr %q: %v", addr, err)
+	overrides := make(map[string]string, 10)
+	for _, key := range []string{
+		"OBSERVABILITY_VM_PORT", "GRAFANA_PORT", "MAILPIT_SMTP_PORT", "MAILPIT_HTTP_PORT", "DB_MYSQL_PORT",
+		"REDIS_PORT", "TEMPO_HTTP_PORT", "TEMPO_OTLP_HTTP_PORT", "TEMPO_OTLP_GRPC_PORT", "LOKI_HTTP_PORT",
+	} {
+		port, err := testkit.AllocateRenderedComposePort()
+		if err != nil {
+			t.Fatalf("allocate observability port %s: %v", key, err)
+		}
+		overrides[key] = strconv.Itoa(port)
 	}
-	return port
+	return overrides
+}
+
+// TestObservabilityComposePortsUseBoundedUniquePool keeps the ten smoke endpoints distinct and inside the configured test range.
+func TestObservabilityComposePortsUseBoundedUniquePool(t *testing.T) {
+	const first, last = 22000, 22099
+	t.Setenv("FORJ_INTEGRATION_PORT_RANGE_START", strconv.Itoa(first))
+	t.Setenv("FORJ_INTEGRATION_PORT_RANGE_END", strconv.Itoa(last))
+	overrides := observabilityComposePortOverrides(t)
+	if len(overrides) != 10 {
+		t.Fatalf("smoke endpoints = %d, want 10", len(overrides))
+	}
+	seen := make(map[int]bool)
+	record := func(port int) {
+		t.Helper()
+		if port < first || port > last {
+			t.Fatalf("port %d outside configured bounded range %d-%d", port, first, last)
+		}
+		if seen[port] {
+			t.Fatalf("port %d was reused after its availability listener closed", port)
+		}
+		seen[port] = true
+	}
+	for key, raw := range overrides {
+		port, err := strconv.Atoi(raw)
+		if err != nil {
+			t.Fatalf("%s port=%q: %v", key, raw, err)
+		}
+		record(port)
+	}
 }
 
 // runDockerCompose centralizes run docker compose behavior so callers follow the same contract.
