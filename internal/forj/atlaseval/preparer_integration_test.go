@@ -1146,6 +1146,16 @@ func verifyUnusedAppServiceProvider(t *testing.T, verifier eval.Verifier, baseli
 	t.Helper()
 	// The prepared lifecycle lets a disconnected service compile so only the App consumption gate rejects it.
 	if rootPath != "" {
+		generated := filepath.Join(projectRoot, "app", "wire", "wire_gen.go")
+		originalWire, err := os.ReadFile(generated)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := os.WriteFile(generated, originalWire, 0644); err != nil {
+				t.Error(err)
+			}
+		}()
 		target := filepath.Join(projectRoot, rootPath)
 		original, err := os.ReadFile(target)
 		if err != nil {
@@ -1199,7 +1209,7 @@ func verifyUnusedAppServiceProvider(t *testing.T, verifier eval.Verifier, baseli
 			t.Errorf("restore App services Wire: %v", err)
 		}
 	}()
-	for _, arguments := range [][]string{{"go", "test", "-run", "^$", "./..."}, {forjExecutable, "build"}} {
+	for _, arguments := range [][]string{{forjExecutable, "build"}, {"go", "test", "-run", "^$", "./..."}} {
 		command := exec.CommandContext(t.Context(), arguments[0], arguments[1:]...)
 		command.Dir = projectRoot
 		command.Env = append([]string(nil), environment...)
