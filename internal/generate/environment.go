@@ -7,10 +7,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/goforj/goforj/project"
 	"github.com/joho/godotenv"
 )
 
 var generationEnvironmentPrefixes = []string{
+	"FEATURE_",
 	"CACHE_",
 	"DB_",
 	"EVENTS_",
@@ -68,6 +70,32 @@ type generationInput struct {
 	projectDir  string
 	environment generationEnvironment
 	appPrefixes []string
+	config      *project.Config
+	appNames    []string
+}
+
+// projectConfig preserves direct-generator loading while allowing prospective inventory to use an explicit configuration.
+func (input generationInput) projectConfig() (*project.Config, error) {
+	if input.config != nil {
+		return input.config, nil
+	}
+	return project.LoadProjectConfigAt(input.projectDir)
+}
+
+// configuredAppEnvPrefixes uses the same App inventory for explicit and on-disk configurations.
+func (input generationInput) configuredAppEnvPrefixes() map[string]struct{} {
+	if input.config != nil {
+		return generationAppEnvPrefixesFromNames(input.knownAppNames(input.config))
+	}
+	return configuredGenerationAppEnvPrefixes(input.projectDir)
+}
+
+// knownAppNames preserves an explicit prospective App inventory when filesystem removal has not happened yet.
+func (input generationInput) knownAppNames(config *project.Config) []string {
+	if input.appNames != nil {
+		return input.appNames
+	}
+	return generationKnownAppNames(input.projectDir, config)
 }
 
 // loadProjectGenerationInput reads one project-owned environment snapshot without changing process state.

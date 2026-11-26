@@ -1,6 +1,10 @@
 package generate
 
 const (
+	// FeatureManagerPath identifies the generated feature configuration lifecycle.
+	FeatureManagerPath = "internal/features/manager_gen.go"
+	// FeatureAccessorsPath identifies accessors for configured feature evaluators.
+	FeatureAccessorsPath = "internal/features/accessors_gen.go"
 	// CacheManagerPath identifies the manager source owned by cache generation.
 	CacheManagerPath = "internal/caches/manager_gen.go"
 	// CacheAccessorsPath identifies accessors derived from application cache declarations.
@@ -36,6 +40,7 @@ func OutputPaths(selection GenerationSelection) []string {
 		enabled bool
 		paths   []string
 	}{
+		{selection.Feature, []string{FeatureManagerPath, FeatureAccessorsPath}},
 		{selection.Cache, []string{CacheManagerPath, CacheAccessorsPath}},
 		{selection.Queue, []string{QueueManagerPath, QueueAccessorsPath}},
 		{selection.Storage, []string{StorageManagerPath, StorageAccessorsPath}},

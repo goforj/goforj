@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 
@@ -16,6 +17,9 @@ import (
 // resourceConsumerResolver keeps the project-wide inputs together because every App scope must use the same plan and service placement policy.
 type resourceConsumerResolver struct {
 	values                map[string]string
+	rawValues             map[string]string
+	appPrefixes           []string
+	featureAppPrefixes    map[string]bool
 	plan                  project.ResourcePlan
 	projectComponents     project.Components
 	projectDatabaseDriver string
@@ -45,10 +49,10 @@ type resourceEndpointResolution struct {
 	local    bool
 }
 
-// ResolveConsumers applies each configured App's actual participation to resource discovery.
-func ResolveConsumers(source []byte, plan project.ResourcePlan, projectComponents project.Components, config *project.Config) ([]project.EffectiveResourceConsumer, error) {
+// ResolveConsumers applies configured, Dev, and optional conventional App inventories to resource discovery.
+func ResolveConsumers(source []byte, plan project.ResourcePlan, projectComponents project.Components, config *project.Config, knownAppNames ...string) ([]project.EffectiveResourceConsumer, error) {
 	defaultComponents := projectComponents
-	appNames := configuredResourceAppNames(config)
+	appNames := KnownAppNames(config, knownAppNames...)
 	appComponents := make(map[string]project.Components, len(appNames))
 	if config != nil {
 		defaultComponents = config.Render.Components.WithResolvedDependencies()
@@ -69,13 +73,21 @@ func ResolveConsumers(source []byte, plan project.ResourcePlan, projectComponent
 
 // newResourceConsumerResolver parses the owner environment once so every App scope observes the same resolved dotenv assignments.
 func newResourceConsumerResolver(source []byte, plan project.ResourcePlan, projectComponents project.Components) (resourceConsumerResolver, error) {
-	values, err := resourceEnvironmentAssignments(source)
+	parsed, err := godotenv.Unmarshal(string(source))
 	if err != nil {
 		return resourceConsumerResolver{}, fmt.Errorf("parse effective resource environment: %w", err)
+	}
+	values := make(map[string]string, len(parsed))
+	rawValues := make(map[string]string, len(parsed))
+	for key, value := range parsed {
+		key = strings.ToUpper(strings.TrimSpace(key))
+		values[key] = strings.TrimSpace(value)
+		rawValues[key] = value
 	}
 	databaseSelection, _ := plan.Selection(project.ResourceDatabase)
 	return resourceConsumerResolver{
 		values:                values,
+		rawValues:             rawValues,
 		plan:                  plan,
 		projectComponents:     projectComponents,
 		projectDatabaseDriver: databaseSelection.Active,
@@ -84,7 +96,21 @@ func newResourceConsumerResolver(source []byte, plan project.ResourcePlan, proje
 
 // resolve keeps applicability App-local while retaining project-wide service placement.
 func (resolver resourceConsumerResolver) resolve(defaultComponents project.Components, appNames []string, appComponents map[string]project.Components) ([]project.EffectiveResourceConsumer, error) {
-	appPrefixes := resourceAppPrefixes(resolver.values, appNames)
+	resolver.featureAppPrefixes = map[string]bool{}
+	enabledFeaturePrefixes := []string{}
+	// Feature ownership requires a real App inventory; legacy resources still infer scopes from environment keys.
+	for _, app := range resourceAppPrefixes(nil, appNames, resolver.projectComponents.Feature) {
+		resolver.appPrefixes = append(resolver.appPrefixes, app.prefix)
+		components, ok := appComponents[app.name]
+		if !ok {
+			components = defaultComponents
+		}
+		resolver.featureAppPrefixes[app.prefix] = components.Feature
+		if components.Feature {
+			enabledFeaturePrefixes = append(enabledFeaturePrefixes, app.prefix)
+		}
+	}
+	appPrefixes := resourceAppPrefixes(resolver.values, appNames, resolver.projectComponents.Feature, enabledFeaturePrefixes...)
 	consumers := []project.EffectiveResourceConsumer{}
 	seen := map[string]bool{}
 
@@ -99,8 +125,9 @@ func (resolver resourceConsumerResolver) resolve(defaultComponents project.Compo
 	for _, app := range appPrefixes {
 		scopeComponents, ok := appComponents[app.name]
 		if !ok {
-			// Environment-only prefixes follow the default App; using the project union would invent capabilities owned by a sibling.
+			// Unconfigured Apps inherit default resources, but Feature participation requires a known App.
 			scopeComponents = defaultComponents
+			scopeComponents.Feature = resolver.featureAppPrefixes[app.prefix]
 		}
 		resolved, err := resolver.resolveScope(resourceConsumerScope{app: app, components: scopeComponents})
 		if err != nil {
@@ -165,17 +192,31 @@ type resourceAppPrefix struct {
 	prefix string
 }
 
-// configuredResourceAppNames returns deterministic additional apps whose runtime overlays must participate in discovery.
-func configuredResourceAppNames(config *project.Config) []string {
-	if config == nil {
-		return nil
-	}
-	names := make([]string, 0, len(config.Apps))
-	for name := range config.Apps {
+// KnownAppNames returns normalized additional App identities from configuration, Dev inventory, and supplied conventional names.
+func KnownAppNames(config *project.Config, suppliedNames ...string) []string {
+	seen := map[string]bool{}
+	add := func(name string) {
 		name = str.Of(name).Trim().ToLower().String()
-		if name == "" || name == project.DefaultAppName {
-			continue
+		if name != "" && name != project.DefaultAppName {
+			seen[name] = true
 		}
+	}
+	if config != nil {
+		for name := range config.Apps {
+			add(name)
+		}
+		for name := range config.Dev.Apps {
+			add(name)
+		}
+		for name := range config.Dev.Run {
+			add(name)
+		}
+	}
+	for _, name := range suppliedNames {
+		add(name)
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -195,8 +236,8 @@ func resourceEnvironmentAssignments(source []byte) (map[string]string, error) {
 	return values, nil
 }
 
-// resourceAppPrefixes combines configured Apps with prefixes evidenced by resource-specific owner keys.
-func resourceAppPrefixes(values map[string]string, appNames []string) []resourceAppPrefix {
+// resourceAppPrefixes combines known Apps with legacy environment evidence while protecting enabled Feature ownership.
+func resourceAppPrefixes(values map[string]string, appNames []string, featureEnabled bool, enabledFeaturePrefixes ...string) []resourceAppPrefix {
 	prefixNames := map[string]string{}
 	for _, appName := range appNames {
 		appName = str.Of(appName).Trim().ToLower().String()
@@ -207,10 +248,22 @@ func resourceAppPrefixes(values map[string]string, appNames []string) []resource
 			prefixNames[prefix] = appName
 		}
 	}
+	knownPrefixes := make([]string, 0, len(prefixNames))
+	for prefix := range prefixNames {
+		knownPrefixes = append(knownPrefixes, prefix)
+	}
 	for key := range values {
+		owner := project.AppResourceKeyOwner(key, knownPrefixes)
+		if owner != "" && strings.HasPrefix(key, owner+"_FEATURE_") && slices.Contains(enabledFeaturePrefixes, owner) {
+			continue
+		}
 		markerIndex := -1
 		var markerDefinition project.ResourceDefinition
 		for _, definition := range project.ResourceCatalog() {
+			// Feature scopes require known Apps; legacy markers still support environment-only App names.
+			if definition.Key == project.ResourceFeature {
+				continue
+			}
 			marker := "_" + definition.EnvironmentPrefix + "_"
 			index := strings.Index(key, marker)
 			if index > 0 && (markerIndex < 0 || index < markerIndex) {
@@ -225,7 +278,7 @@ func resourceAppPrefixes(values map[string]string, appNames []string) []resource
 		if _, exists := prefixNames[prefix]; exists {
 			continue
 		}
-		if resourceFirstAppPrefix(prefix) {
+		if resourceFirstAppPrefix(prefix, featureEnabled) {
 			continue
 		}
 		prefixNames[prefix] = str.Of(prefix).ReplaceAll("_", "-").ToLower().String()
@@ -238,9 +291,12 @@ func resourceAppPrefixes(values map[string]string, appNames []string) []resource
 	return prefixes
 }
 
-// resourceFirstAppPrefix keeps ordinary RESOURCE_<NAME> scopes out of inferred App topology while allowing configured Apps with the same slug.
-func resourceFirstAppPrefix(prefix string) bool {
+// resourceFirstAppPrefix reserves legacy resource namespaces and shared Feature defaults while any App enables Feature.
+func resourceFirstAppPrefix(prefix string, featureEnabled bool) bool {
 	for _, definition := range project.ResourceCatalog() {
+		if definition.Key == project.ResourceFeature && !featureEnabled {
+			continue
+		}
 		resourcePrefix := definition.EnvironmentPrefix
 		if prefix == resourcePrefix || strings.HasPrefix(prefix, resourcePrefix+"_") {
 			return true
@@ -304,6 +360,9 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if named.Resource != resource {
 			continue
 		}
+		if (resource == project.ResourceFeature && project.AppResourceKeyOwner(named.EnvironmentKey, resolver.appPrefixes) != "") || resolver.enabledFeatureAppOwns(named.EnvironmentKey) {
+			continue
+		}
 		fallback := named.Active
 		if value, set := resolver.overlayValue(scope, named.EnvironmentKey); set && strings.TrimSpace(value) != "" {
 			fallback = value
@@ -317,6 +376,10 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		appMarker = scope.app.prefix + "_"
 	}
 	for key := range resolver.values {
+		owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
+		if (resource == project.ResourceFeature && owner != "" && owner != scope.app.prefix) || (resource != project.ResourceFeature && resolver.enabledFeatureAppOwns(key)) {
+			continue
+		}
 		baseKey := key
 		if appMarker != "" && strings.HasPrefix(baseKey, appMarker) {
 			baseKey = strings.TrimPrefix(baseKey, appMarker)
@@ -327,8 +390,8 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 			continue
 		}
 		if !strings.HasSuffix(baseKey, "_DRIVER") {
-			name, endpointScope := namedResourceEndpointScope(baseKey, resource)
-			if endpointScope {
+			name, namedScope := namedResourceSettingScope(baseKey, resource)
+			if namedScope {
 				if _, exists := drivers[name]; !exists {
 					drivers[name] = definition.NamedDriverDefault(rootDriver)
 				}
@@ -348,20 +411,23 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if !set || strings.TrimSpace(driver) == "" {
 			driver = definition.NamedDriverDefault(rootDriver)
 		}
+		if resource == project.ResourceFeature {
+			driver = resolver.featureDriver(scope, driverKey, definition.DefaultDriver)
+		}
 		drivers[strings.ToLower(name)] = str.Of(driver).Trim().ToLower().String()
 	}
 	return drivers
 }
 
-// namedResourceEndpointScope extracts a named resource from endpoint-only configuration such as DB_REPORTING_HOST.
-func namedResourceEndpointScope(key string, resource project.ResourceKey) (string, bool) {
+// namedResourceSettingScope recognizes declarations that select a named resource without an explicit driver.
+func namedResourceSettingScope(key string, resource project.ResourceKey) (string, bool) {
 	definition, ok := project.ResourceDefinitionByKey(resource)
 	if !ok {
 		return "", false
 	}
 	resourcePrefix := definition.EnvironmentPrefix + "_"
 	scopedKey := strings.TrimPrefix(key, resourcePrefix)
-	for _, suffix := range resourceEndpointSuffixes(definition) {
+	for _, suffix := range resourceSettingSuffixes(definition) {
 		marker := "_" + suffix
 		if !strings.HasSuffix(scopedKey, marker) {
 			continue
@@ -374,8 +440,8 @@ func namedResourceEndpointScope(key string, resource project.ResourceKey) (strin
 	return "", false
 }
 
-// resourceEndpointSuffixes returns the endpoint keys that can distinguish a named resource connection.
-func resourceEndpointSuffixes(definition project.ResourceDefinition) []string {
+// resourceSettingSuffixes retains endpoint discovery and includes native evaluator configuration declarations.
+func resourceSettingSuffixes(definition project.ResourceDefinition) []string {
 	suffixes := []string{}
 	seen := map[string]bool{}
 	add := func(suffix string) {
@@ -391,6 +457,11 @@ func resourceEndpointSuffixes(definition project.ResourceDefinition) []string {
 		add(str.Of(endpoint.Key).ToUpper().TrimPrefix(resourcePrefix).String())
 	}
 	switch definition.Key {
+	case project.ResourceFeature:
+		add("DOCUMENT")
+		add("PATH")
+		add("REFRESH_INTERVAL")
+		add("INITIALIZATION_TIMEOUT")
 	case project.ResourceDatabase:
 		add("DSN")
 		add("HOST")
@@ -411,6 +482,9 @@ func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerS
 		key += "_" + strings.ToUpper(connection.name)
 	}
 	key += "_DRIVER"
+	if connection.definition.Key == project.ResourceFeature {
+		return resolver.featureDriver(scope, key, connection.definition.DefaultDriver)
+	}
 	value, set := resolver.overlayValue(scope, key)
 	if !set {
 		return str.Of(fallback).Trim().ToLower().String()
@@ -423,6 +497,27 @@ func (resolver resourceConsumerResolver) effectiveDriver(scope resourceConsumerS
 		return connection.definition.DefaultDriver
 	}
 	return connection.definition.NamedDriverDefault(fallback)
+}
+
+// featureDriver preserves raw empty-value inheritance before normalizing the selected Feature driver.
+func (resolver resourceConsumerResolver) featureDriver(scope resourceConsumerScope, key, fallback string) string {
+	value := fallback
+	if project.AppResourceKeyOwner(key, resolver.appPrefixes) == "" {
+		if base := resolver.rawValues[key]; base != "" {
+			value = base
+		}
+	}
+	appKey := scope.app.prefix + "_" + key
+	if scope.app.prefix != "" && project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix {
+		if overlay := resolver.rawValues[appKey]; overlay != "" {
+			value = overlay
+		}
+	}
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 // resolveConsumer derives catalog service metadata and a credential-safe endpoint identity for one App-local connection.
@@ -701,16 +796,29 @@ func (resolver resourceConsumerResolver) scopedValue(scope resourceConsumerScope
 	return strings.TrimSpace(value)
 }
 
-// overlayValue applies the generated runtime's App-prefixed override precedence.
+// overlayValue applies runtime overlay precedence, retaining resource-first lookup for legacy managers.
 func (resolver resourceConsumerResolver) overlayValue(scope resourceConsumerScope, key string) (string, bool) {
 	key = str.Of(key).Trim().ToUpper().String()
+	appAware := strings.HasPrefix(key, "FEATURE_")
 	if scope.app.prefix != "" {
-		if value, ok := resolver.values[scope.app.prefix+"_"+key]; ok {
-			return value, true
+		appKey := scope.app.prefix + "_" + key
+		if (appAware && project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix) || (!appAware && !resolver.enabledFeatureAppOwns(appKey)) {
+			if value, ok := resolver.values[appKey]; ok {
+				return value, true
+			}
 		}
+	}
+	if (appAware && project.AppResourceKeyOwner(key, resolver.appPrefixes) != "") || (!appAware && resolver.enabledFeatureAppOwns(key)) {
+		return "", false
 	}
 	value, ok := resolver.values[key]
 	return value, ok
+}
+
+// enabledFeatureAppOwns protects active Feature overlays while retaining legacy interpretation for disabled Apps.
+func (resolver resourceConsumerResolver) enabledFeatureAppOwns(key string) bool {
+	owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
+	return owner != "" && resolver.featureAppPrefixes[owner] && strings.HasPrefix(key, owner+"_FEATURE_")
 }
 
 // consumerName formats the stable identity shared with the pure service planner.

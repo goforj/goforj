@@ -190,7 +190,12 @@ func projectDescribeServiceRequirements(root string, config *project.Config) ([]
 	if err != nil {
 		return nil, err
 	}
-	consumers, err := resourceenv.ResolveConsumers(source, plan, components, config)
+	knownApps := projectlayout.RuntimeApps(root, config)
+	knownAppNames := make([]string, 0, len(knownApps))
+	for _, app := range knownApps {
+		knownAppNames = append(knownAppNames, app.Name)
+	}
+	consumers, err := resourceenv.ResolveConsumers(source, plan, components, config, knownAppNames...)
 	if err != nil {
 		return nil, fmt.Errorf("resolve effective resource consumers: %w", err)
 	}

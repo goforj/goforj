@@ -150,6 +150,7 @@ func renderDBAccessors(names []string, driverPlan dbDriverPlan) ([]byte, error) 
 
 // discoverDBDrivers validates every active connection against the explicit build contract before source is emitted.
 func discoverDBDrivers(input generationInput, names []string) (dbDriverPlan, error) {
+	input = legacyResourceGenerationInput(input, "DB")
 	drivers := map[string]dbDriverSpec{}
 	compiled := map[string]struct{}{}
 	for _, driver := range dbLocalDrivers {

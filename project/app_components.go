@@ -18,6 +18,7 @@ var appComponentKeys = []ComponentKey{
 	ComponentDatabasePostgres,
 	ComponentDatabaseSQLite,
 	ComponentScheduler,
+	ComponentFeature,
 	ComponentCache,
 	ComponentEvents,
 	ComponentStorage,

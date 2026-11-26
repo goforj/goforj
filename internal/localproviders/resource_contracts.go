@@ -11,9 +11,9 @@ func resourceDefinitions(config *project.Config, key string) []project.ResourceD
 	var definitions []project.ResourceDefinition
 	for _, definition := range project.ResourceCatalog() {
 		prefix := definition.EnvironmentPrefix + "_"
-		participates := strings.HasPrefix(key, prefix) && definition.AppliesTo(project.ProjectComponents(config))
+		participates := strings.HasPrefix(key, prefix) && definition.AppliesTo(project.ProjectComponents(config)) && resourceScopeAllowed(config, key, definition, "")
 		for name, app := range config.Apps {
-			if name != project.DefaultAppName && strings.HasPrefix(key, project.AppEnvironmentPrefix(name)+"_"+prefix) && definition.AppliesTo(project.NormalizeConfiguredAppComponents(config, app.Components)) {
+			if name != project.DefaultAppName && strings.HasPrefix(key, project.AppEnvironmentPrefix(name)+"_"+prefix) && definition.AppliesTo(project.NormalizeConfiguredAppComponents(config, app.Components)) && resourceScopeAllowed(config, key, definition, project.AppEnvironmentPrefix(name)+"_") {
 				participates = true
 			}
 		}
@@ -22,8 +22,14 @@ func resourceDefinitions(config *project.Config, key string) []project.ResourceD
 		}
 	}
 	if len(definitions) == 0 {
+		if owner, enabled := managedAppResourceOwner(config, key); owner != "" && !enabled {
+			return nil
+		}
 		base := resourceKey(config, key)
 		for _, definition := range project.ResourceCatalog() {
+			if definition.Key == project.ResourceFeature && !definition.AppliesTo(project.ProjectComponents(config)) {
+				continue
+			}
 			if strings.HasPrefix(base, definition.EnvironmentPrefix+"_") {
 				definitions = append(definitions, definition)
 			}

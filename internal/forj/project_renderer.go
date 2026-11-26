@@ -7,6 +7,7 @@ import (
 	"go/format"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,6 +33,7 @@ import (
 	"github.com/goforj/goforj/internal/generate"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/internal/projectlayout"
+	"github.com/goforj/goforj/internal/resourceenv"
 	"github.com/goforj/goforj/project"
 	"github.com/goforj/goforj/templates"
 	"golang.org/x/mod/semver"
@@ -188,6 +190,7 @@ type templateRenderConfig struct {
 	HelpFormatterFunc           string
 	HelpCommandFunc             string
 	App                         project.App
+	AppEnvPrefix                string
 	AppPackageName              string
 	AppImportPath               string
 	WireImportPath              string
@@ -396,6 +399,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 		return fmt.Errorf("project component envelope: %w", err)
 	}
 	if err := p.validateEventsRenderTransition(projectComponents); err != nil {
+		return err
+	}
+	if err := p.validateFeatureRenderTransition(projectComponents); err != nil {
 		return err
 	}
 	if err := p.validateStorageRenderTransition(projectComponents); err != nil {
@@ -667,6 +673,11 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/event.tmpl",
 				"internal/makecmd/subscriber.tmpl",
 			},
+		},
+		{
+			title:     "Feature Components Rendering",
+			enabled:   projectComponents.Feature,
+			templates: []string{"internal/features/README.md.tmpl"},
 		},
 		{
 			title:   "Storage Components Rendering",
@@ -1252,7 +1263,13 @@ func driverListContains(value string, want string) bool {
 }
 
 // RenderAppOnly renders one additional app without replaying the full project scaffold.
-func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOptions) error {
+func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOptions) (renderErr error) {
+	originalConfig := p.config
+	defer func() {
+		if renderErr != nil {
+			p.config = originalConfig
+		}
+	}()
 	if err := p.beginRenderInvocation("."); err != nil {
 		return err
 	}
@@ -1276,6 +1293,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateEventsRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
+	if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
 	if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
@@ -1288,6 +1308,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	projectCapabilitiesChanged := false
 	appConfigChanged := false
 	if app.Name != "" && app.Name != project.DefaultAppName {
+		if err := p.validateAppResourceOwnership(app, opts); err != nil {
+			return err
+		}
 		if err := p.prepareDevAppsForAppMutation(); err != nil {
 			return err
 		}
@@ -1296,6 +1319,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 			return err
 		}
 		if err := p.validateEventsRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
+		if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		if err := p.validateStorageRenderTransition(project.ProjectComponents(p.config)); err != nil {
@@ -1341,6 +1367,12 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.renderApp(app); err != nil {
 		return err
 	}
+	if appConfigChanged && !projectCapabilitiesChanged && p.projectRenderComponents().Feature {
+		// App Feature scopes can also claim keys previously interpreted as another resource family's named resources.
+		if err := p.runGenerateAll(); err != nil {
+			return err
+		}
+	}
 	if err := p.writeTemplates([]string{
 		"internal/cmd/launch.go.tmpl",
 		"internal/cmd/launch_test.go.tmpl",
@@ -1368,7 +1400,14 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 }
 
 // RemoveApp removes conventional app-owned files and refreshes generated app metadata.
-func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, error) {
+func (p *ProjectRenderer) RemoveApp(app project.App) (removeResult makeapp.RemoveResult, removeErr error) {
+	originalConfig := p.config
+	defer func() {
+		if removeErr != nil {
+			p.config = originalConfig
+		}
+	}()
+
 	if err := p.beginRenderInvocation("."); err != nil {
 		return makeapp.RemoveResult{}, err
 	}
@@ -1387,6 +1426,19 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	if err := p.validateRemoveAppTransition(app); err != nil {
 		return makeapp.RemoveResult{}, err
 	}
+
+	candidate := *p.config
+	candidate.Apps = maps.Clone(p.config.Apps)
+	candidate.Dev.Run = maps.Clone(p.config.Dev.Run)
+	candidate.Dev.Apps = maps.Clone(p.config.Dev.Apps)
+	prospective := ProjectRenderer{config: &candidate}
+	configChanged := prospective.removeAppConfig(app.Name)
+	afterProjectComponents := project.ProjectComponents(&candidate)
+	preserveResourceSetting := p.appRemovalResourceSettingPredicate(app, &candidate)
+	if err := p.validateAppRemovalResourceOwnership(app, &candidate, preserveResourceSetting); err != nil {
+		return makeapp.RemoveResult{}, err
+	}
+	p.config = &candidate
 
 	var result makeapp.RemoveResult
 	for _, path := range []string{
@@ -1423,7 +1475,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		result.Removed = append(result.Removed, cmdDir)
 	}
 	for _, path := range []string{".env", ".env.host", ".env.example"} {
-		updated, err := p.workspace.removeAppEnvDefaults(path, app.Name)
+		updated, err := p.workspace.removeAppEnvDefaults(path, app.Name, preserveResourceSetting)
 		if err != nil {
 			return result, err
 		}
@@ -1431,7 +1483,7 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 			result.Updated = append(result.Updated, path)
 		}
 	}
-	if p.removeAppConfig(app.Name) {
+	if configChanged {
 		if err := p.workspace.writeProjectConfig(p.config); err != nil {
 			return result, err
 		}
@@ -1440,7 +1492,6 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	if !result.Changed() {
 		return result, nil
 	}
-	afterProjectComponents := project.ProjectComponents(p.config)
 	if beforeProjectComponents.Cache && !afterProjectComponents.Cache {
 		if err := p.Render(ComponentRenderInput{renderAll: true, root: p.workspace.root}); err != nil {
 			return result, fmt.Errorf("reconcile shared Cache surface after removing App %q: %w", app.Name, err)
@@ -1453,6 +1504,12 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 	if err := p.publishPendingResourceEnvironment(); err != nil {
 		return result, err
 	}
+	if afterProjectComponents.Feature {
+		if err := p.runGenerateAll(); err != nil {
+			return result, err
+		}
+		result.Updated = append(result.Updated, generate.OutputPaths(generate.GenerationSelectionFromComponents(afterProjectComponents))...)
+	}
 	if err := p.writeTemplates([]string{
 		"internal/runtime/apps.go.tmpl",
 		"internal/runtime/apps_test.go.tmpl",
@@ -1464,6 +1521,43 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		filepath.Join("internal", "runtime", "apps_test.go"),
 	)
 	return result, nil
+}
+
+// appRemovalResourceSettingPredicate keeps environment ownership decisions identical in preflight and published cleanup.
+func (p *ProjectRenderer) appRemovalResourceSettingPredicate(app project.App, candidate *project.Config) func(string) bool {
+	beforeProjectComponents := project.ProjectComponents(p.config)
+	afterProjectComponents := project.ProjectComponents(candidate)
+	removedPrefix := project.AppEnvironmentPrefix(app.Name)
+	knownAppNames := []string{app.Name}
+	for _, knownApp := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
+		knownAppNames = append(knownAppNames, knownApp.Name)
+	}
+	removedComponents := appRenderComponents(p.config, app)
+	var knownAppPrefixes []string
+	for _, name := range resourceenv.KnownAppNames(p.config, knownAppNames...) {
+		knownAppPrefixes = append(knownAppPrefixes, project.AppEnvironmentPrefix(name))
+	}
+	return func(key string) bool {
+		owner, managed := generate.AppResourceEnvironmentOwner(key, knownAppPrefixes, beforeProjectComponents)
+		if managed {
+			if owner != removedPrefix {
+				return true
+			}
+			if removedComponents.Feature {
+				return false
+			}
+		}
+		if beforeProjectComponents.Feature && generate.SharedResourceEnvironmentSetting(key, afterProjectComponents) {
+			return true
+		}
+		for _, prefix := range knownAppPrefixes {
+			if len(prefix) > len(removedPrefix) && strings.HasPrefix(key, prefix+"_") {
+				return true
+			}
+		}
+		return false
+	}
+
 }
 
 // validateRemoveAppTransition rejects removal of the last App owning a capability whose shared generated surface cannot be reconciled safely.
@@ -1483,6 +1577,7 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 		residues []string
 	}{
 		{name: "Events", removed: before.Events && !after.Events, residues: projectEventsResiduePaths()},
+		{name: "Feature", removed: before.Feature && !after.Feature, residues: []string{filepath.Join("internal", "features")}},
 		{name: "Storage", removed: before.Storage && !after.Storage, residues: projectStorageResiduePaths()},
 	}
 	for _, check := range checks {
@@ -2045,8 +2140,8 @@ func removeEnvSectionHeader(lines []string, appName string) []string {
 	return out
 }
 
-// removeAppEnvDefaults deletes app-prefixed overrides when an app is removed.
-func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string) (bool, error) {
+// removeAppEnvDefaults removes an App section while optional ownership predicates protect shared settings.
+func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string, preserve ...func(string) bool) (bool, error) {
 	prefix := project.AppEnvironmentPrefix(appName)
 	if prefix == "" {
 		return false, nil
@@ -2061,14 +2156,31 @@ func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string
 		}
 		return false, err
 	}
-	original := string(data)
-	lines := strings.Split(original, "\n")
+	content := appEnvironmentWithoutDefaults(string(data), appName, preserve...)
+	if content == string(data) {
+		return false, nil
+	}
+	return true, w.writeFile(path, []byte(content), 0o644)
+}
+
+// appEnvironmentWithoutDefaults projects the exact owner-preserving cleanup before any environment file is published.
+func appEnvironmentWithoutDefaults(source string, appName string, preserve ...func(string) bool) string {
+	lines := strings.Split(source, "\n")
 	out := make([]string, 0, len(lines))
-	appPrefix := prefix + "_"
+	appPrefix := project.AppEnvironmentPrefix(appName) + "_"
 	for _, line := range lines {
 		key, _, ok := envfile.ParseAssignment(line)
 		if ok && strings.HasPrefix(key, appPrefix) {
-			continue
+			keep := false
+			for _, predicate := range preserve {
+				if predicate(key) {
+					keep = true
+					break
+				}
+			}
+			if !keep {
+				continue
+			}
 		}
 		if isEnvSectionHeader(line, appName) {
 			continue
@@ -2080,10 +2192,7 @@ func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string
 	if content != "" && !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
-	if content == original {
-		return false, nil
-	}
-	return true, w.writeFile(path, []byte(content), 0o644)
+	return content
 }
 
 // isEnvSectionHeader recognizes generated app headings case-insensitively for cleanup.
@@ -3876,6 +3985,7 @@ func (w projectRenderWorkspace) templateDataForApp(config *project.Config, app p
 		HelpFormatterFunc:           helpFormatterFunc(helpFormat),
 		HelpCommandFunc:             helpCommandFunc(helpFormat),
 		App:                         app,
+		AppEnvPrefix:                project.AppEnvironmentPrefix(app.Name),
 		AppPackageName:              project.AppPackageName(app.Name),
 		AppImportPath:               appImportPath,
 		WireImportPath:              wireImportPath,

@@ -10,6 +10,8 @@ import (
 type ResourceKey string
 
 const (
+	// ResourceFeature identifies configured feature evaluators, independently of dynamic flag names.
+	ResourceFeature ResourceKey = "feature"
 	// ResourceDatabase identifies the App database.
 	ResourceDatabase ResourceKey = "database"
 	// ResourceCache identifies the root cache.
@@ -130,6 +132,12 @@ type ResourceDefinition struct {
 }
 
 var resourceCatalog = []ResourceDefinition{
+	{
+		Key: ResourceFeature, Label: "Feature Flags", EnvironmentPrefix: "FEATURE",
+		DefaultDriver: "memory", DefaultSupportedDrivers: []string{"memory", "file"},
+		Drivers:    []DriverDefinition{{Name: "memory", Label: "Memory", Order: 10}, {Name: "file", Label: "File", Order: 20}},
+		applicable: func(components Components) bool { return components.Feature },
+	},
 	{
 		Key:                     ResourceDatabase,
 		Label:                   "Database",
