@@ -462,7 +462,7 @@ func TestFeatureHardlinkUpdates(t *testing.T) {
     alias := filepath.Join(featureFixtureDirectory(t),"alias.json")
     if err := os.Link(path,alias); err != nil { t.Fatal(err) }
     manager,err := NewManager(); if err != nil { t.Fatal(err) }; defer manager.Close()
-    resource := manager.resources[1]; resource.interval = time.Hour
+    resource := manager.resources[1]; resource.interval = 20*time.Millisecond
     watcher := requireFeatureWatcher(t,path)
     ctx,cancel := context.WithCancel(context.Background())
     done := make(chan struct{})
