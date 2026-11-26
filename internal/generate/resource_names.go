@@ -24,6 +24,7 @@ func resourceNames(input generationInput) map[project.ResourceKey][]string {
 		project.ResourceEvents:       discoverEventNames(input),
 		project.ResourceStorage:      discoverStorageDiskNames(input),
 		project.ResourceMail:         discoverMailNames(input),
+		project.ResourceSearch:       discoverSearchNames(input),
 	}
 }
 
@@ -52,6 +53,17 @@ func ResourceNamesByApp(root string, values map[string]string, config *project.C
 			// Explicit configuration makes ownership discovery independent of config loading errors.
 			featureScopes, _ := generationFeatureScopes(input)
 			for _, scope := range featureScopes {
+				scoped := make([]string, len(scope.Names))
+				for index, name := range scope.Names {
+					scoped[index] = strings.ToLower(name)
+				}
+				scopes[scope.Prefix] = scoped
+			}
+			continue
+		}
+		if definition.Key == project.ResourceSearch {
+			searchScopes, _ := generationSearchScopes(input)
+			for _, scope := range searchScopes {
 				scoped := make([]string, len(scope.Names))
 				for index, name := range scope.Names {
 					scoped[index] = strings.ToLower(name)

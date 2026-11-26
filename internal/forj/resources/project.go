@@ -290,6 +290,7 @@ func primitiveResourcesForApp(env map[string]string, apps []projectResourceApp, 
 	}{
 		{enabled: app.components.Jobs, prefix: "QUEUE", category: "queue", description: "Named queue resource.", runtime: "jobs"},
 		{enabled: app.components.Cache, prefix: "CACHE", category: "cache", description: "Named cache resource."},
+		{enabled: app.components.Search, prefix: "SEARCH", category: "search", description: "Application-owned lexical search index."},
 		{enabled: app.components.Storage, prefix: "STORAGE", category: "storage", description: "Named storage disk resource."},
 		{enabled: app.components.Events, prefix: "EVENTS", category: "events", description: "Named event bus resource."},
 	}

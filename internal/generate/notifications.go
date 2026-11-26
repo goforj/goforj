@@ -42,6 +42,7 @@ var notificationLocalDrivers = []string{"log"}
 
 // discoverNotificationNames exposes the build's union of typed accessors to configuration tooling.
 func discoverNotificationNames(input generationInput) []string {
+	input = legacyResourceGenerationInput(input, "NOTIFICATION")
 	names := discoverPrimitiveChildNames(input, "NOTIFICATION", notificationRootKeys)
 	for index := range names {
 		names[index] = strings.ToLower(names[index])
@@ -56,6 +57,7 @@ func GenerateNotificationFiles(projectDir string) (int, error) {
 
 // generateNotificationFiles publishes both artifacts only after validating the complete snapshot.
 func generateNotificationFiles(input generationInput) (int, error) {
+	input = legacyResourceGenerationInput(input, "NOTIFICATION")
 	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix: "NOTIFICATION", DefaultDriver: "log", LocalDrivers: notificationLocalDrivers,
 		RootKeys: notificationRootKeys, CommonKeys: notificationCommonKeys, DriverKeys: notificationDriverKeys,
@@ -311,6 +313,7 @@ func (manager *Manager) Instances() []Instance {
 
 // generationNotificationScopes shares sender registrations with prospective App ownership checks.
 func generationNotificationScopes(input generationInput) ([]notificationScope, error) {
+	input = legacyResourceGenerationInput(input, "NOTIFICATION")
 	var scopes []notificationScope
 	rootNames := appScopedChildNames(input, "NOTIFICATION", "", notificationRootKeys)
 	defaultEnabled := true

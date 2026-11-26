@@ -1,0 +1,12 @@
+// Package {{.AppPackageName}} composes the owning application.
+package {{.AppPackageName}}
+
+import "github.com/goforj/search"
+
+// SearchDefinitions declares this App's rebuildable projection schemas in Go.
+// Map keys exactly match Definition.Name; environment aliases ignore case and replace hyphens with underscores.
+// Add a matching SEARCH_<NAME> backend setting, then run forj generate --search for a named accessor.
+// Provision explicitly before startup; the manager validates existing schemas without changing them.
+func SearchDefinitions() map[string]search.Definition {
+ return map[string]search.Definition{}
+}

@@ -10,9 +10,9 @@ import (
 	"github.com/goforj/goforj/project"
 )
 
-// TestConfiglessFeatureNotificationWordApps preserves Feature's pre-Notification inference vocabulary across inventories and generation.
+// TestConfiglessFeatureNotificationWordApps preserves Feature's original inference vocabulary across inventories and generation.
 func TestConfiglessFeatureNotificationWordApps(t *testing.T) {
-	for _, prefix := range []string{"NOTIFICATION", "NOTIFICATION_CHILD", "MISSING_NOTIFICATION"} {
+	for _, prefix := range []string{"NOTIFICATION", "NOTIFICATION_CHILD", "MISSING_NOTIFICATION", "SEARCH", "SEARCH_CHILD", "MISSING_SEARCH"} {
 		t.Run(prefix, func(t *testing.T) {
 			root := newGenerationCacheProject(t)
 			values := map[string]string{prefix + "_FEATURE_CHECKOUT_DRIVER": "memory"}

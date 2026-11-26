@@ -404,6 +404,9 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 	if err := p.validateFeatureRenderTransition(projectComponents); err != nil {
 		return err
 	}
+	if err := p.validateSearchRenderTransition(projectComponents); err != nil {
+		return err
+	}
 	if err := p.validateNotificationRenderTransition(projectComponents); err != nil {
 		return err
 	}
@@ -676,6 +679,10 @@ func (p *ProjectRenderer) Render(input ComponentRenderInput) error {
 				"internal/makecmd/event.tmpl",
 				"internal/makecmd/subscriber.tmpl",
 			},
+		},
+		{
+			title: "Search Components Rendering", enabled: projectComponents.Search,
+			templates: []string{"internal/searches/README.md.tmpl"},
 		},
 		{
 			title:     "Feature Components Rendering",
@@ -1300,6 +1307,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
+	if err := p.validateSearchRenderTransition(project.ProjectComponents(p.config)); err != nil {
+		return err
+	}
 	if err := p.validateNotificationRenderTransition(project.ProjectComponents(p.config)); err != nil {
 		return err
 	}
@@ -1329,6 +1339,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 			return err
 		}
 		if err := p.validateFeatureRenderTransition(project.ProjectComponents(p.config)); err != nil {
+			return err
+		}
+		if err := p.validateSearchRenderTransition(project.ProjectComponents(p.config)); err != nil {
 			return err
 		}
 		if err := p.validateNotificationRenderTransition(project.ProjectComponents(p.config)); err != nil {
@@ -1553,11 +1566,11 @@ func (p *ProjectRenderer) appRemovalResourceSettingPredicate(app project.App, ca
 				return true
 			}
 			relative := strings.TrimPrefix(key, removedPrefix+"_")
-			if (removedComponents.Feature && strings.HasPrefix(relative, "FEATURE_")) || (removedComponents.Notification && strings.HasPrefix(relative, "NOTIFICATION_")) {
+			if (removedComponents.Search && strings.HasPrefix(relative, "SEARCH_")) || (removedComponents.Feature && strings.HasPrefix(relative, "FEATURE_")) || (removedComponents.Notification && strings.HasPrefix(relative, "NOTIFICATION_")) {
 				return false
 			}
 		}
-		if (beforeProjectComponents.Feature || beforeProjectComponents.Notification) && generate.SharedResourceEnvironmentSetting(key, afterProjectComponents) {
+		if (beforeProjectComponents.Feature || beforeProjectComponents.Notification || beforeProjectComponents.Search) && generate.SharedResourceEnvironmentSetting(key, afterProjectComponents) {
 			return true
 		}
 		for _, prefix := range knownAppPrefixes {
@@ -1623,6 +1636,23 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 	if before.Cache && !after.Cache {
 		if err := p.validateCacheRenderTransition(after, app); err != nil {
 			return fmt.Errorf("cannot remove App %q because it is the last App using Cache: %w", app.Name, err)
+		}
+	}
+	if before.Search && !after.Search {
+		residue, err := p.workspace.searchGeneratedResiduePath()
+		if err != nil {
+			return err
+		}
+		if residue != "" {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Search while %s exists; automatic Search removal is not supported", app.Name, residue)
+		}
+		path := filepath.Join(projectlayout.WireDir(".", app), "app.go")
+		file, exists, err := p.workspace.parsedRenderGoFile(path)
+		if err != nil {
+			return fmt.Errorf("parse Search transition path %s: %w", path, err)
+		}
+		if exists && searchManagerAccessor(file) {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Search while %s exposes the generated Searches API; automatic Search removal is not supported", app.Name, path)
 		}
 	}
 	if before.Notification && !after.Notification {
@@ -1823,6 +1853,14 @@ func (p *ProjectRenderer) writeAppEnvDefaults(app project.App, components projec
 			return err
 		}
 		envDefaults[prefix+"_EVENTS_DRIVER"] = eventsDriver
+	}
+	if components.Search {
+		driver, err := p.workspace.resourceDriverDefaultFromEnv(environmentPath, project.ResourceSearch, "SEARCH", "bleve")
+		if err != nil {
+			return err
+		}
+		envDefaults[prefix+"_SEARCH_DRIVER"] = driver
+		envDefaults[prefix+"_SEARCH_PATH"] = "storage/search/" + app.Name
 	}
 	if components.Storage {
 		storageDriver, err := p.workspace.storageDriverDefaultFromEnv(environmentPath)
@@ -3031,6 +3069,9 @@ func (p *ProjectRenderer) appOwnedMappings(app project.App) []templateMapping {
 		mapTemplateTo("wire/inject_services_app.go.tmpl", filepath.Join(wireDir, "inject_services_app.go")),
 		mapTemplateTo("wire/inject_cmd_app.go.tmpl", filepath.Join(wireDir, "inject_cmd_app.go")),
 	}
+	if components.Search {
+		mappings = append(mappings, mapTemplateTo("app/search.go.tmpl", filepath.Join(appDir, "search.go")))
+	}
 	if components.Events {
 		mappings = append(mappings, mapTemplateTo("wire/inject_subscribers_app.go.tmpl", filepath.Join(wireDir, "inject_subscribers_app.go")))
 	}
@@ -3459,7 +3500,7 @@ func (p *ProjectRenderer) runGenerateAll() error {
 // runGenerateAppResources reconciles managers whose names can change with App ownership.
 func (p *ProjectRenderer) runGenerateAppResources() ([]string, error) {
 	components := p.projectRenderComponents()
-	if !components.Feature && !components.Notification {
+	if !components.Feature && !components.Notification && !components.Search {
 		return nil, nil
 	}
 	if err := p.runGenerateAll(); err != nil {

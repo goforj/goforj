@@ -27,6 +27,8 @@ module_for_import() {
     go.opentelemetry.io/otel/sdk/*) echo "go.opentelemetry.io/otel/sdk" ;;
     go.opentelemetry.io/proto/otlp/*) echo "go.opentelemetry.io/proto/otlp" ;;
     charm.land/lipgloss/v2/*) echo "charm.land/lipgloss/v2" ;;
+    github.com/goforj/search/driver/blevesearch) echo "github.com/goforj/search/driver/blevesearch" ;;
+    github.com/goforj/search/*) echo "github.com/goforj/search" ;;
     github.com/goforj/events/eventscore) echo "github.com/goforj/events/eventscore" ;;
     github.com/goforj/events/eventscore/*) echo "github.com/goforj/events/eventscore" ;;
     github.com/goforj/events/driver/gcppubsubevents) echo "github.com/goforj/events/driver/gcppubsubevents" ;;
@@ -150,6 +152,7 @@ override_version_for_module() {
     github.com/charmbracelet/x/cellbuf) echo "v0.0.15" ;;
     github.com/goforj/feature) echo "v0.1.1" ;;
     github.com/goforj/notification) echo "v0.1.0" ;;
+    github.com/goforj/search|github.com/goforj/search/driver/blevesearch) echo "v0.1.1" ;;
     github.com/goforj/cache) echo "v0.4.0" ;;
     github.com/goforj/cache/cachecore) echo "v0.4.3" ;;
     github.com/goforj/cache/driver/rediscache) echo "v0.4.3" ;;
@@ -256,6 +259,9 @@ done < "$go_files_file"
   echo "github.com/goforj/notification/driver/log"
   echo "github.com/goforj/notification/driver/webhook"
   echo "github.com/goforj/cache/driver/rediscache"
+  # Search managers are generated from Go source templates and have independently pinned backend modules.
+  echo "github.com/goforj/search/driver/blevesearch"
+  echo "github.com/goforj/search/driver/meilisearch"
   # Web's index package remains on str v1 while rendered templates use str/v2.
   echo "github.com/goforj/str"
 } | sort -u > "$imports_file"
