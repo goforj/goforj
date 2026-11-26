@@ -412,19 +412,21 @@ func prepareInvoiceHTTPVerifierFixture(t *testing.T) invoiceHTTPVerifierFixture 
 
 // majorSurfaceVerifierCase binds one promoted contract to its executable golden Project and a targeted semantic defect.
 type majorSurfaceVerifierCase struct {
-	evaluation           string
-	scenario             string
-	path                 string
-	old                  string
-	mutant               string
-	additional           []evaluationMutation
-	behavior             *evaluationBehaviorMutation
-	alternates           []evaluationFileMutation
-	alternateRenames     []evaluationPathRename
-	disconnectedProvider string
-	unusedAppProvider    string
-	wantFailed           string
-	wantCompile          bool
+	disconnectedAppRoutes []evaluationFileMutation
+	requiredQuality       []string
+	evaluation            string
+	scenario              string
+	path                  string
+	old                   string
+	mutant                string
+	additional            []evaluationMutation
+	behavior              *evaluationBehaviorMutation
+	alternates            []evaluationFileMutation
+	alternateRenames      []evaluationPathRename
+	disconnectedProvider  string
+	unusedAppProvider     string
+	wantFailed            string
+	wantCompile           bool
 }
 
 // evaluationBehaviorMutation preserves structural evidence while violating the supervisor-owned runtime oracle.
@@ -1052,6 +1054,11 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 	if result.FrameworkOutcome.Status != eval.EndpointPassed {
 		t.Fatalf("golden outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
 	}
+	for _, id := range test.requiredQuality {
+		if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
+			t.Fatalf("golden quality %s did not pass: %#v", id, result.Checks)
+		}
+	}
 	if len(test.alternates) > 0 {
 		originals := applyEvaluationAlternates(t, projectRoot, test.alternates)
 		alternateChanges := evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)
@@ -1080,6 +1087,25 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 				t.Fatalf("relocated alternate behavior = %#v", alternateResult.Checks)
 			}
 		}()
+	}
+	if len(test.disconnectedAppRoutes) > 0 {
+		originals := applyEvaluationAlternates(t, projectRoot, test.disconnectedAppRoutes)
+		for _, arguments := range [][]string{{"gofmt", "-w", "app/routes.go", "app/wire/inject_http_controllers_app.go"}, {forjExecutable, "build"}, {"go", "test", "-run", "^$", "./..."}} {
+			command := exec.CommandContext(t.Context(), arguments[0], arguments[1:]...)
+			command.Dir = projectRoot
+			command.Env = environment
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("disconnected route must compile: %v\n%s", err, output)
+			}
+		}
+		mutant, err := resolved.Verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, Changes: evaluationProjectChanges(t, prepared.Result().ProjectRoot, projectRoot)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !evaluationCheckFailed(mutant.Checks, "settings-app-runtime") || !evaluationCheckHasStatus(mutant.Checks, "settings-validation-behavior", eval.EndpointPassed) {
+			t.Fatalf("disconnected route checks=%#v", mutant.Checks)
+		}
+		restoreEvaluationAlternates(t, originals)
 	}
 	if test.unusedAppProvider != "" {
 		verifyUnusedAppServiceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.unusedAppProvider, result.Checks, forjExecutable, environment)
@@ -1670,13 +1696,20 @@ func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
 func TestPatchCustomerSettingsVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
 		requiredQuality: []string{"settings-library-path", "settings-library-runtime"},
-		evaluation:      "patch-customer-settings",
-		scenario:        "customer-settings-validation",
-		path:            "internal/settings/policy.go",
-		old:             "service.ValidatePatch(ctx, input)",
-		mutant:          "service.ValidatePatch(context.Background(), input)",
-		wantFailed:      "settings-library-path",
-		wantCompile:     true,
+		disconnectedAppRoutes: []evaluationFileMutation{
+			{path: "app/routes.go", old: "settingsController *settings.Controller,", replacement: ""},
+			{path: "app/routes.go", old: "settingsController.Routes(),", replacement: ""},
+			{path: "app/routes.go", old: "publicRoutes := slices.Concat(", replacement: "_ = settings.NewController\n publicRoutes := slices.Concat("},
+			{path: "app/wire/inject_http_controllers_app.go", old: "settings.NewController,", replacement: ""},
+			{path: "app/wire/inject_http_controllers_app.go", old: "var appHttpControllerSet = wire.NewSet(", replacement: "var atlasUnusedSettingsController = wire.NewSet(settings.NewController)\nvar appHttpControllerSet = wire.NewSet("},
+		},
+		evaluation:  "patch-customer-settings",
+		scenario:    "customer-settings-validation",
+		path:        "internal/settings/policy.go",
+		old:         "service.ValidatePatch(ctx, input)",
+		mutant:      "service.ValidatePatch(context.Background(), input)",
+		wantFailed:  "settings-library-path",
+		wantCompile: true,
 		behavior: &evaluationBehaviorMutation{
 			path:        "internal/settings/policy.go",
 			old:         "if value, ok := input.Enabled.Get(); ok {",

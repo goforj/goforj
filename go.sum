@@ -157,6 +157,12 @@ github.com/go-sql-driver/mysql v1.10.1 h1:arlSnNLq6a5yxGxV7qg9lF4j0C+KwD6NbQyKr9
 github.com/go-sql-driver/mysql v1.10.1/go.mod h1:M+cqaI7+xxXGG9swrdeUIoPG3Y3KCkF0pZej+SK+nWk=
 github.com/goforj/atlas v0.4.14-0.20261126210726-4707c19fcd24 h1:K4i8xHOntr8/ZCUvV7qot+twqvvXjoCkYau2W9ZRWPQ=
 github.com/goforj/atlas v0.4.14-0.20261126210726-4707c19fcd24/go.mod h1:nw719u1iH17OuL5iKTNSe10Dbn4ZzC4MurNofWoZmXo=
+github.com/goforj/atlas v0.4.14-0.20261126213812-4b5bb5365fdc h1:6JXG/s4cmepXHKthuadixByC2/m2u2ep4v0pA+Iec/I=
+github.com/goforj/atlas v0.4.14-0.20261126213812-4b5bb5365fdc/go.mod h1:nw719u1iH17OuL5iKTNSe10Dbn4ZzC4MurNofWoZmXo=
+github.com/goforj/atlas v0.4.14-0.20261126214127-12eb1c95c33a h1:vz9fbZsqIFV2teqQvBzTW45XSSD6CxSCXUA+Y8pd9jY=
+github.com/goforj/atlas v0.4.14-0.20261126214127-12eb1c95c33a/go.mod h1:nw719u1iH17OuL5iKTNSe10Dbn4ZzC4MurNofWoZmXo=
+github.com/goforj/atlas v0.4.14-0.20261126215137-e53c34fb4cac h1:04I7m1SnEi+czLMqPHyBUReXuxxzLHL9LcHWJpG710A=
+github.com/goforj/atlas v0.4.14-0.20261126215137-e53c34fb4cac/go.mod h1:nw719u1iH17OuL5iKTNSe10Dbn4ZzC4MurNofWoZmXo=
 github.com/goforj/cache v0.4.0 h1:d8Mofh8OtQABkuKqnXiH/c4CHxjCRXqwVhou2GapDrw=
 github.com/goforj/cache v0.4.0/go.mod h1:4vCZ2c/sKCprsogMw23X0N/8MMWnmWenhhqVciWAWxM=
 github.com/goforj/cache/cachecore v0.4.3 h1:xth/bOPnJzQ4Xe2C2hd2xZKbAO2q+tee05xor8kmVgM=
