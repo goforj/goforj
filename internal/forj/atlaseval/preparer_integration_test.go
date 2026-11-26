@@ -1594,6 +1594,28 @@ func evaluationCheckHasStatus(checks []eval.EndpointResult, id string, status ev
 	return false
 }
 
+// TestIncidentNotificationVerifierCalibration rejects a compiling sender that silently discards alerts.
+func TestIncidentNotificationVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		unusedAppProvider: "incidents.NewConfiguredAlertService",
+		evaluation:        "notify-incident",
+		scenario:          "incident-notification",
+		path:              "internal/incidents/alert_service.go",
+		old:               "return service.sender.Send(ctx, notification.Message{",
+		mutant:            "_ = service.sender.Send; _ = ctx; _ = notification.Message{",
+		additional:        []evaluationMutation{{old: "\n\t})", mutant: "\n\t}; return nil"}},
+		wantFailed:        "incident-notification-behavior",
+		wantCompile:       true,
+		behavior: &evaluationBehaviorMutation{
+			path:        "internal/incidents/alert_service.go",
+			old:         "return NewAlertService(notifications.Primary(), notifications.Secondary())",
+			mutant:      "_ = notifications.Primary(); return NewAlertService(notifications.Default(), notifications.Secondary())",
+			wantFailed:  "incident-notification-behavior",
+			wantCompile: true,
+		},
+	})
+}
+
 // TestTargetFeatureRolloutVerifierCalibration rejects compiling targeting, snapshot, and resource-wiring mutations.
 func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
 	for _, mutation := range []struct {
