@@ -1,3 +1,4 @@
+// Package resourceenv_test checks resource inventories against the generator's configuration contract.
 package resourceenv_test
 
 import (
