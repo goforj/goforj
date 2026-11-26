@@ -77,8 +77,8 @@ func TestNotificationRemoveAppRefreshesOwnership(t *testing.T) {
 	}
 }
 
-// TestGenerateAppResourcesSelection keeps ownership reconciliation limited to the enabled App-aware resources.
-func TestGenerateAppResourcesSelection(t *testing.T) {
+// TestGenerateAppResourcesReconcilesLegacyManagers refreshes legacy accessors when App-aware namespaces can change their discovery.
+func TestGenerateAppResourcesReconcilesLegacyManagers(t *testing.T) {
 	for _, test := range []struct {
 		name                  string
 		feature, notification bool
@@ -91,13 +91,13 @@ func TestGenerateAppResourcesSelection(t *testing.T) {
 			if err := writeProjectConfig(".goforj.yml", config); err != nil {
 				t.Fatal(err)
 			}
-			writePrimitiveRendererFile(t, ".env", "CACHE_DRIVER=memory\nFEATURE_DRIVER=memory\nNOTIFICATION_DRIVER=log\n")
+			writePrimitiveRendererFile(t, ".env", "CACHE_DRIVER=memory\nCACHE_FEATURE_DRIVER=memory\nFEATURE_DRIVER=memory\nNOTIFICATION_DRIVER=log\n")
 			writePrimitiveRendererFile(t, generate.CacheManagerPath, "untouched cache owner\n")
 			paths, err := projectRendererForTest(t, config).runGenerateAppResources()
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := generate.OutputPaths(generate.GenerationSelection{Feature: test.feature, Notification: test.notification})
+			want := generate.OutputPaths(generate.GenerationSelection{Feature: test.feature, Notification: test.notification, Cache: test.feature || test.notification})
 			if !slices.Equal(paths, want) {
 				t.Fatalf("paths=%v want=%v", paths, want)
 			}
@@ -107,8 +107,12 @@ func TestGenerateAppResourcesSelection(t *testing.T) {
 					t.Fatalf("%s enabled=%v: %v", path, enabled, err)
 				}
 			}
-			if readPrimitiveRendererFile(t, generate.CacheManagerPath) != "untouched cache owner\n" {
-				t.Fatal("unrelated resource regenerated")
+			if test.feature || test.notification {
+				if !strings.Contains(readPrimitiveRendererFile(t, generate.CacheAccessorsPath), "Feature()") {
+					t.Fatal("legacy named accessor was not reconciled")
+				}
+			} else if readPrimitiveRendererFile(t, generate.CacheManagerPath) != "untouched cache owner\n" {
+				t.Fatal("disabled App resources regenerated cache")
 			}
 		})
 	}
