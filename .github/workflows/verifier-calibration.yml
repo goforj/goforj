@@ -21,6 +21,18 @@ jobs:
     name: calibration (${{ matrix.shard }}/24)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      redis:
+        image: redis:7.4.12-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 1s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      ATLAS_EVAL_REDIS_ADDR: 127.0.0.1:6379
     strategy:
       fail-fast: false
       max-parallel: 3
