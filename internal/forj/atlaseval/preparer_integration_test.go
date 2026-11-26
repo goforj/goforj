@@ -1594,6 +1594,29 @@ func evaluationCheckHasStatus(checks []eval.EndpointResult, id string, status ev
 	return false
 }
 
+// TestCatalogSearchVerifierCalibration proves real-backend filtering and receipt visibility reject compiling semantic mutants.
+func TestCatalogSearchVerifierCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "catalog-search", scenario: "catalog-search",
+		unusedAppProvider: "catalog.NewService",
+		path:              "internal/catalog/service.go",
+		old:               `Filter: search.Equal("category", value)`,
+		mutant:            `Filter: search.Or(search.Equal("category", value), search.Not(search.Equal("category", value)))`,
+		wantFailed:        "catalog-search-behavior", wantCompile: true,
+		behavior: &evaluationBehaviorMutation{
+			path:       "internal/catalog/service.go",
+			old:        "outcome, err := service.index.Wait(ctx, receipt)",
+			mutant:     "_ = receipt; outcome, err := search.Outcome{State: search.OutcomeSucceeded}, error(nil)",
+			wantFailed: "catalog-search-behavior", wantCompile: true,
+		},
+		alternates: []evaluationFileMutation{
+			{path: "internal/catalog/service.go", old: "struct{ index *search.Index }", replacement: "struct{ projection *search.Index }"},
+			{path: "internal/catalog/service.go", old: "{index: searches.Catalog()}", replacement: "{projection: searches.Catalog()}"},
+			{path: "internal/catalog/service.go", old: "service.index", replacement: "service.projection"},
+		},
+	})
+}
+
 // TestIncidentNotificationVerifierCalibration rejects a compiling sender that silently discards alerts.
 func TestIncidentNotificationVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
