@@ -76,8 +76,70 @@ steps:
                         if tenant == "" {
                                 return request.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
                         }
-                        request.SetRequest(request.Request().WithContext(context.WithValue(request.Context(), tenantContextKey{}, tenant)))
+                        web.BindContext(request, context.WithValue(request.Context(), tenantContextKey{}, tenant))
                         return next(request)
+                }
+        }
+  - id: test-authenticated-context
+    title: Preserve verified identity in the real Web adapter's bound context
+    write:
+      path: internal/requests/auth_test.go
+      language: go
+      content: |
+        // Package requests owns authenticated request identity and route policy.
+        package requests
+
+        import (
+                "context"
+                "net/http"
+                "net/http/httptest"
+                "testing"
+
+                "github.com/goforj/web"
+                "github.com/goforj/web/adapter/echoweb"
+        )
+
+        // authRuntimeKey models request context already bound by framework middleware.
+        type authRuntimeKey struct{}
+
+        // TestAuthenticatePreservesBoundContext proves principal propagation through the actual adapter.
+        func TestAuthenticatePreservesBoundContext(t *testing.T) {
+                server, err := echoweb.NewServer(echoweb.ServerConfig{
+                        Mounts: []web.RouterMount{func(router web.Router) error {
+                                router.Use(func(next web.Handler) web.Handler {
+                                        return func(request web.Context) error {
+                                                web.BindContext(request, context.WithValue(request.Context(), authRuntimeKey{}, "runtime"))
+                                                return next(request)
+                                        }
+                                })
+                                return nil
+                        }},
+                        RouteGroups: []web.RouteGroup{web.NewRouteGroup("", []web.Route{
+                                web.NewRoute(http.MethodGet, "/principal", func(request web.Context) error {
+                                        tenant, ok := Tenant(request.Context())
+                                        if !ok || tenant != "tenant-a" || request.Context().Value(authRuntimeKey{}) != "runtime" {
+                                                t.Errorf("authenticated context lost tenant or runtime metadata: %q %v", tenant, ok)
+                                        }
+                                        return request.NoContent(http.StatusNoContent)
+                                }, Authenticate),
+                        })},
+                })
+                if err != nil {
+                        t.Fatal(err)
+                }
+                for _, test := range []struct{ token string; status int }{
+                        {"Bearer tenant-a-token", http.StatusNoContent},
+                        {"Bearer invalid", http.StatusUnauthorized},
+                        {"", http.StatusUnauthorized},
+                } {
+                        request := httptest.NewRequest(http.MethodGet, "/principal", nil)
+                        request.Header.Set("Authorization", test.token)
+                        request.Header.Set("X-Tenant-ID", "spoofed")
+                        response := httptest.NewRecorder()
+                        server.ServeHTTP(response, request)
+                        if response.Code != test.status {
+                                t.Fatalf("credential status = %d, want %d", response.Code, test.status)
+                        }
                 }
         }
   - id: define-policy-boundary
