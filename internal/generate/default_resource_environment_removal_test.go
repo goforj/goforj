@@ -8,7 +8,7 @@ import (
 
 // TestSharedResourceEnvironmentSetting follows the legacy fallback contracts after App Feature ownership is resolved.
 func TestSharedResourceEnvironmentSetting(t *testing.T) {
-	components := project.Components{Feature: true, Notification: true, Cache: true, DatabaseSQLite: true, Jobs: true, Events: true, Storage: true, Mail: true}
+	components := project.Components{Search: true, Notification: true, Feature: true, Cache: true, DatabaseSQLite: true, Jobs: true, Events: true, Storage: true, Mail: true}
 	for _, definition := range project.ResourceCatalog() {
 		t.Run(string(definition.Key), func(t *testing.T) {
 			prefix := definition.EnvironmentPrefix

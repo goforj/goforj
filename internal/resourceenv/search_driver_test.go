@@ -105,3 +105,30 @@ func TestConsumersSearchValueFallback(t *testing.T) {
 		t.Fatalf("other App root became named override: %q", value)
 	}
 }
+
+// TestConsumersSearchAppExcludesLegacyCollision preserves legacy names only while their corresponding App Search component is disabled.
+func TestConsumersSearchAppExcludesLegacyCollision(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disabled", true: "enabled"}[enabled], func(t *testing.T) {
+			config := &project.Config{Render: project.RenderConfig{Components: project.Components{CLI: true, Cache: true}}, Apps: map[string]project.AppConfig{"cache": {Components: project.Components{CLI: true, Search: enabled}}}}
+			components := project.ProjectComponents(config)
+			driver := "memory"
+			if enabled {
+				driver = "bleve"
+			}
+			consumers, err := ResolveConsumers([]byte("CACHE_DRIVER=memory\nCACHE_SEARCH_DRIVER="+driver+"\nCACHE_SEARCH_PATH=storage/search\n"), defaultResourcePlanForTest(t, components), components, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for _, consumer := range consumers {
+				if consumer.Resource == project.ResourceCache && consumer.Consumer == "cache:search" {
+					count++
+				}
+			}
+			if enabled && count != 0 || !enabled && count != 1 {
+				t.Fatalf("enabled=%t consumers=%#v", enabled, consumers)
+			}
+		})
+	}
+}

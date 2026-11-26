@@ -540,7 +540,7 @@ func (v resourceRenderValues) DriverEnvironmentPlaceholders() string {
 		project.ResourceStorage:      {Active: v.StorageDriver, Supported: splitDriverList(v.StorageSupportedDrivers)},
 		project.ResourceMail:         {Active: v.MailDriver, Supported: splitDriverList(v.MailSupportedDrivers)},
 		project.ResourceNotification: {Active: v.NotificationDriver, Supported: splitDriverList(v.NotificationSupportedDrivers)},
-		project.ResourceSearch: {Active: v.SearchDriver, Supported: splitDriverList(v.SearchSupportedDrivers)},
+		project.ResourceSearch:       {Active: v.SearchDriver, Supported: splitDriverList(v.SearchSupportedDrivers)},
 	}
 	return renderDriverEnvironmentPlaceholders(selections)
 }

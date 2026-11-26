@@ -369,7 +369,7 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 		if named.Resource != resource {
 			continue
 		}
-		if ((resource == project.ResourceFeature || resource == project.ResourceNotification) && project.AppResourceKeyOwner(named.EnvironmentKey, resolver.appPrefixes) != "") || resolver.enabledAppResourceOwns(named.EnvironmentKey) {
+		if ((resource == project.ResourceFeature || resource == project.ResourceNotification || resource == project.ResourceSearch) && project.AppResourceKeyOwner(named.EnvironmentKey, resolver.appPrefixes) != "") || resolver.enabledAppResourceOwns(named.EnvironmentKey) {
 			continue
 		}
 		fallback := named.Active
@@ -386,7 +386,7 @@ func (resolver resourceConsumerResolver) namedDrivers(scope resourceConsumerScop
 	}
 	for key := range resolver.values {
 		owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
-		appAware := resource == project.ResourceFeature || resource == project.ResourceNotification
+		appAware := resource == project.ResourceFeature || resource == project.ResourceNotification || resource == project.ResourceSearch
 		if (appAware && owner != "" && owner != scope.app.prefix) || (!appAware && resolver.enabledAppResourceOwns(key)) {
 			continue
 		}
@@ -882,7 +882,7 @@ func (resolver resourceConsumerResolver) searchScopedValue(scope resourceConsume
 // overlayValue applies runtime overlay precedence, retaining resource-first lookup for legacy managers.
 func (resolver resourceConsumerResolver) overlayValue(scope resourceConsumerScope, key string) (string, bool) {
 	key = str.Of(key).Trim().ToUpper().String()
-	appAware := strings.HasPrefix(key, "FEATURE_") || strings.HasPrefix(key, "NOTIFICATION_")
+	appAware := strings.HasPrefix(key, "FEATURE_") || strings.HasPrefix(key, "NOTIFICATION_") || strings.HasPrefix(key, "SEARCH_")
 	if scope.app.prefix != "" {
 		appKey := scope.app.prefix + "_" + key
 		if (appAware && project.AppResourceKeyOwner(appKey, resolver.appPrefixes) == scope.app.prefix) || (!appAware && !resolver.enabledAppResourceOwns(appKey)) {
@@ -902,7 +902,7 @@ func (resolver resourceConsumerResolver) overlayValue(scope resourceConsumerScop
 func (resolver resourceConsumerResolver) enabledAppResourceOwns(key string) bool {
 	owner := project.AppResourceKeyOwner(key, resolver.appPrefixes)
 	components := resolver.appResourceComponents[owner]
-	return owner != "" && ((components.Feature && strings.HasPrefix(key, owner+"_FEATURE_")) || (components.Notification && strings.HasPrefix(key, owner+"_NOTIFICATION_")))
+	return owner != "" && ((components.Search && strings.HasPrefix(key, owner+"_SEARCH_")) || (components.Feature && strings.HasPrefix(key, owner+"_FEATURE_")) || (components.Notification && strings.HasPrefix(key, owner+"_NOTIFICATION_")))
 }
 
 // consumerName formats the stable identity shared with the pure service planner.

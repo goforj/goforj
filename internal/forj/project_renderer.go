@@ -1566,11 +1566,11 @@ func (p *ProjectRenderer) appRemovalResourceSettingPredicate(app project.App, ca
 				return true
 			}
 			relative := strings.TrimPrefix(key, removedPrefix+"_")
-			if (removedComponents.Feature && strings.HasPrefix(relative, "FEATURE_")) || (removedComponents.Notification && strings.HasPrefix(relative, "NOTIFICATION_")) {
+			if (removedComponents.Search && strings.HasPrefix(relative, "SEARCH_")) || (removedComponents.Feature && strings.HasPrefix(relative, "FEATURE_")) || (removedComponents.Notification && strings.HasPrefix(relative, "NOTIFICATION_")) {
 				return false
 			}
 		}
-		if (beforeProjectComponents.Feature || beforeProjectComponents.Notification) && generate.SharedResourceEnvironmentSetting(key, afterProjectComponents) {
+		if (beforeProjectComponents.Feature || beforeProjectComponents.Notification || beforeProjectComponents.Search) && generate.SharedResourceEnvironmentSetting(key, afterProjectComponents) {
 			return true
 		}
 		for _, prefix := range knownAppPrefixes {

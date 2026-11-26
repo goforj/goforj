@@ -312,7 +312,6 @@ func (v primitiveEnvValidator) appPrefixedProblems() []string {
 			if scopedKey.child != "" {
 				driver = effectiveAppPrimitiveChildDriver(v.input.environment, appPrimitiveDriverScope{
 					resourcePrefix: resourcePrefix,
-					appPrefixes:    generationKnownAppEnvPrefixes(v.input),
 					contract:       v.contract,
 					rootDriver:     v.rootDriver,
 					appRootDriver:  appRootDriver,
@@ -370,7 +369,7 @@ func effectiveAppPrimitiveChildDriver(environment generationEnvironment, scope a
 	if scope.contract.Prefix == "SEARCH" {
 		driver = scope.appRootDriver
 	}
-	if value, set := environment.Lookup(baseKey); set && (scope.contract.Prefix != "SEARCH" || appResourceEnvironmentOwner(baseKey, "SEARCH", scope.appPrefixes) == "") {
+	if value, set := environment.Lookup(baseKey); set && (scope.contract.Prefix != "SEARCH" || appResourceEnvironmentOwner(baseKey, scope.appPrefixes) == "") {
 		driver = effectivePrimitiveDriver(value, baseFallback)
 	}
 	if value, set := environment.Lookup(scope.resourcePrefix + "_" + child + "_DRIVER"); set {
@@ -448,7 +447,7 @@ func appPrefixedActiveDrivers(input generationInput, resourcePrefix string, defa
 				fallback = appRootDriver
 			}
 			driver := effectivePrimitiveDriver(value, fallback)
-			if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" || resourcePrefix == "SEARCH" {
+			if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" {
 				child := ""
 				if relative != "DRIVER" {
 					child = strings.TrimSuffix(relative, "_DRIVER")

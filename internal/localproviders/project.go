@@ -121,6 +121,7 @@ func resourceNamesForScope(root string, config *project.Config, values map[strin
 	}
 	names := generate.ResourceNames(root, values)
 	names[project.ResourceFeature] = generate.ResourceNamesInScope(scoped)[project.ResourceFeature]
+	names[project.ResourceSearch] = generate.ResourceNamesInScope(scoped)[project.ResourceSearch]
 	names[project.ResourceNotification] = generate.ResourceNamesInScope(scoped)[project.ResourceNotification]
 	for _, definition := range project.ResourceCatalog() {
 		for _, named := range definition.NamedResources {
@@ -194,7 +195,7 @@ func managedAppResourceOwner(config *project.Config, key string) (string, bool) 
 			continue
 		}
 		enabled := resourceAppliesTo(base, project.NormalizeConfiguredAppComponents(config, app.Components))
-		if !enabled && !strings.HasPrefix(key, "FEATURE_") && !strings.HasPrefix(key, "NOTIFICATION_") && resourceAppliesTo(key, project.ProjectComponents(config)) {
+		if !enabled && !strings.HasPrefix(key, "FEATURE_") && !strings.HasPrefix(key, "NOTIFICATION_") && !strings.HasPrefix(key, "SEARCH_") && resourceAppliesTo(key, project.ProjectComponents(config)) {
 			return "", false
 		}
 		return owner, enabled
@@ -204,7 +205,7 @@ func managedAppResourceOwner(config *project.Config, key string) (string, bool) 
 
 // appAwareResource identifies families whose runtime assigns settings to a single App owner.
 func appAwareResource(key project.ResourceKey) bool {
-	return key == project.ResourceFeature || key == project.ResourceNotification
+	return key == project.ResourceFeature || key == project.ResourceNotification || key == project.ResourceSearch
 }
 
 // resourceScopeAllowed aligns independent family interpretations with App-aware generator ownership.
@@ -214,7 +215,7 @@ func resourceScopeAllowed(config *project.Config, key string, definition project
 		return owner == strings.TrimSuffix(scope, "_")
 	}
 	managedOwner, enabled := managedAppResourceOwner(config, key)
-	return !enabled || managedOwner == "" || (!strings.HasPrefix(key, managedOwner+"_FEATURE_") && !strings.HasPrefix(key, managedOwner+"_NOTIFICATION_"))
+	return !enabled || managedOwner == "" || (!strings.HasPrefix(key, managedOwner+"_FEATURE_") && !strings.HasPrefix(key, managedOwner+"_NOTIFICATION_") && !strings.HasPrefix(key, managedOwner+"_SEARCH_"))
 }
 
 // resourceAppliesTo distinguishes live resource scopes while allowing definitions for future components to retain their fallback interpretation.

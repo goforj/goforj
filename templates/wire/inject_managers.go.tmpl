@@ -249,7 +249,7 @@ func provideNotificationManager() (*notifications.Manager, func(), error) {
 {{- if .Components.Search }}
 // provideSearchManager validates existing schemas and transfers backend cleanup to the App.
 func provideSearchManager() (*searches.Manager, func(), error) {
- manager, err := searches.NewManager(runtime.BackgroundSourceContext(runtime.SourceStartup), {{.AppPackageName}}.SearchDefinitions())
+ manager, err := searches.NewManagerForApp(runtime.BackgroundSourceContext(runtime.SourceStartup), "{{.AppEnvPrefix}}", {{.AppPackageName}}.SearchDefinitions())
  if err != nil { return nil, nil, err }
  return manager, func() { _ = manager.Close() }, nil
 }

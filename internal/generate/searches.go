@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/format"
 	"go/token"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -36,10 +37,11 @@ func GenerateSearchFiles(projectDir string) (int, error) {
 
 // generateSearchFiles validates driver selection before publishing either generated file.
 func generateSearchFiles(input generationInput) (int, error) {
+	input = canonicalSearchGenerationInput(input)
 	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix: "SEARCH", DefaultDriver: "bleve", LocalDrivers: searchLocalDrivers, RootKeys: searchRootKeys,
 		CommonKeys: makeSet("DRIVER"), DriverKeys: searchDriverKeys,
-		InheritRootDriver: true, AllowInactiveRootKeys: true,
+		InheritRootDriver: true, AllowInactiveRootKeys: true, AllowInactiveNamedKeys: true,
 		ChildNames: func(environment generationEnvironment) []string {
 			return searchScopedChildNames(input, "")
 		},
@@ -62,9 +64,25 @@ func generateSearchFiles(input generationInput) (int, error) {
 		data.Bleve = data.Bleve || driver == "bleve"
 		data.Meilisearch = data.Meilisearch || driver == "meilisearch"
 	}
+	scopes, err := generationSearchScopes(input)
+	if err != nil {
+		return 0, err
+	}
+	registered := makeSet()
+	for _, scope := range scopes {
+		for _, name := range scope.Names {
+			registered[name] = struct{}{}
+		}
+	}
 	methods := makeSet("Index", "Close", "Instances")
-	for _, name := range discoverPrimitiveChildNames(input, "SEARCH", searchRootKeys) {
-		method := str.Of(name).Pascal().String()
+	aliases := makeSet()
+	for _, name := range sortStrings(registered) {
+		alias := searchConfigName(name)
+		if _, exists := aliases[alias]; exists {
+			continue
+		}
+		aliases[alias] = struct{}{}
+		method := str.Of(alias).Pascal().String()
 		if !token.IsIdentifier(method) || !token.IsExported(method) {
 			return 0, fmt.Errorf("search accessor %q must be an exported Go identifier", method)
 		}
@@ -72,7 +90,7 @@ func generateSearchFiles(input generationInput) (int, error) {
 			return 0, fmt.Errorf("search accessor %q conflicts with another generated method", method)
 		}
 		methods[method] = struct{}{}
-		data.Names = append(data.Names, storageAccessorName{Method: method, Disk: strings.ToLower(name)})
+		data.Names = append(data.Names, storageAccessorName{Method: method, Disk: strings.ToLower(alias)})
 	}
 	outputs := []struct{ path, source string }{{SearchManagerPath, searchManagerSource}, {SearchAccessorsPath, searchAccessorsSource}}
 	bodies := make([][]byte, len(outputs))
@@ -102,6 +120,70 @@ func generateSearchFiles(input generationInput) (int, error) {
 		}
 	}
 	return written, nil
+}
+
+// searchScope records the environment-declared indexes available to one participating App.
+type searchScope struct {
+	Prefix string
+	Names  []string
+}
+
+// generationSearchScopes shares prospective registrations with accessor generation while preserving root inheritance.
+func generationSearchScopes(input generationInput) ([]searchScope, error) {
+	input = canonicalSearchGenerationInput(input)
+	defaultEnabled := true
+	if config, err := input.projectConfig(); err == nil {
+		defaultEnabled = config.Render.Components.Search
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("load Search App ownership: %w", err)
+	}
+	rootNames := makeSet()
+	for _, name := range searchScopedChildNames(input, "") {
+		rootNames[searchConfigName(name)] = struct{}{}
+	}
+	var scopes []searchScope
+	if defaultEnabled {
+		scopes = append(scopes, searchScope{Names: sortStrings(rootNames)})
+	}
+	for _, prefix := range generationAppEnvPrefixesForResource(input, "SEARCH") {
+		names := makeSet(sortStrings(rootNames)...)
+		for _, name := range searchScopedChildNames(input, prefix) {
+			names[searchConfigName(name)] = struct{}{}
+		}
+		scopes = append(scopes, searchScope{Prefix: prefix, Names: sortStrings(names)})
+	}
+	return scopes, nil
+}
+
+// searchConfigName matches declared and environmental aliases without changing physical index names.
+func searchConfigName(name string) string {
+	return strings.ReplaceAll(strings.ToUpper(strings.ToLower(name)), "-", "_")
+}
+
+// canonicalSearchGenerationInput mirrors runtime precedence when canonical and exact-name legacy settings coexist.
+func canonicalSearchGenerationInput(input generationInput) generationInput {
+	values := make(map[string]string, len(input.environment.values))
+	prefixes := generationKnownAppEnvPrefixes(input)
+	for _, entry := range input.environment.Entries() {
+		owner := appResourceEnvironmentOwner(entry.key, prefixes)
+		scope := "SEARCH_"
+		if owner != "" {
+			scope = owner + "_" + scope
+		}
+		if relative, exists := strings.CutPrefix(entry.key, scope); exists {
+			if scoped, valid := splitScopedEnvKey(relative, searchRootKeys); valid && scoped.child != "" {
+				canonical := scope + searchConfigName(scoped.child) + "_" + scoped.rootKey
+				if canonical != entry.key && appResourceEnvironmentOwner(canonical, prefixes) == owner {
+					if _, present := input.environment.Lookup(canonical); present {
+						continue
+					}
+				}
+			}
+		}
+		values[entry.key] = entry.value
+	}
+	input.environment = generationEnvironment{values: values}
+	return input
 }
 
 // searchScopedChildNames recognizes exact Search settings after assigning their App ownership.
