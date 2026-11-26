@@ -1677,7 +1677,7 @@ func TestCheckoutBusinessMetricsVerifierCalibration(t *testing.T) {
 		{name: "detached-registry", path: "app/wire/inject_services_app.go", old: "manager.Registry()", replacement: "metrics.NewManagerWithConfig(metrics.Config{}).Registry()", failed: "business-metrics-app-registry"},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
-			result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "instrument-checkout-metrics", scenario: "checkout-business-metrics", path: mutation.path, old: mutation.old, mutant: mutation.replacement, additional: mutation.additional, wantFailed: mutation.failed, wantCompile: true})
+			result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{unusedAppProvider: "provideCheckoutService", evaluation: "instrument-checkout-metrics", scenario: "checkout-business-metrics", path: mutation.path, old: mutation.old, mutant: mutation.replacement, additional: mutation.additional, wantFailed: mutation.failed, wantCompile: true})
 			for _, id := range []string{"metrics-library-adoption", "test-function-added"} {
 				if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
 					t.Fatalf("golden quality %s did not pass: %#v", id, result.Checks)
