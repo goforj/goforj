@@ -342,7 +342,7 @@ func legacyComponentMappingRenderCombo() renderCombo {
 	}
 	defaultComponents.ResolveDependencies()
 	workerComponents := project.Components{
-		CLI: true, Cache: true, Events: true, Storage: true, Jobs: true, Notification: true,
+		CLI: true, Cache: true, Events: true, Storage: true, Jobs: true,
 	}
 	workerComponents.ResolveDependencies()
 	return renderCombo{
