@@ -1588,7 +1588,6 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 	}{
 		{name: "Events", removed: before.Events && !after.Events, residues: projectEventsResiduePaths()},
 		{name: "Feature", removed: before.Feature && !after.Feature, residues: []string{filepath.Join("internal", "features")}},
-		{name: "Notifications", removed: before.Notification && !after.Notification, residues: []string{filepath.Join("internal", "notifications")}},
 		{name: "Storage", removed: before.Storage && !after.Storage, residues: projectStorageResiduePaths()},
 	}
 	for _, check := range checks {
@@ -1627,6 +1626,13 @@ func (p *ProjectRenderer) validateRemoveAppTransition(app project.App) error {
 		}
 	}
 	if before.Notification && !after.Notification {
+		residue, err := p.workspace.notificationGeneratedResiduePath()
+		if err != nil {
+			return err
+		}
+		if residue != "" {
+			return fmt.Errorf("cannot remove App %q because it is the last App using Notifications while %s exists; automatic Notifications removal is not supported", app.Name, residue)
+		}
 		path := filepath.Join(projectlayout.WireDir(".", app), "app.go")
 		exists, err := p.notificationAccessorExists(path)
 		if err != nil {

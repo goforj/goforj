@@ -1,11 +1,189 @@
 package resourceenv
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/goforj/goforj/project"
 )
+
+// TestConsumersKnownNotificationAppBoundaries keeps resource words inside known App names before inferring legacy scopes.
+func TestConsumersKnownNotificationAppBoundaries(t *testing.T) {
+	for _, inventory := range []string{"configured", "conventional", "configless", "dev-apps", "dev-run"} {
+		for _, app := range []string{"notification", "notification-child", "billing-notification", "billing-notification-child", "billing-cache", "billing-cache-child"} {
+			for _, notification := range []bool{false, true} {
+				t.Run(inventory+"/"+app+"/"+map[bool]string{false: "cache-only", true: "notification"}[notification], func(t *testing.T) {
+					defaults := project.Components{CLI: true, Cache: true, Notification: true}
+					selected := project.Components{CLI: true, Cache: true, Notification: notification}
+					config := &project.Config{Render: project.RenderConfig{Components: defaults}}
+					var names []string
+					switch inventory {
+					case "configured":
+						config.Apps = map[string]project.AppConfig{app: {Components: selected}}
+					case "conventional":
+						config.Render.Components = selected
+						defaults = selected
+						names = []string{app}
+					case "configless":
+						config = nil
+						defaults = selected
+						names = []string{app}
+					case "dev-apps":
+						config.Render.Components = selected
+						defaults = selected
+						config.Dev.Apps = map[string]project.DevApp{app: {}}
+					case "dev-run":
+						config.Render.Components = selected
+						defaults = selected
+						config.Dev.Run = map[string]string{app: "go run ."}
+					}
+					components := defaults
+					if config != nil {
+						components = project.ProjectComponents(config)
+					}
+					family, driver := "CACHE", "memory"
+					if notification {
+						family, driver = "NOTIFICATION", "log"
+					}
+					source := []byte("CACHE_DRIVER=memory\nNOTIFICATION_DRIVER=log\n" + project.AppEnvironmentPrefix(app) + "_" + family + "_DRIVER=" + driver + "\n")
+					consumers, err := ResolveConsumers(source, defaultResourcePlanForTest(t, components), components, config, names...)
+					if err != nil {
+						t.Fatal(err)
+					}
+					want := map[string]string{"cache": "memory", app + ":cache": "memory"}
+					if defaults.Notification {
+						want["notification"] = "log"
+					}
+					if notification {
+						want[app+":notification"] = "log"
+					}
+					got := map[string]string{}
+					for _, consumer := range consumers {
+						got[consumer.Consumer] = consumer.Driver
+					}
+					if !reflect.DeepEqual(got, want) {
+						t.Fatalf("known App boundary consumers = %#v, want %#v", got, want)
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestConsumersKnownNotificationAppBoundaryPreservesLegacyRootNames retains shared legacy stores when inference uses known boundaries.
+func TestConsumersKnownNotificationAppBoundaryPreservesLegacyRootNames(t *testing.T) {
+	components := project.Components{CLI: true, Cache: true, Notification: true}
+	config := &project.Config{
+		Render: project.RenderConfig{Components: components},
+		Apps: map[string]project.AppConfig{
+			"cache-notification": {Components: project.Components{CLI: true, Cache: true}},
+		},
+	}
+	consumers, err := ResolveConsumers([]byte("CACHE_DRIVER=memory\nCACHE_NOTIFICATION_CACHE_DRIVER=memory\n"), defaultResourcePlanForTest(t, components), components, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, consumer := range consumers {
+		got[consumer.Consumer] = consumer.Driver
+	}
+	want := map[string]string{
+		"cache": "memory", "notification": "log", "cache:notification_cache": "memory",
+		"cache-notification:cache": "memory",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy root named consumers = %#v, want %#v", got, want)
+	}
+}
+
+// TestConsumersKnownNestedNotificationAppBoundary keeps a disabled child independent of its enabled parent.
+func TestConsumersKnownNestedNotificationAppBoundary(t *testing.T) {
+	components := project.Components{CLI: true, Cache: true, Notification: true}
+	config := &project.Config{
+		Render: project.RenderConfig{Components: components},
+		Apps: map[string]project.AppConfig{
+			"billing-notification":       {Components: components},
+			"billing-notification-child": {Components: project.Components{CLI: true, Cache: true}},
+		},
+	}
+	consumers, err := ResolveConsumers([]byte("CACHE_DRIVER=memory\nNOTIFICATION_DRIVER=webhook\nBILLING_NOTIFICATION_NOTIFICATION_DRIVER=log\nBILLING_NOTIFICATION_CHILD_CACHE_DRIVER=memory\n"), defaultResourcePlanForTest(t, components), components, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, consumer := range consumers {
+		got[consumer.Consumer] = consumer.Driver
+	}
+	want := map[string]string{
+		"cache": "memory", "notification": "webhook",
+		"billing-notification:cache": "memory", "billing-notification:notification": "log",
+		"billing-notification-child:cache": "memory",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("nested known App consumers = %#v, want %#v", got, want)
+	}
+}
+
+// TestConsumersKnownNotificationInfixLegacyFamilies keeps active and stale legacy settings inside known Notification App names.
+func TestConsumersKnownNotificationInfixLegacyFamilies(t *testing.T) {
+	for _, family := range []struct {
+		resource   project.ResourceKey
+		components project.Components
+		prefix     string
+		driver     string
+	}{
+		{project.ResourceDatabase, project.Components{CLI: true, DatabaseSQLite: true}, "DB", "sqlite"},
+		{project.ResourceCache, project.Components{CLI: true, Cache: true}, "CACHE", "memory"},
+		{project.ResourceQueue, project.Components{CLI: true, Jobs: true}, "QUEUE", "workerpool"},
+		{project.ResourceEvents, project.Components{CLI: true, Events: true}, "EVENTS", "inproc"},
+		{project.ResourceStorage, project.Components{CLI: true, Storage: true}, "STORAGE", "local"},
+		{project.ResourceMail, project.Components{CLI: true, Mail: true}, "MAIL", "log"},
+	} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(string(family.resource)+"/"+map[bool]string{false: "disabled", true: "enabled"}[enabled], func(t *testing.T) {
+				components := family.components
+				components.Notification = true
+				selected := family.components
+				if !enabled {
+					selected = project.Components{CLI: true, Notification: true}
+				}
+				config := &project.Config{
+					Render: project.RenderConfig{Components: components},
+					Apps:   map[string]project.AppConfig{"billing-notification": {Components: selected}},
+				}
+				driver := family.driver
+				if family.resource == project.ResourceCache && !enabled {
+					driver = "redis"
+				}
+				source := []byte("BILLING_NOTIFICATION_" + family.prefix + "_DRIVER=" + driver + "\n")
+				consumers, err := ResolveConsumers(source, defaultResourcePlanForTest(t, components), components, config)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := map[string]string{}
+				for _, consumer := range consumers {
+					got[consumer.Consumer] = consumer.Driver
+				}
+				want := map[string]string{string(family.resource): family.driver, "notification": "log"}
+				if enabled {
+					want["billing-notification:"+string(family.resource)] = family.driver
+				} else {
+					want["billing-notification:notification"] = "log"
+				}
+				if family.resource == project.ResourceStorage {
+					want["storage:public"] = "local"
+					if enabled {
+						want["billing-notification:storage:public"] = "local"
+					}
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("legacy family consumers = %#v, want %#v", got, want)
+				}
+			})
+		}
+	}
+}
 
 // TestConsumersNotificationRawDriverFallback keeps consumer drivers aligned with generated root and named senders.
 func TestConsumersNotificationRawDriverFallback(t *testing.T) {

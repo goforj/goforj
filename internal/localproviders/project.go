@@ -202,14 +202,19 @@ func managedAppResourceOwner(config *project.Config, key string) (string, bool) 
 	return "", false
 }
 
+// appAwareResource identifies families whose runtime assigns settings to a single App owner.
+func appAwareResource(key project.ResourceKey) bool {
+	return key == project.ResourceFeature || key == project.ResourceNotification
+}
+
 // resourceScopeAllowed aligns independent family interpretations with App-aware generator ownership.
 func resourceScopeAllowed(config *project.Config, key string, definition project.ResourceDefinition, scope string) bool {
 	owner := knownAppResourceOwner(config, key)
-	if definition.Key == project.ResourceFeature {
+	if appAwareResource(definition.Key) {
 		return owner == strings.TrimSuffix(scope, "_")
 	}
 	managedOwner, enabled := managedAppResourceOwner(config, key)
-	return !enabled || managedOwner == "" || !strings.HasPrefix(key, managedOwner+"_FEATURE_")
+	return !enabled || managedOwner == "" || (!strings.HasPrefix(key, managedOwner+"_FEATURE_") && !strings.HasPrefix(key, managedOwner+"_NOTIFICATION_"))
 }
 
 // resourceAppliesTo distinguishes live resource scopes while allowing definitions for future components to retain their fallback interpretation.
@@ -237,7 +242,7 @@ func rootResourceKey(config *project.Config, key string) bool {
 		return true
 	}
 	for _, definition := range project.ResourceCatalog() {
-		if (definition.Key == project.ResourceFeature || definition.Key == project.ResourceNotification) && !definition.AppliesTo(project.ProjectComponents(config)) {
+		if appAwareResource(definition.Key) && !definition.AppliesTo(project.ProjectComponents(config)) {
 			continue
 		}
 		if strings.HasPrefix(key, definition.EnvironmentPrefix+"_") {

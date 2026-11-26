@@ -331,7 +331,9 @@ func TestResourceAppPrefixesIgnoreFeatureEvidence(t *testing.T) {
 		"FOO_CACHE_CHILD_FEATURE_FLAGS_QUEUE_DRIVER": "file",
 		"BILLING_CACHE_DRIVER":                       "redis",
 		"REPORTING_DB_HOST":                          "db.example",
-	}, []string{"foo-cache", "foo-cache-child"}, project.Components{Feature: true}, "FOO_CACHE", "FOO_CACHE_CHILD")
+	}, []string{"foo-cache", "foo-cache-child"}, project.Components{Feature: true}, map[string]project.Components{
+		"FOO_CACHE": {Feature: true}, "FOO_CACHE_CHILD": {Feature: true},
+	})
 	want := []resourceAppPrefix{
 		{name: "billing", prefix: "BILLING"},
 		{name: "foo-cache", prefix: "FOO_CACHE"},
@@ -347,7 +349,7 @@ func TestResourceAppPrefixesIgnoreFeatureEvidence(t *testing.T) {
 func TestResourceAppPrefixesPreserveFeatureWordLegacyApps(t *testing.T) {
 	prefixes := resourceAppPrefixes(map[string]string{
 		"MISSING_FEATURE_CACHE_DRIVER": "redis",
-	}, nil, project.Components{})
+	}, nil, project.Components{}, nil)
 	want := []resourceAppPrefix{{name: "missing-feature", prefix: "MISSING_FEATURE"}}
 	if !reflect.DeepEqual(prefixes, want) {
 		t.Fatalf("legacy App prefixes = %#v, want %#v", prefixes, want)

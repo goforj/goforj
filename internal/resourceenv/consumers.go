@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/url"
-	"slices"
 	"sort"
 	"strings"
 
@@ -97,20 +96,16 @@ func newResourceConsumerResolver(source []byte, plan project.ResourcePlan, proje
 // resolve keeps applicability App-local while retaining project-wide service placement.
 func (resolver resourceConsumerResolver) resolve(defaultComponents project.Components, appNames []string, appComponents map[string]project.Components) ([]project.EffectiveResourceConsumer, error) {
 	resolver.appResourceComponents = map[string]project.Components{}
-	enabledFeaturePrefixes := []string{}
-	// Feature ownership requires a real App inventory; legacy resources still infer scopes from environment keys.
-	for _, app := range resourceAppPrefixes(nil, appNames, resolver.projectComponents) {
+	// Known App ownership is established before legacy environment evidence can infer additional scopes.
+	for _, app := range resourceAppPrefixes(nil, appNames, resolver.projectComponents, nil) {
 		resolver.appPrefixes = append(resolver.appPrefixes, app.prefix)
 		components, ok := appComponents[app.name]
 		if !ok {
 			components = defaultComponents
 		}
 		resolver.appResourceComponents[app.prefix] = components
-		if components.Feature {
-			enabledFeaturePrefixes = append(enabledFeaturePrefixes, app.prefix)
-		}
 	}
-	appPrefixes := resourceAppPrefixes(resolver.values, appNames, resolver.projectComponents, enabledFeaturePrefixes...)
+	appPrefixes := resourceAppPrefixes(resolver.values, appNames, resolver.projectComponents, resolver.appResourceComponents)
 	consumers := []project.EffectiveResourceConsumer{}
 	seen := map[string]bool{}
 
@@ -237,8 +232,8 @@ func resourceEnvironmentAssignments(source []byte) (map[string]string, error) {
 	return values, nil
 }
 
-// resourceAppPrefixes combines known Apps with legacy environment evidence while protecting enabled App-aware resource ownership.
-func resourceAppPrefixes(values map[string]string, appNames []string, components project.Components, enabledFeaturePrefixes ...string) []resourceAppPrefix {
+// resourceAppPrefixes combines known Apps with legacy environment evidence while protecting enabled known App resources.
+func resourceAppPrefixes(values map[string]string, appNames []string, components project.Components, appComponents map[string]project.Components) []resourceAppPrefix {
 	prefixNames := map[string]string{}
 	for _, appName := range appNames {
 		appName = str.Of(appName).Trim().ToLower().String()
@@ -255,8 +250,17 @@ func resourceAppPrefixes(values map[string]string, appNames []string, components
 	}
 	for key := range values {
 		owner := project.AppResourceKeyOwner(key, knownPrefixes)
-		if owner != "" && strings.HasPrefix(key, owner+"_FEATURE_") && slices.Contains(enabledFeaturePrefixes, owner) {
-			continue
+		if owner != "" {
+			owned := false
+			for _, definition := range project.ResourceCatalog() {
+				if definition.AppliesTo(appComponents[owner]) && strings.HasPrefix(key, owner+"_"+definition.EnvironmentPrefix+"_") {
+					owned = true
+					break
+				}
+			}
+			if owned {
+				continue
+			}
 		}
 		markerIndex := -1
 		var markerDefinition project.ResourceDefinition
@@ -267,6 +271,10 @@ func resourceAppPrefixes(values map[string]string, appNames []string, components
 			}
 			marker := "_" + definition.EnvironmentPrefix + "_"
 			index := strings.Index(key, marker)
+			// Notification markers inside known App names cannot shorten their legacy resource scopes.
+			if definition.Key == project.ResourceNotification && owner != "" && index < len(owner) {
+				continue
+			}
 			if index > 0 && (markerIndex < 0 || index < markerIndex) {
 				markerIndex = index
 				markerDefinition = definition
