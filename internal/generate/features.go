@@ -53,6 +53,7 @@ func discoverFeatureNames(input generationInput) []string {
 
 // generateFeatureFiles validates source configuration before publishing either generated artifact.
 func generateFeatureFiles(input generationInput) (int, error) {
+	input = legacyResourceGenerationInput(input, "FEATURE")
 	if err := validatePrimitiveEnv(input, primitiveEnvContract{
 		Prefix: "FEATURE", DefaultDriver: "memory", LocalDrivers: featureLocalDrivers,
 		RootKeys: featureRootKeys, CommonKeys: makeSet("DRIVER", "REFRESH_INTERVAL", "INITIALIZATION_TIMEOUT"), DriverKeys: featureDriverKeys,
@@ -122,6 +123,7 @@ func generateFeatureFiles(input generationInput) (int, error) {
 
 // generationFeatureScopes is the authoritative named evaluator registration inventory for every participating App.
 func generationFeatureScopes(input generationInput) ([]featureScope, error) {
+	input = legacyResourceGenerationInput(input, "FEATURE")
 	var scopes []featureScope
 	rootNames := appScopedChildNames(input, "FEATURE", "", featureRootKeys)
 	defaultEnabled := true

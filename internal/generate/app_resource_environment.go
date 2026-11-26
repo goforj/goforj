@@ -1,6 +1,7 @@
 package generate
 
 import (
+	"os"
 	"strings"
 
 	"github.com/goforj/goforj/project"
@@ -97,7 +98,20 @@ func SharedResourceEnvironmentSetting(key string, components project.Components)
 
 // legacyResourceGenerationInput preserves configless prefix boundaries and excludes settings consumed by enabled App Feature managers.
 func legacyResourceGenerationInput(input generationInput, resourcePrefix string) generationInput {
-	if resourcePrefix == "FEATURE" || resourcePrefix == "NOTIFICATION" {
+	if resourcePrefix == "NOTIFICATION" {
+		return input
+	}
+	if resourcePrefix == "FEATURE" {
+		if _, err := input.projectConfig(); os.IsNotExist(err) {
+			// Feature predates Notification, so configless Feature inference must retain its original App vocabulary.
+			resources := []generationEnvironmentResource{}
+			for _, resource := range generationEnvironmentResources() {
+				if resource.prefix != "NOTIFICATION" {
+					resources = append(resources, resource)
+				}
+			}
+			input.appPrefixes = sortStrings(generationAppEnvPrefixSetForResources(input.projectDir, input.environment, resources))
+		}
 		return input
 	}
 	if _, err := input.projectConfig(); err != nil {

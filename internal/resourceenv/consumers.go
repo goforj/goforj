@@ -99,7 +99,7 @@ func (resolver resourceConsumerResolver) resolve(defaultComponents project.Compo
 	resolver.appResourceComponents = map[string]project.Components{}
 	enabledFeaturePrefixes := []string{}
 	// Feature ownership requires a real App inventory; legacy resources still infer scopes from environment keys.
-	for _, app := range resourceAppPrefixes(nil, appNames, resolver.projectComponents.Feature) {
+	for _, app := range resourceAppPrefixes(nil, appNames, resolver.projectComponents) {
 		resolver.appPrefixes = append(resolver.appPrefixes, app.prefix)
 		components, ok := appComponents[app.name]
 		if !ok {
@@ -110,7 +110,7 @@ func (resolver resourceConsumerResolver) resolve(defaultComponents project.Compo
 			enabledFeaturePrefixes = append(enabledFeaturePrefixes, app.prefix)
 		}
 	}
-	appPrefixes := resourceAppPrefixes(resolver.values, appNames, resolver.projectComponents.Feature, enabledFeaturePrefixes...)
+	appPrefixes := resourceAppPrefixes(resolver.values, appNames, resolver.projectComponents, enabledFeaturePrefixes...)
 	consumers := []project.EffectiveResourceConsumer{}
 	seen := map[string]bool{}
 
@@ -237,8 +237,8 @@ func resourceEnvironmentAssignments(source []byte) (map[string]string, error) {
 	return values, nil
 }
 
-// resourceAppPrefixes combines known Apps with legacy environment evidence while protecting enabled Feature ownership.
-func resourceAppPrefixes(values map[string]string, appNames []string, featureEnabled bool, enabledFeaturePrefixes ...string) []resourceAppPrefix {
+// resourceAppPrefixes combines known Apps with legacy environment evidence while protecting enabled App-aware resource ownership.
+func resourceAppPrefixes(values map[string]string, appNames []string, components project.Components, enabledFeaturePrefixes ...string) []resourceAppPrefix {
 	prefixNames := map[string]string{}
 	for _, appName := range appNames {
 		appName = str.Of(appName).Trim().ToLower().String()
@@ -261,8 +261,8 @@ func resourceAppPrefixes(values map[string]string, appNames []string, featureEna
 		markerIndex := -1
 		var markerDefinition project.ResourceDefinition
 		for _, definition := range project.ResourceCatalog() {
-			// Feature scopes require known Apps; legacy markers still support environment-only App names.
-			if definition.Key == project.ResourceFeature {
+			// Feature scopes require known Apps; disabled Notification markers must preserve legacy App names.
+			if definition.Key == project.ResourceFeature || (definition.Key == project.ResourceNotification && !components.Notification) {
 				continue
 			}
 			marker := "_" + definition.EnvironmentPrefix + "_"
@@ -279,7 +279,7 @@ func resourceAppPrefixes(values map[string]string, appNames []string, featureEna
 		if _, exists := prefixNames[prefix]; exists {
 			continue
 		}
-		if resourceFirstAppPrefix(prefix, featureEnabled) {
+		if resourceFirstAppPrefix(prefix, components) {
 			continue
 		}
 		prefixNames[prefix] = str.Of(prefix).ReplaceAll("_", "-").ToLower().String()
@@ -292,10 +292,10 @@ func resourceAppPrefixes(values map[string]string, appNames []string, featureEna
 	return prefixes
 }
 
-// resourceFirstAppPrefix reserves legacy resource namespaces and shared Feature defaults while any App enables Feature.
-func resourceFirstAppPrefix(prefix string, featureEnabled bool) bool {
+// resourceFirstAppPrefix reserves legacy namespaces and App-aware defaults enabled by any participating App.
+func resourceFirstAppPrefix(prefix string, components project.Components) bool {
 	for _, definition := range project.ResourceCatalog() {
-		if definition.Key == project.ResourceFeature && !featureEnabled {
+		if (definition.Key == project.ResourceFeature && !components.Feature) || (definition.Key == project.ResourceNotification && !components.Notification) {
 			continue
 		}
 		resourcePrefix := definition.EnvironmentPrefix

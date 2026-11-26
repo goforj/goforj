@@ -399,7 +399,7 @@ func TestResourceAppPrefixesRequireTopologyEvidence(t *testing.T) {
 		"REPORTING_CACHE_ADDR":     "reporting.redis.example:6379",
 		"WAREHOUSE_DB_HOST":        "warehouse.db.example",
 		"OBSERVABILITY_DB_ENABLED": "true",
-	}, nil, false)
+	}, nil, project.Components{})
 	want := []resourceAppPrefix{
 		{name: "billing", prefix: "BILLING"},
 		{name: "reporting", prefix: "REPORTING"},
@@ -434,7 +434,7 @@ func TestEffectiveResourceConsumersKeepResourceFirstNamesOutOfAppInference(t *te
 func TestResourceAppPrefixesUseTheFirstResourceMarker(t *testing.T) {
 	prefixes := resourceAppPrefixes(map[string]string{
 		"FOO_CACHE_DB_DRIVER": "redis",
-	}, nil, false)
+	}, nil, project.Components{})
 	want := []resourceAppPrefix{{name: "foo", prefix: "FOO"}}
 	if !reflect.DeepEqual(prefixes, want) {
 		t.Fatalf("resource App prefixes = %#v, want %#v", prefixes, want)
