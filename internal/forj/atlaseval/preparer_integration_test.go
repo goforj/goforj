@@ -1669,13 +1669,14 @@ func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
 // TestTaxRateResilienceVerifierCalibration rejects compiling retry-limit and status-policy mutants.
 func TestTaxRateResilienceVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
-		evaluation:  "harden-tax-rate-client",
-		scenario:    "resilient-tax-rate-http",
-		path:        "internal/taxrates/client.go",
-		old:         "attempt == 2",
-		mutant:      "attempt == 0",
-		wantFailed:  "tax-rate-resilience-behavior",
-		wantCompile: true,
+		evaluation:        "harden-tax-rate-client",
+		unusedAppProvider: "provideTaxRateClient",
+		scenario:          "resilient-tax-rate-http",
+		path:              "internal/taxrates/client.go",
+		old:               "attempt == 2",
+		mutant:            "attempt == 0",
+		wantFailed:        "tax-rate-resilience-behavior",
+		wantCompile:       true,
 		behavior: &evaluationBehaviorMutation{
 			path:        "internal/taxrates/client.go",
 			old:         "status.StatusCode == http.StatusBadGateway || status.StatusCode == http.StatusServiceUnavailable",
