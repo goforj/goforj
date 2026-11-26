@@ -336,5 +336,5 @@ Project's existing crypt v1.2.0 dependency. The prepared fake-key vector makes
 stored-format compatibility reviewable. Golden and compiling semantic mutant
 calibration verify tamper rejection, previous-key reads, current-key writes,
 immutable key snapshots, safe failure boundaries, and invalid-key rejection by
-real Wire initialization. Source API attribution remains separate from behavior.
+actual App execution through registered Wire providers. The required App command probe verifies current-key writes, previous-key reads, authentication, and invalid-key startup. A compiling calibration moves the service provider into an unused Wire set and detaches its lifecycle root; standalone encryption still passes while the actual App check rejects the disconnected graph. Source API attribution remains separate from behavior.
 No provider attempts are added and the historical benchmark matrix is unchanged.

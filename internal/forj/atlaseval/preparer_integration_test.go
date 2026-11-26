@@ -423,6 +423,7 @@ type majorSurfaceVerifierCase struct {
 	alternateRenames     []evaluationPathRename
 	disconnectedProvider string
 	unusedAppProvider    string
+	unusedAppRootPath    string
 	wantFailed           string
 	wantCompile          bool
 }
@@ -1082,7 +1083,7 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		}()
 	}
 	if test.unusedAppProvider != "" {
-		verifyUnusedAppServiceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.unusedAppProvider, result.Checks, forjExecutable, environment)
+		verifyUnusedAppServiceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.unusedAppProvider, test.unusedAppRootPath, result.Checks, forjExecutable, environment)
 	}
 	if test.disconnectedProvider != "" {
 		verifyDisconnectedNamedResourceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.disconnectedProvider, test.wantFailed, environment)
@@ -1141,8 +1142,28 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 }
 
 // verifyUnusedAppServiceProvider proves an unused Wire set cannot satisfy actual App resource ownership.
-func verifyUnusedAppServiceProvider(t *testing.T, verifier eval.Verifier, baselineRoot, projectRoot, provider string, goldenChecks []eval.EndpointResult, forjExecutable string, environment []string) {
+func verifyUnusedAppServiceProvider(t *testing.T, verifier eval.Verifier, baselineRoot, projectRoot, provider, rootPath string, goldenChecks []eval.EndpointResult, forjExecutable string, environment []string) {
 	t.Helper()
+	// The prepared lifecycle lets a disconnected service compile so only the App consumption gate rejects it.
+	if rootPath != "" {
+		target := filepath.Join(projectRoot, rootPath)
+		original, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		baseline, err := os.ReadFile(filepath.Join(baselineRoot, rootPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, baseline, 0644); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := os.WriteFile(target, original, 0644); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
 	wirePath := filepath.Join(projectRoot, "app", "wire", "inject_services_app.go")
 	body, err := os.ReadFile(wirePath)
 	if err != nil {
@@ -1668,15 +1689,16 @@ func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
 
 // TestEncryptPartnerPayloadsVerifierCalibration proves authenticated storage and old-key reads survive compiling semantic defects.
 func TestEncryptPartnerPayloadsVerifierCalibration(t *testing.T) {
-	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
-		requiredQuality: []string{"payload-crypt-api"},
-		evaluation:      "encrypt-partner-payloads",
-		scenario:        "partner-payload-rotation",
-		path:            "internal/partnerpayloads/service.go",
-		old:             "return service.repository.Put(ctx, id, ciphertext)",
-		mutant:          "return service.repository.Put(ctx, id, payload+ciphertext[:0])",
-		wantFailed:      "payload-encryption-behavior",
-		wantCompile:     true,
+	result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		unusedAppProvider: "partnerpayloads.NewService",
+		unusedAppRootPath: "app/lifecycle.go",
+		evaluation:        "encrypt-partner-payloads",
+		scenario:          "partner-payload-rotation",
+		path:              "internal/partnerpayloads/service.go",
+		old:               "return service.repository.Put(ctx, id, ciphertext)",
+		mutant:            "return service.repository.Put(ctx, id, payload+ciphertext[:0])",
+		wantFailed:        "payload-encryption-behavior",
+		wantCompile:       true,
 		behavior: &evaluationBehaviorMutation{
 			path:        "internal/partnerpayloads/cipher.go",
 			old:         "cipher, err := crypt.NewFromEnv()",
@@ -1685,4 +1707,7 @@ func TestEncryptPartnerPayloadsVerifierCalibration(t *testing.T) {
 			wantCompile: true,
 		},
 	})
+	if !evaluationCheckHasStatus(result.Checks, "payload-crypt-api", eval.EndpointPassed) {
+		t.Fatal("golden crypt API quality did not pass")
+	}
 }
