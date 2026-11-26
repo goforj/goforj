@@ -148,7 +148,7 @@ func resourceKey(config *project.Config, key string) string {
 		prefix := project.AppEnvironmentPrefix(name) + "_"
 		if strings.HasPrefix(key, prefix) {
 			candidate := strings.TrimPrefix(key, prefix)
-			if rootResourceKey(candidate) {
+			if rootResourceKey(config, candidate) {
 				if len(prefix) > len(longest) {
 					longest = prefix
 				}
@@ -227,15 +227,18 @@ func managedKey(config *project.Config, key string) bool {
 		return true
 	}
 	base := resourceKey(config, key)
-	return rootResourceKey(base)
+	return rootResourceKey(config, base)
 }
 
-// rootResourceKey recognizes settings that the default App can consume even when their names also match a configured App prefix.
-func rootResourceKey(key string) bool {
+// rootResourceKey retains legacy resource namespaces while claiming Feature settings only when an App opts in.
+func rootResourceKey(config *project.Config, key string) bool {
 	if strings.HasPrefix(key, "REDIS_") {
 		return true
 	}
 	for _, definition := range project.ResourceCatalog() {
+		if definition.Key == project.ResourceFeature && !definition.AppliesTo(project.ProjectComponents(config)) {
+			continue
+		}
 		if strings.HasPrefix(key, definition.EnvironmentPrefix+"_") {
 			return true
 		}

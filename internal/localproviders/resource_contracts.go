@@ -27,6 +27,9 @@ func resourceDefinitions(config *project.Config, key string) []project.ResourceD
 		}
 		base := resourceKey(config, key)
 		for _, definition := range project.ResourceCatalog() {
+			if definition.Key == project.ResourceFeature && !definition.AppliesTo(project.ProjectComponents(config)) {
+				continue
+			}
 			if strings.HasPrefix(base, definition.EnvironmentPrefix+"_") {
 				definitions = append(definitions, definition)
 			}

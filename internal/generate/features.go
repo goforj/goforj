@@ -465,10 +465,10 @@ func featureWatchMatches(path string, watcher *featureWatcher) bool {
     return true
 }
 
-// runFeatureFileRefresh watches available filesystems and polls only while a watch is unavailable.
+// runFeatureFileRefresh watches healthy sources and retries unavailable watches or failed source reads.
 func runFeatureFileRefresh(ctx context.Context, resource managedEvaluator, watcher *featureWatcher) {
     // Reconcile after watch registration to cover changes since synchronous initialization.
-    _ = resource.client.Refresh(ctx)
+    sourceUnavailable := errors.Is(resource.client.Refresh(ctx),feature.ErrSource)
     retry := time.NewTimer(resource.interval)
     retry.Stop()
     defer retry.Stop()
@@ -484,20 +484,23 @@ func runFeatureFileRefresh(ctx context.Context, resource managedEvaluator, watch
     for {
         if watcher != nil {
             events, failures = watcher.Events, watcher.Errors
-            retry.Stop()
-            polling = nil
         } else {
             events, failures = nil, nil
+        }
+        if watcher == nil || sourceUnavailable {
             if polling == nil { retry.Reset(resource.interval); polling = retry.C }
+        } else {
+            retry.Stop()
+            polling = nil
         }
         select {
         case <-ctx.Done():
             return
         case <-polling:
             polling = nil
-            watcher = watchFeatureDirectory(resource.path)
+            if watcher == nil { watcher = watchFeatureDirectory(resource.path) }
             // Reconcile on recovery before returning to event-only refresh.
-            _ = resource.client.Refresh(ctx)
+            sourceUnavailable = errors.Is(resource.client.Refresh(ctx),feature.ErrSource)
         case event, ok := <-events:
             if !ok { _ = watcher.Close(); watcher = nil; continue }
             name := filepath.Clean(event.Name)
@@ -517,12 +520,12 @@ func runFeatureFileRefresh(ctx context.Context, resource managedEvaluator, watch
                 replacement := watchFeatureDirectory(resource.path)
                 _ = watcher.Close()
                 watcher = replacement
-                _ = resource.client.Refresh(ctx)
+                sourceUnavailable = errors.Is(resource.client.Refresh(ctx),feature.ErrSource)
                 continue
             }
             _ = watcher.Close()
             watcher = nil
-            _ = resource.client.Refresh(ctx)
+            sourceUnavailable = errors.Is(resource.client.Refresh(ctx),feature.ErrSource)
         case <-pending:
             pending = nil
             if rebind {
@@ -531,7 +534,7 @@ func runFeatureFileRefresh(ctx context.Context, resource managedEvaluator, watch
                 watcher = replacement
             }
             rebind = false
-            _ = resource.client.Refresh(ctx)
+            sourceUnavailable = errors.Is(resource.client.Refresh(ctx),feature.ErrSource)
         }
     }
 }

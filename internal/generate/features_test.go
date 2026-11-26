@@ -378,6 +378,15 @@ func TestFeatureFileRefreshFallback(t *testing.T) {
     done := make(chan struct{})
     go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,nil) }()
     waitFeatureCondition(t,func() bool { return loads.Load() >= 5 })
+    if runtime.GOOS != "windows" {
+        previous,quietSince := loads.Load(),time.Now()
+        // Native registration may need another retry when ancestor entries change during setup.
+        waitFeatureCondition(t,func() bool {
+            current := loads.Load()
+            if current != previous { previous,quietSince = current,time.Now() }
+            return time.Since(quietSince) >= 100*time.Millisecond
+        })
+    }
     recovered := loads.Load()
     time.Sleep(100*time.Millisecond)
     if runtime.GOOS == "windows" {
@@ -471,6 +480,61 @@ func TestFeatureHardlinkUpdates(t *testing.T) {
     waitFeatureCondition(t,func() bool { return manager.Checkout().Enabled(ctx,"checkout-v2") })
     if err := os.WriteFile(replacementAlias,[]byte("{\"schema\":1,\"flags\":{\"checkout-v2\":{\"default\":false}}}"),0600); err != nil { t.Fatal(err) }
     waitFeatureCondition(t,func() bool { return !manager.Checkout().Enabled(ctx,"checkout-v2") })
+}
+
+// TestFeatureRefreshFailureRecovery retries unreadable sources without polling healthy or invalid documents.
+func TestFeatureRefreshFailureRecovery(t *testing.T) {
+    for _, mode := range []string{"initial source", "event source", "invalid document"} { t.Run(mode,func(t *testing.T) {
+        path := configureFeatureFixture(t)
+        var loads atomic.Int64
+        var unavailable atomic.Bool
+        source := feature.NewFileSource(path)
+        client,err := feature.Open(context.Background(),feature.SourceFunc(func(ctx context.Context)(feature.Document,error) {
+            loads.Add(1)
+            if unavailable.Load() { return feature.Document{},feature.ErrSource }
+            return source.Load(ctx)
+        }))
+        if err != nil { t.Fatal(err) }
+        flags := feature.New(client)
+        watcher := requireFeatureWatcher(t,path)
+        // Own notifications so successful recovery cannot depend on another filesystem event.
+        events := make(chan fsnotify.Event,1)
+        watcher.Events,watcher.Errors = events,make(chan error)
+        updated := []byte("{\"schema\":1,\"flags\":{\"checkout-v2\":{\"default\":false}}}")
+        initial := client.Status().LastSuccess
+        if mode == "initial source" {
+            unavailable.Store(true)
+            if err := os.WriteFile(path,updated,0600); err != nil { t.Fatal(err) }
+        }
+        resource := managedEvaluator{driver:"file",path:path,client:client,flags:flags,interval:20*time.Millisecond}
+        ctx,cancel := context.WithCancel(context.Background())
+        done := make(chan struct{})
+        go func(){ defer close(done); runFeatureFileRefresh(ctx,resource,watcher) }()
+        defer func(){ cancel(); <-done }()
+        expectedError := feature.ErrSource
+        if mode != "initial source" {
+            waitFeatureCondition(t,func() bool { return client.Status().LastSuccess.After(initial) })
+            contents := updated
+            if mode == "invalid document" { contents = []byte("invalid"); expectedError = feature.ErrInvalidDocument } else { unavailable.Store(true) }
+            if err := os.WriteFile(path,contents,0600); err != nil { t.Fatal(err) }
+            events <- fsnotify.Event{Name:path,Op:fsnotify.Write}
+        }
+        waitFeatureCondition(t,func() bool { return errors.Is(client.Status().LastError,expectedError) })
+        if !flags.Enabled(ctx,"checkout-v2") { t.Fatal("failed refresh discarded the last valid decisions") }
+        if mode == "invalid document" {
+            failedLoads := loads.Load()
+            time.Sleep(100*time.Millisecond)
+            if loads.Load() != failedLoads { t.Fatal("invalid definitions were polled with a healthy watcher") }
+            if err := os.WriteFile(path,updated,0600); err != nil { t.Fatal(err) }
+            events <- fsnotify.Event{Name:path,Op:fsnotify.Write}
+        } else {
+            unavailable.Store(false)
+        }
+        waitFeatureCondition(t,func() bool { return client.Status().LastError == nil && !flags.Enabled(ctx,"checkout-v2") })
+        recoveredLoads := loads.Load()
+        time.Sleep(100*time.Millisecond)
+        if loads.Load() != recoveredLoads { t.Fatal("source retry continued after recovery") }
+    }) }
 }
 
 // TestManagedFeatureParentReplacement reacquires a directory watch after the watched directory is replaced.
