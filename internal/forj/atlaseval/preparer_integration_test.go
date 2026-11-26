@@ -1002,8 +1002,8 @@ func TestProtectRouteWithAuthVerifierCalibration(t *testing.T) {
 	})
 }
 
-// testMajorSurfaceVerifierCalibration exercises one contract independently so the integration runner can shard the complete portfolio.
-func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifierCase) {
+// testMajorSurfaceVerifierCalibration exercises one contract independently and returns golden results for separate quality assertions.
+func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifierCase) eval.VerificationResult {
 	t.Helper()
 	t.Parallel()
 	forjExecutable := testkit.EnsureIntegrationForjBinary(t)
@@ -1137,6 +1137,7 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		}
 		verifyEvaluationBehaviorMutant(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, *test.behavior, environment)
 	}
+	return result
 }
 
 // verifyUnusedAppServiceProvider proves an unused Wire set cannot satisfy actual App resource ownership.
@@ -1613,4 +1614,31 @@ func TestIncidentNotificationVerifierCalibration(t *testing.T) {
 			wantCompile: true,
 		},
 	})
+}
+
+// TestTargetFeatureRolloutVerifierCalibration rejects compiling targeting, snapshot, and resource-wiring mutations.
+func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
+	for _, mutation := range []struct {
+		name, old, replacement, failed string
+		unusedAppProvider              string
+		additional                     []evaluationMutation
+	}{
+		{name: "mixed-revisions", old: "snapshot, err := service.flags.Snapshot()", replacement: "snapshot, err := service.flags, error(nil)", failed: "feature-rollout-behavior"},
+		{name: "random-target", old: "Key: tenant", replacement: `Key: fmt.Sprintf("%s:%d", tenant, rand.Uint64())`, failed: "feature-rollout-behavior", additional: []evaluationMutation{{old: "\"fmt\"", mutant: "\"fmt\"\n\"math/rand/v2\""}}},
+		{name: "wrong-resource", old: "features.Checkout()", replacement: "features.Default()", failed: "feature-resource-accessor", unusedAppProvider: "checkout.NewService"},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+				evaluation: "target-feature-rollout", scenario: "tenant-checkout-rollout", path: "internal/checkout/service.go",
+				old: mutation.old, mutant: mutation.replacement, additional: mutation.additional,
+				unusedAppProvider: mutation.unusedAppProvider,
+				wantFailed:        mutation.failed, wantCompile: true,
+			})
+			for _, id := range []string{"feature-library-adoption", "feature-library-execution", "test-function-added"} {
+				if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
+					t.Fatalf("golden quality %s did not pass: %#v", id, result.Checks)
+				}
+			}
+		})
+	}
 }
