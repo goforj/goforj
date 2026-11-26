@@ -424,6 +424,7 @@ type majorSurfaceVerifierCase struct {
 	disconnectedProvider string
 	unusedAppProvider    string
 	wantFailed           string
+	wantPassedOnMutant   []string
 	wantCompile          bool
 }
 
@@ -1131,6 +1132,11 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 	if !evaluationCheckFailed(mutantResult.Checks, test.wantFailed) {
 		t.Fatalf("mutant checks = %#v, want %q to fail", mutantResult.Checks, test.wantFailed)
 	}
+	for _, id := range test.wantPassedOnMutant {
+		if !evaluationCheckHasStatus(mutantResult.Checks, id, eval.EndpointPassed) {
+			t.Fatalf("mutant must preserve %s: %#v", id, mutantResult.Checks)
+		}
+	}
 	if test.behavior != nil {
 		if err := os.WriteFile(path, body, 0o644); err != nil {
 			t.Fatalf("restore structural mutant target: %v", err)
@@ -1706,6 +1712,7 @@ func TestTenantRequestRateLimitActiveProviderCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
 		evaluation: "tenant-request-rate-limits", scenario: "tenant-request-rate-limits", path: "app/wire/inject_http_controllers_app.go",
 		old: "\tprovideRequestController,\n", mutant: "\tatlasDetachedRequestController,\n", wantFailed: "tenant-rate-limit-app-runtime", wantCompile: true,
+		wantPassedOnMutant: []string{"tenant-rate-limit-behavior"},
 		additional: []evaluationMutation{
 			{old: "import (\n", mutant: "import (\n\t\"github.com/goforj/cache\"\n"},
 			{old: "return requests.NewController(requests.NewLimiter(manager.Requests(), time.Now))\n}", mutant: `return requests.NewController(requests.NewLimiter(manager.Requests(), time.Now))
