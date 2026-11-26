@@ -329,15 +329,29 @@ guidance-attribution question, and preserve previous scorecards in Git history.
 The `catalog-search` evaluation adds a bounded product projection task after the published matrix. It has no retained live provider attempts and does not change any score above. The prepared `catalog-search-domain` scenario installs `github.com/goforj/search@v0.1.1` and the separately tagged `github.com/goforj/search/driver/blevesearch@v0.1.1` before candidate execution, so dependency installation is outside the measurement. The root requires Go 1.24 and the embedded driver requires Go 1.25; the generated Project already targets Go 1.26.
 
 The service obtains its index through the generated manager's named Catalog accessor and App-owned schema registry. A supervisor-only helper wraps the original backend after sealing, preserving the manager's real backend ownership while observing root API calls and controlling terminal-outcome cases. This helper is absent from the candidate-visible Project API. The real local backend calibration checks exact category filtering, stable pages, total precision, replacement visibility, cancellation, and terminal failure. A separate quality observation records executed search-library calls without changing the application outcome. Compiling semantic mutants remove category isolation or skip visibility confirmation. The existing diagnostic trust limits apply. Durable database writes, persistent index lifecycle, facets, highlight rendering, other drivers, and backend-specific ranking are outside this contract.
-## Additional contracts awaiting live measurement
+## Presence-aware validation diagnostic
 
-`patch-customer-settings` is a new, independently versioned presence-aware PATCH
-contract. Its `customer-settings-validation` scenario stages validation v0.2.0
-before candidate execution and keeps candidate shell networking disabled.
-Golden and compiling semantic mutant calibration cover omission, explicit null,
-zero/false, normalization, shared application rules, stable client codes, and
-operational failures. Actual library adoption is reported as separate quality
-observations rather than changing the behavior score.
+`patch-customer-settings` is an independently versioned PATCH contract prepared
+with validation v0.2.0. Golden and compiling mutants exercise presence, shared
+application policy, caller context, stable client errors, operational failures,
+and active App route ownership. The native App HTTP gate uses the submitted
+service/controller through Wire, and a focused policy regression rejects
+silently disabling a required injected callback. Library adoption is reported
+separately from application behavior, without mandating a JSON binding API.
 
-This contract has no retained live provider attempts. The historical 32-task
-matrix and `add-validated-write-endpoint/v1` results above remain unchanged.
+A fresh native Codex `gpt-6.1-sol` sample with Atlas guidance passed every
+executable acceptance and eligible quality check on 2026-11-26 at Atlas
+`1c5ebb266f23` / GoForj `fd3f141a`. Actual App HTTP behavior, library execution,
+required-policy fail-fast behavior, actor tests/build, and real Atlas use are
+retained in authenticated evidence. The earlier `edd897f14e1e` / `a13cd476`
+sample passed its original executable checks; its Bind attribution false
+negative and optional-policy source guard remain recorded separately. The new
+sample followed focused contract/guidance fixes, without candidate repairs.
+
+Generated OpenAPI retained three custom JSON codec schema warnings for Input
+fields, which stay unconstrained until explicit schema documentation is added.
+This existing indexing limitation does not require replacing the presence-aware
+domain API. The local backend still lacks authoritative isolation/file-read
+evidence, so these are diagnostic samples rather than reliability or treatment
+effect measurements. The historical matrix and write-validation results above
+remain unchanged.
