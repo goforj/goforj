@@ -49,7 +49,7 @@ app/
   wire/
 ```
 
-The tree illustrates responsibilities, rather than a mandatory component selection. Disabled components emit no corresponding resource package. Feature, Search, and Notification are separately proposed integrations; their inclusion here defines their destination when those components are available.
+The tree illustrates responsibilities, rather than a mandatory component selection. Disabled components emit no corresponding resource package. Feature, Search, and Notification are available resource components on the inventoried main revision.
 
 | Family | Resource responsibility | Application responsibility |
 | --- | --- | --- |
@@ -67,11 +67,11 @@ A resource name identifies a configured instance, such as the `checkout` evaluat
 
 ## Exhaustive Current Placement
 
-This inventory is dated 2026-11-14. It covers main at `d6ec5157` and the separately proposed Feature, Search, and Notification integrations together at [resource integration revision `7a33e9cd`](https://github.com/goforj/goforj/tree/7a33e9cd27d24e15886a59ea918265b29f8ba823). The six existing families account for 25 possible emitted files. The three proposed families add nine, giving 34 resource files in the combined inventory, including READMEs and tests. Enabled components and instrumentation determine the subset emitted for a particular Project.
+This inventory is dated 2026-11-26 and covers framework main at `083b2d9dd6000adfe990284d908168b00010f3dd`. All nine families, including Feature, Search, and Notification, are present on that revision. The six families in the earlier baseline account for 25 possible emitted files. The other three families add nine, giving 34 resource files in the current inventory, including READMEs and tests. Enabled components and instrumentation determine the subset emitted for a particular Project.
 
 ### Complete Emitted File Tree
 
-These are the complete destination paths for currently emitted resource-family artifacts. `metrics_logger.go` is conditional on Database and Metrics. The Feature, Notification, and Search subtrees depend on their proposed integrations becoming available.
+These are the complete destination paths for resource-family artifacts emitted at the inventoried main revision. `metrics_logger.go` is conditional on Database and Metrics. The Feature, Notification, and Search subtrees are controlled by their component selection and driver configuration like the other families.
 
 ```text
 internal/resources/
@@ -138,7 +138,7 @@ Every file in the tree currently has the corresponding flat output path `interna
 | Proposed `searches` | `internal/generate/searches.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
 | `storages` | `internal/generate/storages.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
 
-The focused generators account for 17 of the combined inventory's files, eleven on main and six from the proposed integrations. They emit source directly; moving template directories does not relocate these outputs. The other 17 files come from active renderer mappings, with source under `templates/internal/<family>/`. Their template source moves to `templates/internal/resources/<family>/`, preserving each template basename and the usual removal of `.tmpl` when publishing it. Generator implementation and generator tests stay in the GoForj repository's tooling packages.
+The focused generators account for 17 of the current inventory's files. They emit source directly; moving template directories does not relocate these outputs. The other 17 files come from active renderer mappings, with source under `templates/internal/<family>/`. Their template source moves to `templates/internal/resources/<family>/`, preserving each template basename and the usual removal of `.tmpl` when publishing it. Generator implementation and generator tests stay in the GoForj repository's tooling packages.
 
 Database connection fingerprinting, GORM log formatting, and the private query metrics logger stay together in `resources/database`. They adapt the database handle and its SQL operations to shared logging, metrics, and inspect services. Likewise, family observer interfaces, operation-event metadata, and observer chaining move with their generated managers. The namespace admission rule classifies the package's primary responsibility; it does not require extracting every private instrumentation helper from a resource implementation.
 
