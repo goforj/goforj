@@ -1173,6 +1173,7 @@ func verifyUnusedAppServiceProvider(t *testing.T, verifier eval.Verifier, baseli
 				t.Error(err)
 			}
 		}()
+		verifyDisconnectedAppGraph(t, verifier, baselineRoot, projectRoot, goldenChecks, forjExecutable, environment)
 	}
 	wirePath := filepath.Join(projectRoot, "app", "wire", "inject_services_app.go")
 	body, err := os.ReadFile(wirePath)
@@ -1209,6 +1210,12 @@ func verifyUnusedAppServiceProvider(t *testing.T, verifier eval.Verifier, baseli
 			t.Errorf("restore App services Wire: %v", err)
 		}
 	}()
+	verifyDisconnectedAppGraph(t, verifier, baselineRoot, projectRoot, goldenChecks, forjExecutable, environment)
+}
+
+// verifyDisconnectedAppGraph distinguishes standalone behavior from active App readiness and consumption.
+func verifyDisconnectedAppGraph(t *testing.T, verifier eval.Verifier, baselineRoot, projectRoot string, goldenChecks []eval.EndpointResult, forjExecutable string, environment []string) {
+	t.Helper()
 	for _, arguments := range [][]string{{forjExecutable, "build"}, {"go", "test", "-run", "^$", "./..."}} {
 		command := exec.CommandContext(t.Context(), arguments[0], arguments[1:]...)
 		command.Dir = projectRoot
