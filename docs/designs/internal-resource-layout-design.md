@@ -131,11 +131,11 @@ Every file in the tree currently has the corresponding flat output path `interna
 | `caches` | `internal/generate/caches.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
 | `database` | `internal/generate/db.go` | `connections_gen.go` | `connections.go`, `connections_test.go`, `fingerprinting.go`, `fingerprinting_test.go`, `gorm_log_writer.go`, conditional `metrics_logger.go` |
 | `events` | `internal/generate/events.go` | `manager_gen.go`, `accessors_gen.go` | `event.go`, `bus_transport.go`, `bus_integration_test.go`, `README.md` |
-| Proposed `features` | `internal/generate/features.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
+| `features` | `internal/generate/features.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
 | `mail` | `internal/generate/mail.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
-| Proposed `notifications` | `internal/generate/notifications.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
+| `notifications` | `internal/generate/notifications.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
 | `queues` | `internal/generate/queues.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
-| Proposed `searches` | `internal/generate/searches.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
+| `searches` | `internal/generate/searches.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
 | `storages` | `internal/generate/storages.go` | `manager_gen.go`, `accessors_gen.go` | `README.md` |
 
 The focused generators account for 17 of the current inventory's files. They emit source directly; moving template directories does not relocate these outputs. The other 17 files come from active renderer mappings, with source under `templates/internal/<family>/`. Their template source moves to `templates/internal/resources/<family>/`, preserving each template basename and the usual removal of `.tmpl` when publishing it. Generator implementation and generator tests stay in the GoForj repository's tooling packages.
@@ -190,7 +190,7 @@ Resource-related names do not change the following specific destinations:
 - `internal/inspects/propagation_gen.go` and `propagation_test.go` remain shared Queue/Events trace propagation. The focused generator emits the first of these outside the resource families.
 - `internal/jobs/worker_logger.go` remains worker runtime support even though its logger is injected into queue construction.
 - All files in `internal/cmd`, including cache/database shells, resource description, health, and event-pipeline commands, remain command surfaces. Their resource imports change without moving their files.
-- All App assembly, manager-provider sets, resource observer attachment, readiness adaptation, and cleanup wiring remain under `app/wire/` or named-App equivalents. Proposed `app/search.go` and `app/<name>/search.go` remain schema definitions.
+- All App assembly, manager-provider sets, resource observer attachment, readiness adaptation, and cleanup wiring remain under `app/wire/` or named-App equivalents. `app/search.go` and `app/<name>/search.go` remain schema definitions.
 - `containers/observability/vmagent/metrics-targets.json`, the other non-resource artifact in the combined generation output contract, remains container configuration.
 - Environment contracts, `.goforj.yml`, module files, migrations, storage directories, Compose services, and dashboards retain their own locations.
 
@@ -249,7 +249,7 @@ The framework also uses resource terminology for discoverable development URLs. 
 
 Services continue to receive typed dependencies. Changing an import from `example.com/shop/internal/caches` to `example.com/shop/internal/resources/caches` does not change the leaf package name `caches` or the consumer's `*caches.Manager` parameter type spelling.
 
-App accessors retain their existing names and signatures apart from the qualified package paths of relocated framework types. Examples include `App.Caches()`, `App.Storage()`, `App.Mail()`, `App.Events()`, and `App.Queues()`. Proposed Feature, Search, and Notification accessors follow the same rule.
+App accessors retain their existing names and signatures apart from the qualified package paths of relocated framework types. Examples include `App.Caches()`, `App.Storage()`, `App.Mail()`, `App.Events()`, and `App.Queues()`. Feature, Search, and Notification accessors follow the same rule.
 
 Wire constructs each App's manager graph and retains its existing cleanup responsibilities. Application providers remain under `app/wire/` or `app/<name>/wire/`. The namespace introduces no global resource registry, universal lookup API, hidden lifecycle, or implicit cross-App sharing.
 
@@ -373,4 +373,4 @@ The chosen layout gives one recognizable dependency category a stable home while
 - [Generation output paths](../../internal/generate/output_paths.go)
 - [App assembly template](../../templates/wire/app.go.tmpl)
 - [Render Ownership And Upgrade Reconciliation](render-upgrade-reconciliation-design.md)
-- Proposed framework resource integrations: [Feature #274](https://github.com/goforj/goforj/pull/274), [Notification #273](https://github.com/goforj/goforj/pull/273), and [Search #276](https://github.com/goforj/goforj/pull/276).
+- Framework resource integrations: [Feature #274](https://github.com/goforj/goforj/pull/274), [Notification #273](https://github.com/goforj/goforj/pull/273), and [Search #276](https://github.com/goforj/goforj/pull/276).
