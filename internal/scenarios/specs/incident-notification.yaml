@@ -51,6 +51,7 @@ prepare:
 markdown:
   prerequisites: |
     Use a GoForj Project with the opt-in notification component enabled for the owning App. The framework integration initially supports log capture and webhook drivers. The prepared scenario compiles notification v0.1.0, webhook support, and primary/secondary named accessors before feature work begins.
+    Framework-owned inject_managers.go constructs the resource manager and owns cleanup. Register the application constructor in the owning App's inject_services_app.go; Wire supplies the existing manager, and the constructor selects its named resource. App accessors are for callers that already own the App, not service dependency lookup. Do not edit generated manager wiring.
   common_mistakes:
     - Do not construct provider drivers or load credentials inside the incident service; select generated manager accessors at the App provider boundary.
     - Do not treat a successful synchronous send as proof of recipient receipt, or automatically fall back after uncertain acceptance.
@@ -95,8 +96,8 @@ steps:
         }
 
         // NewConfiguredAlertService selects App-configured senders while keeping fallback policy explicit.
-        func NewConfiguredAlertService(manager *notifications.Manager) *AlertService {
-            return NewAlertService(manager.Primary(), manager.Secondary())
+        func NewConfiguredAlertService(notifications *notifications.Manager) *AlertService {
+            return NewAlertService(notifications.Primary(), notifications.Secondary())
         }
 
         // Notify preserves caller context and reports acceptance without claiming receipt.

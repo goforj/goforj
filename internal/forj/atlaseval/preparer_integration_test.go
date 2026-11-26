@@ -1534,8 +1534,8 @@ func TestIncidentNotificationVerifierCalibration(t *testing.T) {
 		wantCompile: true,
 		behavior: &evaluationBehaviorMutation{
 			path:        "internal/incidents/alert_service.go",
-			old:         "return NewAlertService(manager.Primary(), manager.Secondary())",
-			mutant:      "_ = manager.Primary(); return NewAlertService(manager.Default(), manager.Secondary())",
+			old:         "return NewAlertService(notifications.Primary(), notifications.Secondary())",
+			mutant:      "_ = notifications.Primary(); return NewAlertService(notifications.Default(), notifications.Secondary())",
 			wantFailed:  "incident-notification-behavior",
 			wantCompile: true,
 		},
