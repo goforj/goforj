@@ -1687,3 +1687,37 @@ func TestTenantRequestRateLimitVerifierCalibration(t *testing.T) {
 		},
 	})
 }
+
+// TestTenantRequestRateLimitWindowCalibration rejects compiling clock and lifetime defects.
+func TestTenantRequestRateLimitWindowCalibration(t *testing.T) {
+	for _, mutation := range []struct{ name, old, replacement string }{
+		{"short-ttl", "Increment(key, 1, 2*time.Minute)", "Increment(key, 1, time.Second)"},
+		{"infinite-ttl", "Increment(key, 1, 2*time.Minute)", "Increment(key, 1, 0)"},
+		{"local-time-bucket", "bucket := now.Unix() / 60", "bucket := now.Unix()/60 + int64(now.Hour())"},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{evaluation: "tenant-request-rate-limits", scenario: "tenant-request-rate-limits", path: "internal/requests/limiter.go", old: mutation.old, mutant: mutation.replacement, wantFailed: "tenant-rate-limit-behavior", wantCompile: true})
+		})
+	}
+}
+
+// TestTenantRequestRateLimitActiveProviderCalibration rejects a disconnected configured provider retained in an unused Wire set.
+func TestTenantRequestRateLimitActiveProviderCalibration(t *testing.T) {
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "tenant-request-rate-limits", scenario: "tenant-request-rate-limits", path: "app/wire/inject_http_controllers_app.go",
+		old: "\tprovideRequestController,\n", mutant: "\tatlasDetachedRequestController,\n", wantFailed: "tenant-rate-limit-app-runtime", wantCompile: true,
+		additional: []evaluationMutation{
+			{old: "import (\n", mutant: "import (\n\t\"github.com/goforj/cache\"\n"},
+			{old: "return requests.NewController(requests.NewLimiter(manager.Requests(), time.Now))\n}", mutant: `return requests.NewController(requests.NewLimiter(manager.Requests(), time.Now))
+}
+
+// atlasDetachedRequestController models incorrect active wiring while preserving the correct unused factory.
+func atlasDetachedRequestController() *requests.Controller {
+ return requests.NewController(requests.NewLimiter(cache.NewCache(cache.NewMemoryStore(nil)),time.Now))
+}
+
+var atlasUnusedRequestProvider = wire.NewSet(provideRequestController)
+`},
+		},
+	})
+}
