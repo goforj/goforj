@@ -1530,7 +1530,7 @@ func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
 	}{
 		{name: "mixed-revisions", old: "snapshot, err := service.flags.Snapshot()", replacement: "snapshot, err := service.flags, error(nil)", failed: "feature-rollout-behavior"},
 		{name: "random-target", old: "Key: tenant", replacement: `Key: fmt.Sprintf("%s:%d", tenant, rand.Uint64())`, failed: "feature-rollout-behavior", additional: []evaluationMutation{{old: "\"fmt\"", mutant: "\"fmt\"\n\"math/rand/v2\""}}},
-		{name: "wrong-resource", old: "manager.Checkout()", replacement: "manager.Default()", failed: "feature-resource-accessor"},
+		{name: "wrong-resource", old: "features.Checkout()", replacement: "features.Default()", failed: "feature-resource-accessor"},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
 			result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{

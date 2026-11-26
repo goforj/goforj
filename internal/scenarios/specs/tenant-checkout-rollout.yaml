@@ -14,6 +14,7 @@ markdown:
     Add a tenant rollout through the App-owned Checkout evaluator.
   prerequisites: |
     Start from the Invoice Domain scenario in a Project whose GoForj version supports the optional feature component. Preparation enables the component for the owning App, declares the Checkout evaluator, and generates its accessor before application changes. Dependency installation and resource generation are supplied by the fixture.
+    Framework-owned inject_managers.go constructs the resource manager and owns cleanup. Register the application constructor in the owning App's inject_services_app.go; Wire supplies the existing manager, and the constructor selects its named resource. App accessors are for callers that already own the App, not service dependency lookup. Do not edit generated manager wiring.
   troubleshooting: |
     If Checkout is undefined, confirm FEATURE_CHECKOUT_DRIVER is declared in the owning environment and regenerate with forj generate --feature. Resolve initial source errors before startup; an invalid later refresh retains the last valid definition and reports degraded freshness through the manager's detached instance status. A targeting scope alone does not freeze configuration.
   common_mistakes:
@@ -64,7 +65,7 @@ prepare:
           type Service struct { flags *feature.Features }
 
           // NewService resolves the generated evaluator accessor once without owning its source lifecycle.
-          func NewService(manager *features.Manager) *Service { return &Service{flags: manager.Checkout()} }
+          func NewService(features *features.Manager) *Service { return &Service{flags: features.Checkout()} }
 
           // Request retains one tenant's captured configuration for related decisions.
           type Request struct { flags *feature.Scope }
@@ -109,7 +110,7 @@ steps:
         type Service struct { flags *feature.Features }
 
         // NewService resolves the generated evaluator accessor once without owning its source lifecycle.
-        func NewService(manager *features.Manager) *Service { return &Service{flags: manager.Checkout()} }
+        func NewService(features *features.Manager) *Service { return &Service{flags: features.Checkout()} }
 
         // Request retains one tenant's captured configuration for related decisions.
         type Request struct { flags *feature.Scope }
