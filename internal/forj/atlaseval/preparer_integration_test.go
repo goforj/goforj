@@ -422,6 +422,7 @@ type majorSurfaceVerifierCase struct {
 	alternates           []evaluationFileMutation
 	alternateRenames     []evaluationPathRename
 	disconnectedProvider string
+	unusedAppProvider    string
 	wantFailed           string
 	wantCompile          bool
 }
@@ -1080,6 +1081,9 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 			}
 		}()
 	}
+	if test.unusedAppProvider != "" {
+		verifyUnusedAppServiceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.unusedAppProvider, result.Checks, forjExecutable, environment)
+	}
 	if test.disconnectedProvider != "" {
 		verifyDisconnectedNamedResourceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.disconnectedProvider, test.wantFailed, environment)
 	}
@@ -1132,6 +1136,74 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 			t.Fatalf("restore structural mutant target: %v", err)
 		}
 		verifyEvaluationBehaviorMutant(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, *test.behavior, environment)
+	}
+}
+
+// verifyUnusedAppServiceProvider proves an unused Wire set cannot satisfy actual App resource ownership.
+func verifyUnusedAppServiceProvider(t *testing.T, verifier eval.Verifier, baselineRoot, projectRoot, provider string, goldenChecks []eval.EndpointResult, forjExecutable string, environment []string) {
+	t.Helper()
+	wirePath := filepath.Join(projectRoot, "app", "wire", "inject_services_app.go")
+	body, err := os.ReadFile(wirePath)
+	if err != nil {
+		t.Fatalf("read App services Wire: %v", err)
+	}
+	text := string(body)
+	start := strings.Index(text, "var appSet = wire.NewSet(")
+	if start < 0 {
+		t.Fatal("App services Wire has no appSet")
+	}
+	end := strings.Index(text[start:], "\n)")
+	if end < 0 {
+		t.Fatal("App services Wire has no appSet terminator")
+	}
+	end += start
+	lines := strings.Split(text[start:end], "\n")
+	removed := 0
+	for index, line := range lines {
+		if strings.TrimSpace(line) == provider+"," {
+			lines[index] = ""
+			removed++
+		}
+	}
+	if removed != 1 {
+		t.Fatalf("active App provider %q count = %d", provider, removed)
+	}
+	mutant := text[:start] + strings.Join(lines, "\n") + text[end:] + "\nvar atlasUnusedProvider = wire.NewSet(" + provider + ")\n"
+	if err := os.WriteFile(wirePath, []byte(mutant), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.WriteFile(wirePath, body, 0o644); err != nil {
+			t.Errorf("restore App services Wire: %v", err)
+		}
+	}()
+	for _, arguments := range [][]string{{"go", "test", "-run", "^$", "./..."}, {forjExecutable, "build"}} {
+		command := exec.CommandContext(t.Context(), arguments[0], arguments[1:]...)
+		command.Dir = projectRoot
+		command.Env = append([]string(nil), environment...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("unused provider mutant must compile and build: %v\n%s", err, output)
+		}
+	}
+	changes := evaluationProjectChanges(t, baselineRoot, projectRoot)
+	result, err := verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, Changes: changes})
+	if err != nil {
+		t.Fatalf("Verify(unused App provider): %v", err)
+	}
+	runtimeChecks := 0
+	for _, check := range goldenChecks {
+		if strings.HasSuffix(check.ID, "-app-runtime") {
+			runtimeChecks++
+			if !evaluationCheckFailed(result.Checks, check.ID) {
+				t.Fatalf("unused provider must fail %s: %#v", check.ID, result.Checks)
+			}
+		}
+		if strings.HasSuffix(check.ID, "-behavior") && !evaluationCheckHasStatus(result.Checks, check.ID, eval.EndpointPassed) {
+			t.Fatalf("unused provider must preserve %s: %#v", check.ID, result.Checks)
+		}
+	}
+	if runtimeChecks != 1 || result.FrameworkOutcome.Status != eval.EndpointFailed {
+		t.Fatalf("unused provider outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
 	}
 }
 
@@ -1525,10 +1597,11 @@ func evaluationCheckHasStatus(checks []eval.EndpointResult, id string, status ev
 func TestCatalogSearchVerifierCalibration(t *testing.T) {
 	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
 		evaluation: "catalog-search", scenario: "catalog-search",
-		path:       "internal/catalog/service.go",
-		old:        `Filter: search.Equal("category", value)`,
-		mutant:     `Filter: search.Or(search.Equal("category", value), search.Not(search.Equal("category", value)))`,
-		wantFailed: "catalog-search-behavior", wantCompile: true,
+		unusedAppProvider: "catalog.NewService",
+		path:              "internal/catalog/service.go",
+		old:               `Filter: search.Equal("category", value)`,
+		mutant:            `Filter: search.Or(search.Equal("category", value), search.Not(search.Equal("category", value)))`,
+		wantFailed:        "catalog-search-behavior", wantCompile: true,
 		behavior: &evaluationBehaviorMutation{
 			path:       "internal/catalog/service.go",
 			old:        "outcome, err := service.index.Wait(ctx, receipt)",
