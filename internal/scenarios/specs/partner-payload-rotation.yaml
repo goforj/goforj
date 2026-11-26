@@ -124,6 +124,12 @@ prepare:
   - command:
     - go
     - mod
+    - edit
+    - -droprequire=github.com/goforj/crypt
+    - -require=github.com/goforj/crypt@v1.2.0
+  - command:
+    - go
+    - mod
     - download
   - command:
     - go

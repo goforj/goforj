@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/format"
@@ -61,6 +62,26 @@ func TestPreparerMaterializesEveryPromotedStartingState(t *testing.T) {
 				t.Fatalf("preparation result = %#v", project.Result())
 			}
 			assertPreparedGoSourcesCanonical(t, project.Result().ProjectRoot)
+			if id == "encrypt-partner-payloads" {
+				command := exec.CommandContext(t.Context(), "go", "list", "-m", "-json", "github.com/goforj/crypt")
+				command.Dir = project.Result().ProjectRoot
+				command.Env = environment
+				output, err := command.Output()
+				if err != nil {
+					t.Fatalf("inspect prepared crypt module: %v", err)
+				}
+				var dependency struct {
+					Version  string
+					Indirect bool
+					Replace  json.RawMessage
+				}
+				if err := json.Unmarshal(output, &dependency); err != nil {
+					t.Fatal(err)
+				}
+				if dependency.Version != "v1.2.0" || dependency.Indirect || len(dependency.Replace) != 0 {
+					t.Fatalf("prepared crypt dependency must remain published v1.2.0 and direct: %#v", dependency)
+				}
+			}
 			if id == "add-http-controller" {
 				controller := filepath.Join(project.Result().ProjectRoot, "internal", "invoices", "controller.go")
 				if _, err := os.Stat(controller); !os.IsNotExist(err) {
