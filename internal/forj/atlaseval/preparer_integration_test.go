@@ -1092,6 +1092,12 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		originals := applyEvaluationAlternates(t, projectRoot, test.unrootAppDependency)
 		verifyUnusedAppServiceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.unusedAppProvider, result.Checks, forjExecutable, environment)
 		restoreEvaluationAlternates(t, originals)
+		command := exec.CommandContext(t.Context(), forjExecutable, "build")
+		command.Dir = projectRoot
+		command.Env = environment
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("restore golden App graph: %v\n%s", err, output)
+		}
 	}
 	if test.disconnectedProvider != "" {
 		verifyDisconnectedNamedResourceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.disconnectedProvider, test.wantFailed, environment)
