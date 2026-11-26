@@ -422,6 +422,7 @@ type majorSurfaceVerifierCase struct {
 	alternates           []evaluationFileMutation
 	alternateRenames     []evaluationPathRename
 	disconnectedProvider string
+	unusedAppProvider    string
 	wantFailed           string
 	wantCompile          bool
 }
@@ -1080,6 +1081,9 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 			}
 		}()
 	}
+	if test.unusedAppProvider != "" {
+		verifyUnusedAppServiceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.unusedAppProvider, result.Checks, forjExecutable, environment)
+	}
 	if test.disconnectedProvider != "" {
 		verifyDisconnectedNamedResourceProvider(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, test.disconnectedProvider, test.wantFailed, environment)
 	}
@@ -1134,6 +1138,74 @@ func testMajorSurfaceVerifierCalibration(t *testing.T, test majorSurfaceVerifier
 		verifyEvaluationBehaviorMutant(t, resolved.Verifier, prepared.Result().ProjectRoot, projectRoot, *test.behavior, environment)
 	}
 	return result
+}
+
+// verifyUnusedAppServiceProvider proves an unused Wire set cannot satisfy actual App resource ownership.
+func verifyUnusedAppServiceProvider(t *testing.T, verifier eval.Verifier, baselineRoot, projectRoot, provider string, goldenChecks []eval.EndpointResult, forjExecutable string, environment []string) {
+	t.Helper()
+	wirePath := filepath.Join(projectRoot, "app", "wire", "inject_services_app.go")
+	body, err := os.ReadFile(wirePath)
+	if err != nil {
+		t.Fatalf("read App services Wire: %v", err)
+	}
+	text := string(body)
+	start := strings.Index(text, "var appSet = wire.NewSet(")
+	if start < 0 {
+		t.Fatal("App services Wire has no appSet")
+	}
+	end := strings.Index(text[start:], "\n)")
+	if end < 0 {
+		t.Fatal("App services Wire has no appSet terminator")
+	}
+	end += start
+	lines := strings.Split(text[start:end], "\n")
+	removed := 0
+	for index, line := range lines {
+		if strings.TrimSpace(line) == provider+"," {
+			lines[index] = ""
+			removed++
+		}
+	}
+	if removed != 1 {
+		t.Fatalf("active App provider %q count = %d", provider, removed)
+	}
+	mutant := text[:start] + strings.Join(lines, "\n") + text[end:] + "\nvar atlasUnusedProvider = wire.NewSet(" + provider + ")\n"
+	if err := os.WriteFile(wirePath, []byte(mutant), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.WriteFile(wirePath, body, 0o644); err != nil {
+			t.Errorf("restore App services Wire: %v", err)
+		}
+	}()
+	for _, arguments := range [][]string{{"go", "test", "-run", "^$", "./..."}, {forjExecutable, "build"}} {
+		command := exec.CommandContext(t.Context(), arguments[0], arguments[1:]...)
+		command.Dir = projectRoot
+		command.Env = append([]string(nil), environment...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("unused provider mutant must compile and build: %v\n%s", err, output)
+		}
+	}
+	changes := evaluationProjectChanges(t, baselineRoot, projectRoot)
+	result, err := verifier.Verify(t.Context(), eval.VerificationInput{ProjectRoot: projectRoot, Changes: changes})
+	if err != nil {
+		t.Fatalf("Verify(unused App provider): %v", err)
+	}
+	runtimeChecks := 0
+	for _, check := range goldenChecks {
+		if strings.HasSuffix(check.ID, "-app-runtime") {
+			runtimeChecks++
+			if !evaluationCheckFailed(result.Checks, check.ID) {
+				t.Fatalf("unused provider must fail %s: %#v", check.ID, result.Checks)
+			}
+		}
+		if strings.HasSuffix(check.ID, "-behavior") && !evaluationCheckHasStatus(result.Checks, check.ID, eval.EndpointPassed) {
+			t.Fatalf("unused provider must preserve %s: %#v", check.ID, result.Checks)
+		}
+	}
+	if runtimeChecks != 1 || result.FrameworkOutcome.Status != eval.EndpointFailed {
+		t.Fatalf("unused provider outcome = %#v; checks = %#v", result.FrameworkOutcome, result.Checks)
+	}
 }
 
 // verifyDisconnectedNamedResourceProvider proves an otherwise compiling Wire edit cannot detach the provider that selects a named resource.
@@ -1526,17 +1598,19 @@ func evaluationCheckHasStatus(checks []eval.EndpointResult, id string, status ev
 func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
 	for _, mutation := range []struct {
 		name, old, replacement, failed string
+		unusedAppProvider              string
 		additional                     []evaluationMutation
 	}{
 		{name: "mixed-revisions", old: "snapshot, err := service.flags.Snapshot()", replacement: "snapshot, err := service.flags, error(nil)", failed: "feature-rollout-behavior"},
 		{name: "random-target", old: "Key: tenant", replacement: `Key: fmt.Sprintf("%s:%d", tenant, rand.Uint64())`, failed: "feature-rollout-behavior", additional: []evaluationMutation{{old: "\"fmt\"", mutant: "\"fmt\"\n\"math/rand/v2\""}}},
-		{name: "wrong-resource", old: "features.Checkout()", replacement: "features.Default()", failed: "feature-resource-accessor"},
+		{name: "wrong-resource", old: "features.Checkout()", replacement: "features.Default()", failed: "feature-resource-accessor", unusedAppProvider: "checkout.NewService"},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
 			result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
 				evaluation: "target-feature-rollout", scenario: "tenant-checkout-rollout", path: "internal/checkout/service.go",
 				old: mutation.old, mutant: mutation.replacement, additional: mutation.additional,
-				wantFailed: mutation.failed, wantCompile: true,
+				unusedAppProvider: mutation.unusedAppProvider,
+				wantFailed:        mutation.failed, wantCompile: true,
 			})
 			for _, id := range []string{"feature-library-adoption", "feature-library-execution", "test-function-added"} {
 				if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
