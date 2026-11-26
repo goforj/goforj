@@ -60,6 +60,17 @@ func ResourceNamesByApp(root string, values map[string]string, config *project.C
 			}
 			continue
 		}
+		if definition.Key == project.ResourceNotification {
+			notificationScopes, _ := generationNotificationScopes(input)
+			for _, scope := range notificationScopes {
+				scoped := make([]string, len(scope.Names))
+				for index, name := range scope.Names {
+					scoped[index] = strings.ToLower(name)
+				}
+				scopes[scope.Prefix] = scoped
+			}
+			continue
+		}
 		if generationComponentsSupportResource(config.Render.Components.WithResolvedDependencies(), definition.EnvironmentPrefix) {
 			scopes[""] = append([]string(nil), names[definition.Key]...)
 		}

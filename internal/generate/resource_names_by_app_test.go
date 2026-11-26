@@ -197,3 +197,23 @@ func TestResourceNamesByAppOmissionMatchesDeletedInventory(t *testing.T) {
 		})
 	}
 }
+
+// TestResourceNamesByAppNotificationScopes follows the same per-App registration inventory used by notification generation.
+func TestResourceNamesByAppNotificationScopes(t *testing.T) {
+	config := &project.Config{Render: project.RenderConfig{Components: project.Components{CLI: true, Notification: true}}, Apps: map[string]project.AppConfig{
+		"billing": {Components: project.Components{CLI: true, Notification: true}}, "reports": {Components: project.Components{CLI: true, Notification: true}}}}
+	values := map[string]string{"NOTIFICATION_SHARED_DRIVER": "log", "BILLING_NOTIFICATION_CHECKOUT_DRIVER": "log", "REPORTS_NOTIFICATION_CHECKOUT_DRIVER": "log"}
+	got := ResourceNamesByApp(t.TempDir(), values, config)[project.ResourceNotification]
+	want := map[string][]string{"": {"shared"}, "BILLING": {"checkout", "shared"}, "REPORTS": {"checkout", "shared"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("scopes=%#v want=%#v", got, want)
+	}
+	config.Apps["billing"] = project.AppConfig{Components: project.Components{CLI: true}}
+	got = ResourceNamesByApp(t.TempDir(), values, config)[project.ResourceNotification]
+	if _, exists := got["BILLING"]; exists {
+		t.Fatal("disabled App retained registration")
+	}
+	if !slices.Equal(got["REPORTS"], []string{"checkout", "shared"}) {
+		t.Fatalf("surviving scope=%v", got["REPORTS"])
+	}
+}

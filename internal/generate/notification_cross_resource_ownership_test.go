@@ -8,7 +8,8 @@ import (
 // TestNotificationDiscoveryExcludesOtherAppResourceFamilies keeps App component settings out of default sender discovery and validation.
 func TestNotificationDiscoveryExcludesOtherAppResourceFamilies(t *testing.T) {
 	root := notificationInventoryProject(t, "", "notification", "notification-child")
-	for _, resource := range generationDriverResourcePrefixes {
+	for _, definition := range generationEnvironmentResources() {
+		resource := definition.prefix
 		if resource == "NOTIFICATION" {
 			continue
 		}

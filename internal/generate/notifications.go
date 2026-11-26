@@ -10,7 +10,6 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/goforj/goforj/project"
 	"github.com/goforj/str/v2"
 )
 
@@ -89,22 +88,9 @@ func generateNotificationFiles(input generationInput) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	rootNames := appScopedChildNames(input, "NOTIFICATION", "", notificationRootKeys)
-	defaultEnabled := true
-	if config, err := project.LoadProjectConfigAt(input.projectDir); err == nil {
-		defaultEnabled = config.Render.Components.Notification
-	} else if !os.IsNotExist(err) {
-		return 0, fmt.Errorf("load notification App ownership: %w", err)
-	}
-	if defaultEnabled {
-		data.Scopes = append(data.Scopes, notificationScope{Names: rootNames})
-	}
-	for _, prefix := range generationAppEnvPrefixesForResource(input, "NOTIFICATION") {
-		names := makeSet(rootNames...)
-		for _, name := range appScopedChildNames(input, "NOTIFICATION", prefix, notificationRootKeys) {
-			names[name] = struct{}{}
-		}
-		data.Scopes = append(data.Scopes, notificationScope{Prefix: prefix, Names: sortStrings(names)})
+	data.Scopes, err = generationNotificationScopes(input)
+	if err != nil {
+		return 0, err
 	}
 	data.Drivers = drivers
 	for _, driver := range drivers {
@@ -322,3 +308,26 @@ func (manager *Manager) Instances() []Instance {
 }
 
 `
+
+// generationNotificationScopes shares sender registrations with prospective App ownership checks.
+func generationNotificationScopes(input generationInput) ([]notificationScope, error) {
+	var scopes []notificationScope
+	rootNames := appScopedChildNames(input, "NOTIFICATION", "", notificationRootKeys)
+	defaultEnabled := true
+	if config, err := input.projectConfig(); err == nil {
+		defaultEnabled = config.Render.Components.Notification
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("load notification App ownership: %w", err)
+	}
+	if defaultEnabled {
+		scopes = append(scopes, notificationScope{Names: rootNames})
+	}
+	for _, prefix := range generationAppEnvPrefixesForResource(input, "NOTIFICATION") {
+		names := makeSet(rootNames...)
+		for _, name := range appScopedChildNames(input, "NOTIFICATION", prefix, notificationRootKeys) {
+			names[name] = struct{}{}
+		}
+		scopes = append(scopes, notificationScope{Prefix: prefix, Names: sortStrings(names)})
+	}
+	return scopes, nil
+}

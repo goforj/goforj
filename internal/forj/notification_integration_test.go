@@ -191,6 +191,9 @@ func TestAppOwnership(t *testing.T) {
 	}
 	run("make:app", "billing", "--components", "cli,notification")
 	verify(true)
+	if err := os.Remove(filepath.Join(root, "internal/notifications/app_mutation_test.go")); err != nil {
+		t.Fatal(err)
+	}
 	run("make:app", "billing", "--remove")
 	verify(false)
 }

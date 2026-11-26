@@ -2,6 +2,7 @@ package forj
 
 import (
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -110,5 +111,30 @@ func TestGenerateAppResourcesSelection(t *testing.T) {
 				t.Fatal("unrelated resource regenerated")
 			}
 		})
+	}
+}
+
+// TestNotificationRemovalProtectsSurvivingCallers integrates notification scopes with the shared before-write ownership guard.
+func TestNotificationRemovalProtectsSurvivingCallers(t *testing.T) {
+	root := usePrimitiveRendererRoot(t)
+	components := project.Components{CLI: true, Notification: true}
+	config := &project.Config{ProjectName: "Notification Guard", GoModuleName: "example.com/notificationguard", Render: project.RenderConfig{Components: components}, Apps: map[string]project.AppConfig{"billing": {Components: components}}}
+	if err := writeProjectConfig(".goforj.yml", config); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{".env", ".env.example"} {
+		writePrimitiveRendererFile(t, path, "NOTIFICATION_DRIVER=log\nBILLING_NOTIFICATION_CHECKOUT_DRIVER=log\n")
+	}
+	if _, err := generate.GenerateProjectFiles(".", generate.GenerationSelectionFromComponents(components)); err != nil {
+		t.Fatal(err)
+	}
+	writePrimitiveRendererFile(t, "internal/owner/service.go", "package owner\nimport \"example.com/notificationguard/internal/notifications\"\nfunc use(manager *notifications.Manager) { _ = manager.Checkout() }\n")
+	before := appResourcePreflightSnapshot(t, root)
+	result, err := unitProjectRenderer(t).RemoveApp(project.DefaultNamedApp("billing"))
+	if err == nil || !strings.Contains(err.Error(), "checkout") || result.Changed() {
+		t.Fatalf("removal result=%#v error=%v", result, err)
+	}
+	if !reflect.DeepEqual(before, appResourcePreflightSnapshot(t, root)) {
+		t.Fatal("rejected removal changed files")
 	}
 }
