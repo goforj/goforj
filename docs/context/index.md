@@ -37,6 +37,7 @@ Add if the task touches runtime ownership, lifecycle, scheduler, jobs, or proces
 Add if the task is about the full design history or unresolved architecture tradeoffs:
 
 - [../designs/completed/app-composition-layout-design.md](../designs/completed/app-composition-layout-design.md)
+- [Internal Resource Package Layout](../designs/internal-resource-layout-design.md) for the proposed `internal/resources/<family>` boundary and its implementation requirements
 
 ### Rendering, templates, smoke apps, or `forj render`
 
