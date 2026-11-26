@@ -22,6 +22,7 @@ markdown:
     a wired service filters categories, pages deterministically, and confirms index update visibility.
   prerequisites: |
     Use a GoForj version with the optional Search component. The owning App declares schemas in Go and configures backend locations through Search environment settings. The prepared fixture pins the search root and embedded Bleve module independently at v0.1.1.
+    Framework-owned inject_managers.go constructs the resource manager and owns cleanup. Register the application constructor in the owning App's inject_services_app.go; Wire supplies the existing manager, and the constructor selects its named resource. App accessors are for callers that already own the App, not service dependency lookup. Do not edit generated manager wiring.
   common_mistakes:
     - Do not open backend drivers in catalog services or treat the index as the durable product database.
     - Do not initialize the App graph before explicitly provisioning its first index schema.
@@ -56,7 +57,7 @@ steps:
         type Service struct{ index *search.Index }
 
         // NewService reuses the generated named catalog resource across operations.
-        func NewService(manager *searches.Manager) *Service { return &Service{index: manager.Catalog()} }
+        func NewService(searches *searches.Manager) *Service { return &Service{index: searches.Catalog()} }
 
         // IndexProduct confirms visibility without confusing accepted work with success.
         func (service *Service) IndexProduct(ctx context.Context, product Product) error {
