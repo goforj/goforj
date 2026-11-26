@@ -8,7 +8,7 @@ import (
 
 // generationKnownAppEnvPrefixes includes every known App so disabled Apps cannot become default resource names.
 func generationKnownAppEnvPrefixes(input generationInput) []string {
-	prefixes := configuredGenerationAppEnvPrefixes(input.projectDir)
+	prefixes := input.configuredAppEnvPrefixes()
 	for _, prefix := range input.appPrefixes {
 		prefixes[prefix] = struct{}{}
 	}
@@ -90,7 +90,7 @@ func legacyResourceGenerationInput(input generationInput, resourcePrefix string)
 	if resourcePrefix == "FEATURE" {
 		return input
 	}
-	if _, err := project.LoadProjectConfigAt(input.projectDir); err != nil {
+	if _, err := input.projectConfig(); err != nil {
 		// Legacy projects used Feature words as App names before Feature became a resource marker.
 		resources := make([]generationEnvironmentResource, 0, len(generationEnvironmentResources())-1)
 		for _, resource := range generationEnvironmentResources() {

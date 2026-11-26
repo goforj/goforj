@@ -7,6 +7,7 @@ import (
 	"go/format"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1262,7 +1263,13 @@ func driverListContains(value string, want string) bool {
 }
 
 // RenderAppOnly renders one additional app without replaying the full project scaffold.
-func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOptions) error {
+func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOptions) (renderErr error) {
+	originalConfig := p.config
+	defer func() {
+		if renderErr != nil {
+			p.config = originalConfig
+		}
+	}()
 	if err := p.beginRenderInvocation("."); err != nil {
 		return err
 	}
@@ -1301,6 +1308,9 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 	projectCapabilitiesChanged := false
 	appConfigChanged := false
 	if app.Name != "" && app.Name != project.DefaultAppName {
+		if err := p.validateAppResourceOwnership(app, opts); err != nil {
+			return err
+		}
 		if err := p.prepareDevAppsForAppMutation(); err != nil {
 			return err
 		}
@@ -1390,7 +1400,14 @@ func (p *ProjectRenderer) RenderAppOnly(app project.App, opts makeapp.RenderOpti
 }
 
 // RemoveApp removes conventional app-owned files and refreshes generated app metadata.
-func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, error) {
+func (p *ProjectRenderer) RemoveApp(app project.App) (removeResult makeapp.RemoveResult, removeErr error) {
+	originalConfig := p.config
+	defer func() {
+		if removeErr != nil {
+			p.config = originalConfig
+		}
+	}()
+
 	if err := p.beginRenderInvocation("."); err != nil {
 		return makeapp.RemoveResult{}, err
 	}
@@ -1410,39 +1427,18 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		return makeapp.RemoveResult{}, err
 	}
 
-	removedPrefix := project.AppEnvironmentPrefix(app.Name)
-	knownAppNames := []string{app.Name}
-	for _, knownApp := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
-		knownAppNames = append(knownAppNames, knownApp.Name)
+	candidate := *p.config
+	candidate.Apps = maps.Clone(p.config.Apps)
+	candidate.Dev.Run = maps.Clone(p.config.Dev.Run)
+	candidate.Dev.Apps = maps.Clone(p.config.Dev.Apps)
+	prospective := ProjectRenderer{config: &candidate}
+	configChanged := prospective.removeAppConfig(app.Name)
+	afterProjectComponents := project.ProjectComponents(&candidate)
+	preserveResourceSetting := p.appRemovalResourceSettingPredicate(app, &candidate)
+	if err := p.validateAppRemovalResourceOwnership(app, &candidate, preserveResourceSetting); err != nil {
+		return makeapp.RemoveResult{}, err
 	}
-	removedComponents := appRenderComponents(p.config, app)
-	var knownAppPrefixes []string
-	for _, name := range resourceenv.KnownAppNames(p.config, knownAppNames...) {
-		knownAppPrefixes = append(knownAppPrefixes, project.AppEnvironmentPrefix(name))
-	}
-	// Shared fallbacks can belong to surviving Apps even when the default App does not enable the resource.
-	configChanged := p.removeAppConfig(app.Name)
-	afterProjectComponents := project.ProjectComponents(p.config)
-	preserveResourceSetting := func(key string) bool {
-		owner, managed := generate.AppResourceEnvironmentOwner(key, knownAppPrefixes, beforeProjectComponents)
-		if managed {
-			if owner != removedPrefix {
-				return true
-			}
-			if removedComponents.Feature {
-				return false
-			}
-		}
-		if beforeProjectComponents.Feature && generate.SharedResourceEnvironmentSetting(key, afterProjectComponents) {
-			return true
-		}
-		for _, prefix := range knownAppPrefixes {
-			if len(prefix) > len(removedPrefix) && strings.HasPrefix(key, prefix+"_") {
-				return true
-			}
-		}
-		return false
-	}
+	p.config = &candidate
 
 	var result makeapp.RemoveResult
 	for _, path := range []string{
@@ -1525,6 +1521,43 @@ func (p *ProjectRenderer) RemoveApp(app project.App) (makeapp.RemoveResult, erro
 		filepath.Join("internal", "runtime", "apps_test.go"),
 	)
 	return result, nil
+}
+
+// appRemovalResourceSettingPredicate keeps environment ownership decisions identical in preflight and published cleanup.
+func (p *ProjectRenderer) appRemovalResourceSettingPredicate(app project.App, candidate *project.Config) func(string) bool {
+	beforeProjectComponents := project.ProjectComponents(p.config)
+	afterProjectComponents := project.ProjectComponents(candidate)
+	removedPrefix := project.AppEnvironmentPrefix(app.Name)
+	knownAppNames := []string{app.Name}
+	for _, knownApp := range projectlayout.RuntimeApps(p.workspace.discoveryRoot(), p.config) {
+		knownAppNames = append(knownAppNames, knownApp.Name)
+	}
+	removedComponents := appRenderComponents(p.config, app)
+	var knownAppPrefixes []string
+	for _, name := range resourceenv.KnownAppNames(p.config, knownAppNames...) {
+		knownAppPrefixes = append(knownAppPrefixes, project.AppEnvironmentPrefix(name))
+	}
+	return func(key string) bool {
+		owner, managed := generate.AppResourceEnvironmentOwner(key, knownAppPrefixes, beforeProjectComponents)
+		if managed {
+			if owner != removedPrefix {
+				return true
+			}
+			if removedComponents.Feature {
+				return false
+			}
+		}
+		if beforeProjectComponents.Feature && generate.SharedResourceEnvironmentSetting(key, afterProjectComponents) {
+			return true
+		}
+		for _, prefix := range knownAppPrefixes {
+			if len(prefix) > len(removedPrefix) && strings.HasPrefix(key, prefix+"_") {
+				return true
+			}
+		}
+		return false
+	}
+
 }
 
 // validateRemoveAppTransition rejects removal of the last App owning a capability whose shared generated surface cannot be reconciled safely.
@@ -2123,10 +2156,18 @@ func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string
 		}
 		return false, err
 	}
-	original := string(data)
-	lines := strings.Split(original, "\n")
+	content := appEnvironmentWithoutDefaults(string(data), appName, preserve...)
+	if content == string(data) {
+		return false, nil
+	}
+	return true, w.writeFile(path, []byte(content), 0o644)
+}
+
+// appEnvironmentWithoutDefaults projects the exact owner-preserving cleanup before any environment file is published.
+func appEnvironmentWithoutDefaults(source string, appName string, preserve ...func(string) bool) string {
+	lines := strings.Split(source, "\n")
 	out := make([]string, 0, len(lines))
-	appPrefix := prefix + "_"
+	appPrefix := project.AppEnvironmentPrefix(appName) + "_"
 	for _, line := range lines {
 		key, _, ok := envfile.ParseAssignment(line)
 		if ok && strings.HasPrefix(key, appPrefix) {
@@ -2151,10 +2192,7 @@ func (w projectRenderWorkspace) removeAppEnvDefaults(path string, appName string
 	if content != "" && !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
-	if content == original {
-		return false, nil
-	}
-	return true, w.writeFile(path, []byte(content), 0o644)
+	return content
 }
 
 // isEnvSectionHeader recognizes generated app headings case-insensitively for cleanup.

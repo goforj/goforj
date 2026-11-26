@@ -455,7 +455,11 @@ func generationAppEnvPrefixSet(projectDir string, environment generationEnvironm
 
 // generationAppEnvPrefixSetForResources preserves prefix boundaries for the resource vocabulary consumed by a generator.
 func generationAppEnvPrefixSetForResources(projectDir string, environment generationEnvironment, resources []generationEnvironmentResource) map[string]struct{} {
-	configured := configuredGenerationAppEnvPrefixes(projectDir)
+	return generationAppEnvPrefixSetWithConfigured(environment, resources, configuredGenerationAppEnvPrefixes(projectDir))
+}
+
+// generationAppEnvPrefixSetWithConfigured preserves authoritative App boundaries before considering environment evidence.
+func generationAppEnvPrefixSetWithConfigured(environment generationEnvironment, resources []generationEnvironmentResource, configured map[string]struct{}) map[string]struct{} {
 	prefixes := map[string]struct{}{}
 	for prefix := range configured {
 		prefixes[prefix] = struct{}{}
@@ -484,19 +488,27 @@ func generationKnownAppNames(projectDir string, config *project.Config) []string
 
 // configuredGenerationAppEnvPrefixes shares the renderer's runtime App inventory without making a missing config fatal to direct generators.
 func configuredGenerationAppEnvPrefixes(projectDir string) map[string]struct{} {
+	if strings.TrimSpace(projectDir) == "" {
+		return map[string]struct{}{}
+	}
+	config, err := project.LoadProjectConfigAt(projectDir)
+	if err != nil {
+		return map[string]struct{}{}
+	}
+	return generationAppEnvPrefixesFromConfig(projectDir, config)
+}
+
+// generationAppEnvPrefixesFromConfig derives ownership without reloading a prospective configuration from disk.
+func generationAppEnvPrefixesFromConfig(projectDir string, config *project.Config) map[string]struct{} {
+	return generationAppEnvPrefixesFromNames(generationKnownAppNames(projectDir, config))
+}
+
+// generationAppEnvPrefixesFromNames shares prefix normalization with prospective App inventories.
+func generationAppEnvPrefixesFromNames(names []string) map[string]struct{} {
 	prefixes := map[string]struct{}{}
-	addName := func(name string) {
+	for _, name := range names {
 		if prefix := project.AppEnvironmentPrefix(name); prefix != "" {
 			prefixes[prefix] = struct{}{}
-		}
-	}
-	if strings.TrimSpace(projectDir) != "" {
-		config, err := project.LoadProjectConfigAt(projectDir)
-		if err != nil {
-			return prefixes
-		}
-		for _, name := range generationKnownAppNames(projectDir, config) {
-			addName(name)
 		}
 	}
 	return prefixes
@@ -551,7 +563,7 @@ func inferredGenerationAppPrefix(key string, resources []generationEnvironmentRe
 // generationAppEnvPrefixesForResource keeps stale overlays from Apps that do not participate in a component out of generated manifests.
 func generationAppEnvPrefixesForResource(input generationInput, resourcePrefix string) []string {
 	prefixes := generationAppEnvPrefixes(input)
-	config, err := project.LoadProjectConfigAt(input.projectDir)
+	config, err := input.projectConfig()
 	if err != nil {
 		return prefixes
 	}
@@ -578,7 +590,7 @@ func generationAppEnvPrefixesForResource(input generationInput, resourcePrefix s
 			enabled[prefix] = struct{}{}
 		}
 	}
-	for _, name := range generationKnownAppNames(input.projectDir, config) {
+	for _, name := range input.knownAppNames(config) {
 		addDefaultProjection(name)
 	}
 	filtered := make([]string, 0, len(prefixes))

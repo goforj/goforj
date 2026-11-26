@@ -66,10 +66,10 @@ func TestCreatedAppFeatureOwnership(t *testing.T) {
 		if output, err := initialize.CombinedOutput(); err != nil {
 			t.Fatalf("initialize make:app feature resources: %v\n%s", err, output)
 		}
-		runFeatureRenderCommand(t, root, "make:app", "reporting", "--remove")
 		if err := os.Remove(filepath.Join(root, "internal/features/created_app_test.go")); err != nil {
 			t.Fatal(err)
 		}
+		runFeatureRenderCommand(t, root, "make:app", "reporting", "--remove")
 		removedTest := `package features
 
 import "testing"

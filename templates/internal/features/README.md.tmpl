@@ -28,6 +28,8 @@ Create `storage/flags/checkout.json` before starting the App. This relative path
 
 Named Apps use their existing environment overlay, for example `BILLING_FEATURE_CHECKOUT_PATH`. Resources identify evaluator configuration, not individual flag names. A name declared only for Billing is not initialized by another App. Accessing an undeclared App resource fails fast. Creating or removing an App reconciles its evaluator registrations and App-only accessors automatically.
 
+Creating an App that claims an existing resource prefix, or removing an App that owns a named evaluator, is rejected before writes if surviving owner source depends on the affected generated manager and would lose a registration or accessor. This conservative check also includes Default-only consumers. Reconcile resource names and owner source first. For creation, choosing another App name also avoids claiming the existing prefix.
+
 ## Check a flag
 
 Inject `*features.Manager` as `features` into an application service through the owning App's service Wire set. For a simple boolean check:
