@@ -45,7 +45,7 @@ prepare:
         // Service owns preference updates and their reusable validation policy.
         type Service struct { check NameCheck; current Settings }
 
-        // NewService composes policy and deterministic fixture state.
+        // NewService requires the application name policy and composes deterministic fixture state.
         func NewService(check NameCheck) *Service {
          note := "keep me"
          return &Service{check: check, current: Settings{Name: "Existing", Limit: 25, Enabled: true, Note: &note}}
