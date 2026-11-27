@@ -624,6 +624,11 @@ func (m model) selectedResourcePreparation() (newProjectResourcePreparation, err
 	if m.resourcePreparation != nil {
 		return cloneNewProjectResourcePreparation(*m.resourcePreparation), nil
 	}
+	return m.defaultResourcePreparation()
+}
+
+// defaultResourcePreparation keeps fresh wizard proposals independent of a previous target's owner configuration.
+func (m model) defaultResourcePreparation() (newProjectResourcePreparation, error) {
 	components := m.config.Render.Components
 	if m.config.Render.Example == "gopher_eats" {
 		components = project.ProjectComponents(&m.config)
@@ -632,12 +637,14 @@ func (m model) selectedResourcePreparation() (newProjectResourcePreparation, err
 	if err != nil {
 		return newProjectResourcePreparation{}, err
 	}
+	intent := project.LocalServiceIntent{}
 	if m.config.Render.Example == "gopher_eats" {
 		for _, key := range []project.ResourceKey{project.ResourceQueue, project.ResourceEvents} {
 			plan = plan.WithSelection(key, project.DriverSelection{Active: "nats", Supported: []string{"nats"}})
 		}
+		intent = gopherEatsServiceIntent(intent)
 	}
-	return resolveNewProjectResourcePreparation(plan, components, project.LocalServiceIntent{}, nil)
+	return resolveNewProjectResourcePreparation(plan, components, intent, nil)
 }
 
 // applyAtlasModeSelection centralizes apply atlas mode selection behavior so callers follow the same contract.
@@ -1047,16 +1054,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.targetPath = m.projectPath()
-				resourcePlan, err := project.DefaultResourcePlan(m.config.Render.Components)
+				proposal, err := m.defaultResourcePreparation()
 				if err != nil {
 					m.errorMsg = fmt.Sprintf("resolve App resources: %v", err)
 					return m, nil
 				}
+				components := m.config.Render.Components
+				if m.config.Render.Example == "gopher_eats" {
+					components = project.ProjectComponents(&m.config)
+				}
 				preparation, err := prepareNewProjectTargetResources(
 					m.targetPath,
-					resourcePlan,
-					m.config.Render.Components,
-					project.LocalServiceIntent{},
+					proposal.plan,
+					components,
+					proposal.serviceIntent,
 				)
 				if err != nil {
 					m.errorMsg = err.Error()
