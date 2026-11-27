@@ -325,7 +325,7 @@ import (
 )
 // main provisions empty declarations and initializes the independently rendered App graphs.
 func main() {
- if err := cmd.LoadEnv(); err != nil { log.Fatal(err) }
+ if err := env.Load(); err != nil { log.Fatal(err) }
  ctx := context.Background()
  for _, prefix := range []string{"", "SEARCH", "SEARCH_WORKER", "SEARCH_SEARCH"} {
   if err := searches.ProvisionForApp(ctx, prefix, nil); err != nil { log.Fatal(err) }
