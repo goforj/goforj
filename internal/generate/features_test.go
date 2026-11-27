@@ -101,8 +101,9 @@ func TestGeneratedFeatureManagerExercisesNativeLifecycle(t *testing.T) {
 	runFixtureGoModTidy(t, root, nil)
 	goFlags := "-race"
 	if runtime.GOOS == "windows" {
-		// Hosted Windows runners can fail to start concurrent compilers during a cold race build.
-		goFlags += " -p=1"
+		// Hosted Windows compilers can fail to load during a cold race build even with one build job.
+		// Exercise native Windows lifecycle behavior here and keep race coverage on Unix.
+		goFlags = "-p=1"
 	}
 	runFixtureGoTest(t, root, "./internal/features", "", map[string]string{"GOFLAGS": goFlags})
 }
