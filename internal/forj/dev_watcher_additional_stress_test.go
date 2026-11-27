@@ -108,36 +108,45 @@ func TestDevWatcherMultiAppChurnIsolation(t *testing.T) {
 		return state.version == "beta-initial"
 	})
 	runAdditionalStressConcurrentChurn(t, alpha.root, beta.root)
-	waitForDevWatcherChurnBuildLine(t, alpha.buildLog, "build-success:2")
-	waitForDevWatcherChurnBuildLine(t, beta.buildLog, "build-success:2")
+	waitForDevWatcherChurnState(t, alpha.state, func(state devWatcherChurnState) bool {
+		return state.version == "alpha-together" && state.pid != alphaInitial.pid
+	})
+	waitForDevWatcherChurnState(t, beta.state, func(state devWatcherChurnState) bool {
+		return state.version == "beta-together" && state.pid != betaInitial.pid
+	})
+	// Editor activity can span debounce windows; isolation starts from each App's settled build count.
+	alphaTogetherBuilds := waitForAdditionalStressBuildQuiescence(t, controller.tasks[alphaBuildID], alpha.buildLog)
+	betaTogetherBuilds := waitForAdditionalStressBuildQuiescence(t, controller.tasks[betaBuildID], beta.buildLog)
+	assertDevWatcherChurnBuildCountStable(t, alpha.buildLog, alphaTogetherBuilds)
+	assertDevWatcherChurnBuildCountStable(t, beta.buildLog, betaTogetherBuilds)
 	alphaTogether := waitForDevWatcherChurnState(t, alpha.state, func(state devWatcherChurnState) bool {
 		return state.version == "alpha-together" && state.pid != alphaInitial.pid
 	})
 	betaTogether := waitForDevWatcherChurnState(t, beta.state, func(state devWatcherChurnState) bool {
 		return state.version == "beta-together" && state.pid != betaInitial.pid
 	})
-	waitForDevWatcherChurnTaskIdle(t, controller.tasks[alphaBuildID])
-	waitForDevWatcherChurnTaskIdle(t, controller.tasks[betaBuildID])
-	assertDevWatcherChurnBuildCountStable(t, alpha.buildLog, 2)
-	assertDevWatcherChurnBuildCountStable(t, beta.buildLog, 2)
+	alphaTogetherStarts := countDevWatcherChurnLines(alpha.lifecycle, "runtime-start:")
+	betaTogetherStarts := countDevWatcherChurnLines(beta.lifecycle, "runtime-start:")
 
 	for index := range 24 {
 		mustWriteAdditionalStressSource(t, alpha.root, fmt.Sprintf("alpha-only-%02d", index), index%2 == 0)
 	}
 	mustWriteAdditionalStressSource(t, alpha.root, "alpha-isolated", true)
-	waitForDevWatcherChurnBuildLine(t, alpha.buildLog, "build-success:3")
 	alphaIsolated := waitForDevWatcherChurnState(t, alpha.state, func(state devWatcherChurnState) bool {
 		return state.version == "alpha-isolated" && state.pid != alphaTogether.pid
 	})
-	waitForDevWatcherChurnHeartbeat(t, beta.state, betaTogether)
-	waitForDevWatcherChurnTaskIdle(t, controller.tasks[alphaBuildID])
-	assertDevWatcherChurnBuildCountStable(t, alpha.buildLog, 3)
-	assertDevWatcherChurnBuildCountStable(t, beta.buildLog, 2)
-	if starts := countDevWatcherChurnLines(alpha.lifecycle, "runtime-start:"); starts != 3 {
-		t.Fatalf("alpha runtime starts=%d, want 3\n%s", starts, readDevWatcherChurnFile(alpha.lifecycle))
+	alphaIsolatedBuilds := waitForAdditionalStressBuildQuiescence(t, controller.tasks[alphaBuildID], alpha.buildLog)
+	if alphaIsolatedBuilds <= alphaTogetherBuilds {
+		t.Fatalf("alpha-only edits did not rebuild alpha: before=%d after=%d", alphaTogetherBuilds, alphaIsolatedBuilds)
 	}
-	if starts := countDevWatcherChurnLines(beta.lifecycle, "runtime-start:"); starts != 2 {
-		t.Fatalf("beta runtime starts=%d, want 2\n%s", starts, readDevWatcherChurnFile(beta.lifecycle))
+	assertDevWatcherChurnBuildCountStable(t, alpha.buildLog, alphaIsolatedBuilds)
+	assertDevWatcherChurnBuildCountStable(t, beta.buildLog, betaTogetherBuilds)
+	waitForDevWatcherChurnHeartbeat(t, beta.state, betaTogether)
+	if starts := countDevWatcherChurnLines(alpha.lifecycle, "runtime-start:"); starts <= alphaTogetherStarts || starts > countDevWatcherChurnLines(alpha.buildLog, "build-success:") {
+		t.Fatalf("alpha runtime starts=%d, want an increase bounded by successful builds\n%s", starts, readDevWatcherChurnFile(alpha.lifecycle))
+	}
+	if starts := countDevWatcherChurnLines(beta.lifecycle, "runtime-start:"); starts != betaTogetherStarts || starts > countDevWatcherChurnLines(beta.buildLog, "build-success:") {
+		t.Fatalf("beta runtime starts=%d, want unchanged %d bounded by successful builds\n%s", starts, betaTogetherStarts, readDevWatcherChurnFile(beta.lifecycle))
 	}
 	assertNoDevWatcherChurnExit(t, controller)
 
