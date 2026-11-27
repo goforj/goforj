@@ -27,16 +27,17 @@ type scenarioSpecV1 struct {
 
 // scenarioSpecV2 is the live-evaluable wire contract with an explicit preparation boundary.
 type scenarioSpecV2 struct {
-	SchemaVersion int                   `yaml:"schema_version"`
-	ID            string                `yaml:"id"`
-	Title         string                `yaml:"title"`
-	Description   string                `yaml:"description"`
-	DependsOn     []string              `yaml:"depends_on"`
-	App           ScenarioApp           `yaml:"app"`
-	Markdown      ScenarioMarkdown      `yaml:"markdown"`
-	Prepare       scenarioPreparationV2 `yaml:"prepare"`
-	Steps         []scenarioStepV2      `yaml:"steps"`
-	Checks        []scenarioCheckV2     `yaml:"checks"`
+	EvaluationOnly bool                  `yaml:"evaluation_only,omitempty"`
+	SchemaVersion  int                   `yaml:"schema_version"`
+	ID             string                `yaml:"id"`
+	Title          string                `yaml:"title"`
+	Description    string                `yaml:"description"`
+	DependsOn      []string              `yaml:"depends_on"`
+	App            ScenarioApp           `yaml:"app"`
+	Markdown       ScenarioMarkdown      `yaml:"markdown"`
+	Prepare        scenarioPreparationV2 `yaml:"prepare"`
+	Steps          []scenarioStepV2      `yaml:"steps"`
+	Checks         []scenarioCheckV2     `yaml:"checks"`
 }
 
 // scenarioPreparationV2 keeps fixture actions separate from the target an agent must implement.
@@ -208,13 +209,14 @@ func normalizeScenarioV2(wire scenarioSpecV2) (ScenarioSpec, error) {
 		return ScenarioSpec{}, err
 	}
 	return ScenarioSpec{
-		SchemaVersion: wire.SchemaVersion,
-		ID:            wire.ID,
-		Title:         wire.Title,
-		Description:   wire.Description,
-		DependsOn:     wire.DependsOn,
-		App:           wire.App,
-		Markdown:      wire.Markdown,
+		SchemaVersion:  wire.SchemaVersion,
+		EvaluationOnly: wire.EvaluationOnly,
+		ID:             wire.ID,
+		Title:          wire.Title,
+		Description:    wire.Description,
+		DependsOn:      wire.DependsOn,
+		App:            wire.App,
+		Markdown:       wire.Markdown,
 		Prepare: ScenarioPreparation{
 			Steps:  prepareSteps,
 			Checks: prepareChecks,

@@ -1,5 +1,6 @@
 schema_version: 2
 id: catalog-search
+evaluation_only: true
 title: Portable Catalog Search
 description: Add lexical catalog search with category filtering, stable pages, and visible updates.
 depends_on: [catalog-search-domain]

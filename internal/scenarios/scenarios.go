@@ -81,7 +81,26 @@ func Generate(options GenerateOptions) error {
 	if strings.TrimSpace(options.OutDir) == "" {
 		return fmt.Errorf("out dir is required")
 	}
+	if !options.All && len(options.IDs) > 0 {
+		for _, id := range options.IDs {
+			if catalog.byID[id].EvaluationOnly {
+				return fmt.Errorf("scenario %q is an evaluation fixture and has no public page", id)
+			}
+		}
+	}
 	for _, spec := range specs {
+		if spec.EvaluationOnly {
+			if options.Check {
+				path := filepath.Join(options.OutDir, spec.ID+".md")
+				if _, err := os.Lstat(path); !os.IsNotExist(err) {
+					if err != nil {
+						return fmt.Errorf("check evaluation fixture page %s: %w", path, err)
+					}
+					return fmt.Errorf("evaluation fixture %q has an unexpected public page at %s", spec.ID, path)
+				}
+			}
+			continue
+		}
 		rendered, err := renderScenarioMarkdown(spec)
 		if err != nil {
 			return fmt.Errorf("render scenario %s: %w", spec.ID, err)
@@ -143,16 +162,17 @@ func Validate(options ValidateOptions) error {
 
 // ScenarioSpec is the executable and documentable contract for one verified scenario.
 type ScenarioSpec struct {
-	SchemaVersion int                  `yaml:"schema_version,omitempty"`
-	ID            string               `yaml:"id"`
-	Title         string               `yaml:"title"`
-	Description   string               `yaml:"description"`
-	DependsOn     []string             `yaml:"depends_on"`
-	App           ScenarioApp          `yaml:"app"`
-	Markdown      ScenarioMarkdown     `yaml:"markdown"`
-	Prepare       ScenarioPreparation  `yaml:"prepare,omitempty"`
-	Steps         []ScenarioStep       `yaml:"steps"`
-	Verify        ScenarioVerification `yaml:"verify"`
+	SchemaVersion  int                  `yaml:"schema_version,omitempty"`
+	EvaluationOnly bool                 `yaml:"evaluation_only,omitempty"`
+	ID             string               `yaml:"id"`
+	Title          string               `yaml:"title"`
+	Description    string               `yaml:"description"`
+	DependsOn      []string             `yaml:"depends_on"`
+	App            ScenarioApp          `yaml:"app"`
+	Markdown       ScenarioMarkdown     `yaml:"markdown"`
+	Prepare        ScenarioPreparation  `yaml:"prepare,omitempty"`
+	Steps          []ScenarioStep       `yaml:"steps"`
+	Verify         ScenarioVerification `yaml:"verify"`
 }
 
 // ScenarioPreparation defines fixture-only work and the checks that prove the live starting state.

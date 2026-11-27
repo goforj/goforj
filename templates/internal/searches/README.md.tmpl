@@ -1,6 +1,6 @@
 # Search indexes
 
-Search is optional and disabled by default. Enable the `search` component for the owning App, then run `forj build`. The generated manager exposes portable `*search.Index` handles. Each App owns its `SearchDefinitions()` map in `app/search.go` or `app/<name>/search.go`; schemas are Go code, never inferred from environment values.
+Search is optional and disabled by default. When adding the optional `search` component to an existing App, enable it for that App in `.goforj.yml` and run `forj render` from the Project root to install the App Wire providers. The generated manager exposes portable `*search.Index` handles. Each App owns its `SearchDefinitions()` map in `app/search.go` or `app/<name>/search.go`; schemas are Go code, never inferred from environment values.
 
 Declare a `catalog` definition, then configure its backend:
 
@@ -19,13 +19,13 @@ Bleve uses one process owner per physical index. The manager creates one backend
 
 Startup only validates existing schemas. Before first startup, an application-owned bootstrap program can call `searches.Provision(ctx, app.SearchDefinitions())` without initializing the runtime graph. Provisioning explicitly creates schemas and closes its handles; it rejects schema drift and does not destroy or recreate an existing incompatible index. Stop the local App before provisioning the same Bleve path. Use a bounded caller context.
 
-Keep the database as durable truth. Backfill and rebuild from committed records through application-owned code and portable Upsert/Delete plus Wait. Inspect Outcome.State before promising visibility. For a schema change, provision a new path or prefix, rebuild its projection, and switch deployment configuration deliberately. The framework never guesses how to rebuild domain data or automatically deletes an old index.
+Keep the original database records, files, or other authoritative data outside the index. Backfill and rebuild from that source through application-owned code and portable Upsert/Delete plus Wait. Inspect Outcome.State before promising visibility. For a schema change, provision a new path or prefix, rebuild its projection, and switch deployment configuration deliberately. The framework never guesses how to rebuild domain data or automatically deletes an old index.
 
 Search is lexical, not vector or semantic search. Preserve typed filters, total precision, and safe highlight rendering in application code. Do not edit generated manager/accessor files.
 
 ## First-time provisioning
 
-Create the App-owned `tools/search-provision/main.go` below after declaring your schemas. Keep this tool outside `cmd/` so it is not discovered as a runtime App. Stop the Bleve owner process before provisioning its physical indexes. This program loads configuration but never initializes the App runtime or a manager that requires those indexes to exist.
+Create the App-owned `tools/search-provision/main.go` below after declaring your schemas. Keep this tool under `tools/` and separate from the generated entrypoint at `cmd/<app>/main.go`. A future `forj render` refreshes that entrypoint. Stop the Bleve owner process before provisioning its physical indexes. This program loads configuration but never initializes the App runtime or a manager that requires those indexes to exist.
 
 ```go
 package main
@@ -36,14 +36,14 @@ import (
  "log"
  "time"
 
- "github.com/goforj/env/v2"
  "{{.GoModuleName}}/app"
+ "{{.GoModuleName}}/internal/cmd"
  "{{.GoModuleName}}/internal/searches"
 )
 
 // main provisions declared schemas without initializing the App runtime or its index manager.
 func main() {
- if err := env.Load(); err != nil { log.Fatal(err) }
+ if err := cmd.LoadEnv(); err != nil { log.Fatal(err) }
  ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
  defer cancel()
  if err := searches.Provision(ctx, app.SearchDefinitions()); err != nil { log.Fatal(err) }

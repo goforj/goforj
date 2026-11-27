@@ -3,6 +3,7 @@ package generate
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -98,7 +99,13 @@ func TestGeneratedFeatureManagerExercisesNativeLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	runFixtureGoModTidy(t, root, nil)
-	runFixtureGoTest(t, root, "./internal/features", "", map[string]string{"GOFLAGS": "-race"})
+	goFlags := "-race"
+	if runtime.GOOS == "windows" {
+		// Hosted Windows compilers can fail to load during a cold race build even with one build job.
+		// Exercise native Windows lifecycle behavior here and keep race coverage on Unix.
+		goFlags = "-p=1"
+	}
+	runFixtureGoTest(t, root, "./internal/features", "", map[string]string{"GOFLAGS": goFlags})
 }
 
 const featureManagerRuntimeTests = `package features

@@ -2,7 +2,7 @@
 
 `App.Notifications()` exposes configured synchronous `notification.Sender` instances. Inject `*notifications.Manager` into application providers and select `Default()` or a generated named accessor before calling feature services.
 
-Enable the opt-in `notification` component, then use `NOTIFICATION_DRIVER=log` for redacted local capture. A nil send error means capture or provider acceptance, never proof of recipient receipt. The manager adds no background execution, retries, fallback, or fanout.
+When adding the optional `notification` component to an existing App, enable it for that App in `.goforj.yml` and run `forj render` from the Project root to install the App Wire providers. Use `NOTIFICATION_DRIVER=log` for redacted local capture. A nil send error means capture or provider acceptance, never proof of recipient receipt. The manager adds no background execution, retries, fallback, or fanout.
 
 This initial integration supports `log` and `webhook`. `NOTIFICATION_SUPPORTED_DRIVERS` is the compile-time manifest; changing an active driver within that manifest requires configuration and restart. Adding another supported driver requires `forj generate --notification` and rebuilding. Unsupported library drivers are not available through this manager.
 

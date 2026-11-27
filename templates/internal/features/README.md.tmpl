@@ -2,7 +2,7 @@
 
 # Feature evaluators
 
-Enable the optional `feature` component in the owning App and run `forj generate --feature` after declaring evaluator resources in `.env`. The native memory and file drivers are always compiled, following the framework baseline-driver convention. `FEATURE_SUPPORTED_DRIVERS=memory,file` records their build capability; `FEATURE_DRIVER` selects the active native source at runtime. Vendor SDK adapters are outside this first integration.
+When adding the optional `feature` component to an existing App, enable it for that App in `.goforj.yml` and run `forj render` from the Project root to install the App Wire providers. After declaring named evaluator resources in `.env`, run `forj generate --feature` to update the accessors. The native memory and file drivers are always compiled, following the framework baseline-driver convention. `FEATURE_SUPPORTED_DRIVERS=memory,file` records their build capability; `FEATURE_DRIVER` selects the active native source at runtime. Vendor SDK adapters are outside this first integration.
 
 The default memory source starts empty without an inline definition in the generated environment. No flag file is needed to boot; undefined boolean checks return false. For normal flag definitions, set `FEATURE_DRIVER=file` and configure `FEATURE_PATH` to point to a definition file. File sources load synchronously before startup. `FEATURE_DOCUMENT` remains an optional startup override for memory sources in tests or small fixtures.
 

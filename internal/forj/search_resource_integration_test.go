@@ -66,8 +66,7 @@ func TestSearchResourceFullComposition(t *testing.T) {
 		t.Fatal("disabled App got Search dependency")
 	}
 
-	schema := "package app\n\nimport \"github.com/goforj/search\"\n\n// SearchDefinitions owns this App's catalog projection.\nfunc SearchDefinitions() map[string]search.Definition { return map[string]search.Definition{\"catalog\": {Name: \"catalog\", Fields: []search.Field{{Name: \"description\", Type: search.TextField, Searchable: true}}}} }\n"
-	if err := os.WriteFile(filepath.Join(root, "app/search.go"), []byte(schema), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "app/search.go"), []byte(searchProvisionSchema), 0600); err != nil {
 		t.Fatal(err)
 	}
 	bootstrap := strings.ReplaceAll(searchProvisionBootstrap, "your/module", config.GoModuleName)
@@ -119,6 +118,50 @@ func TestSearchResourceFullComposition(t *testing.T) {
 	}
 }
 
+const searchProvisionSchema = "package app\n\nimport \"github.com/goforj/search\"\n\n// SearchDefinitions owns this App's catalog projection.\nfunc SearchDefinitions() map[string]search.Definition { return map[string]search.Definition{\"catalog\": {Name: \"catalog\", Fields: []search.Field{{Name: \"description\", Type: search.TextField, Searchable: true}}}} }\n"
+
+// TestSearchProvisionSurvivesRender enables Search in an existing CLI App and provisions a fresh index after regeneration.
+func TestSearchProvisionSurvivesRender(t *testing.T) {
+	root := t.TempDir()
+	const module = "example.com/searchprovision"
+	config := project.Config{
+		ProjectName: "Search provisioning", GoModuleName: module,
+		Render: project.RenderConfig{Components: project.Components{CLI: true}},
+	}
+	testkit.RenderProjectWithForj(t, root, testkit.RenderProjectRequest{Config: config})
+	forj := testkit.EnsureIntegrationForjBinary(t)
+	environment := testkit.IntegrationGoProcessEnv(t, map[string]string{
+		"GOWORK": "off", "SEARCH_CATALOG_PATH": filepath.Join(root, "fresh-catalog"),
+	})
+	run := func(arguments ...string) {
+		t.Helper()
+		command := exec.CommandContext(t.Context(), arguments[0], arguments[1:]...)
+		command.Dir = root
+		command.Env = environment
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", arguments, err, output)
+		}
+	}
+	config.Render.Components.Search = true
+	testkit.WriteProjectConfigFile(t, root, config)
+	run(forj, "render")
+
+	if err := os.WriteFile(filepath.Join(root, "app/search.go"), []byte(searchProvisionSchema), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tool := filepath.Join(root, "tools", "search-provision")
+	if err := os.MkdirAll(tool, 0755); err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := strings.ReplaceAll(searchProvisionBootstrap, "your/module", module)
+	if err := os.WriteFile(filepath.Join(tool, "main.go"), []byte(bootstrap), 0600); err != nil {
+		t.Fatal(err)
+	}
+	run(forj, "render")
+	run("go", "run", "./tools/search-provision")
+	run("go", "run", "./cmd/app", "hello:world")
+}
+
 const searchProvisionBootstrap = `package main
 
 import (
@@ -127,14 +170,14 @@ import (
  "log"
  "time"
 
- "github.com/goforj/env/v2"
  "your/module/app"
+ "your/module/internal/cmd"
  "your/module/internal/searches"
 )
 
 // main provisions declared schemas without initializing the App runtime or its index manager.
 func main() {
- if err := env.Load(); err != nil { log.Fatal(err) }
+ if err := cmd.LoadEnv(); err != nil { log.Fatal(err) }
  ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
  defer cancel()
  if err := searches.Provision(ctx, app.SearchDefinitions()); err != nil { log.Fatal(err) }

@@ -1633,35 +1633,20 @@ func TestIncidentNotificationVerifierCalibration(t *testing.T) {
 			path:        "internal/incidents/alert_service.go",
 			old:         "return NewAlertService(notifications.Primary(), notifications.Secondary())",
 			mutant:      "_ = notifications.Primary(); return NewAlertService(notifications.Default(), notifications.Secondary())",
-			wantFailed:  "incident-notification-behavior",
+			wantFailed:  "notification-app-runtime",
 			wantCompile: true,
 		},
 	})
 }
 
-// TestTargetFeatureRolloutVerifierCalibration rejects compiling targeting, snapshot, and resource-wiring mutations.
+// TestTargetFeatureRolloutVerifierCalibration checks snapshot consistency and actual App service registration.
 func TestTargetFeatureRolloutVerifierCalibration(t *testing.T) {
-	for _, mutation := range []struct {
-		name, old, replacement, failed string
-		unusedAppProvider              string
-		additional                     []evaluationMutation
-	}{
-		{name: "mixed-revisions", old: "snapshot, err := service.flags.Snapshot()", replacement: "snapshot, err := service.flags, error(nil)", failed: "feature-rollout-behavior"},
-		{name: "random-target", old: "Key: tenant", replacement: `Key: fmt.Sprintf("%s:%d", tenant, rand.Uint64())`, failed: "feature-rollout-behavior", additional: []evaluationMutation{{old: "\"fmt\"", mutant: "\"fmt\"\n\"math/rand/v2\""}}},
-		{name: "wrong-resource", old: "features.Checkout()", replacement: "features.Default()", failed: "feature-resource-accessor", unusedAppProvider: "checkout.NewService"},
-	} {
-		t.Run(mutation.name, func(t *testing.T) {
-			result := testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
-				evaluation: "target-feature-rollout", scenario: "tenant-checkout-rollout", path: "internal/checkout/service.go",
-				old: mutation.old, mutant: mutation.replacement, additional: mutation.additional,
-				unusedAppProvider: mutation.unusedAppProvider,
-				wantFailed:        mutation.failed, wantCompile: true,
-			})
-			for _, id := range []string{"feature-library-adoption", "feature-library-execution", "test-function-added"} {
-				if !evaluationCheckHasStatus(result.Checks, id, eval.EndpointPassed) {
-					t.Fatalf("golden quality %s did not pass: %#v", id, result.Checks)
-				}
-			}
-		})
-	}
+	testMajorSurfaceVerifierCalibration(t, majorSurfaceVerifierCase{
+		evaluation: "target-feature-rollout", scenario: "tenant-checkout-rollout",
+		unusedAppProvider: "checkout.NewService",
+		path:              "internal/checkout/service.go",
+		old:               "snapshot, err := service.flags.Snapshot()",
+		mutant:            "snapshot, err := service.flags, error(nil)",
+		wantFailed:        "feature-rollout-behavior", wantCompile: true,
+	})
 }

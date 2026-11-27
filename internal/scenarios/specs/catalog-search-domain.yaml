@@ -1,5 +1,6 @@
 schema_version: 2
 id: catalog-search-domain
+evaluation_only: true
 title: Catalog Search Resource Boundary
 description: Prepare an App-owned catalog schema and generated named search resource.
 app:

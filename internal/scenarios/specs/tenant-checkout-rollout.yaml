@@ -1,5 +1,6 @@
 schema_version: 2
 id: tenant-checkout-rollout
+evaluation_only: true
 title: Tenant Checkout Rollout
 description: Use a generated evaluator resource for stable, request-consistent checkout decisions.
 depends_on: [invoice-domain]
