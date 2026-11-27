@@ -3,6 +3,7 @@ package forj
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,6 +20,14 @@ func TestProjectCreationSchemaUsesCanonicalCatalogs(t *testing.T) {
 	for _, field := range schema.Fields {
 		if field.Key == "components" && len(field.Options) != len(project.ProjectWizardComponentDefinitions()) {
 			t.Fatal("component catalogs differ")
+		}
+		if field.Key == "components" {
+			defaults := field.Default.([]string)
+			for _, key := range []project.ComponentKey{project.ComponentFeature, project.ComponentNotification, project.ComponentSearch} {
+				if !slices.Contains(defaults, string(key)) {
+					t.Fatalf("creation schema is missing default component %q", key)
+				}
+			}
 		}
 		if field.Key == "starter-kit" && len(field.Options) != len(project.StarterKitCatalog()) {
 			t.Fatal("starter catalogs differ")

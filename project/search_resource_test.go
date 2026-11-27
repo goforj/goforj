@@ -2,10 +2,10 @@ package project
 
 import "testing"
 
-// TestSearchResourceIsOptIn verifies existing Projects keep their component and driver defaults.
-func TestSearchResourceIsOptIn(t *testing.T) {
-	if DefaultSelectedComponents().Search {
-		t.Fatal("Search enabled by default")
+// TestSearchResourceCanBeDisabled verifies new-project selection preserves resource and driver controls.
+func TestSearchResourceCanBeDisabled(t *testing.T) {
+	if !DefaultSelectedComponents().Search {
+		t.Fatal("Search was not selected for new projects")
 	}
 	components := Components{}
 	components.SetEnabled(ComponentSearch, true)

@@ -6,11 +6,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestNotificationComponentAndResourceRemainOptIn preserves existing default projects and App ownership.
-func TestNotificationComponentAndResourceRemainOptIn(t *testing.T) {
+// TestNotificationComponentDefaultsPreserveAppOwnership keeps the new-project default separate from explicit App enablement.
+func TestNotificationComponentDefaultsPreserveAppOwnership(t *testing.T) {
 	definition, ok := ComponentDefinitionByKey(ComponentNotification)
-	if !ok || definition.DefaultSelected {
-		t.Fatal("notification component is not opt-in")
+	if !ok || !definition.DefaultSelected {
+		t.Fatal("notification component is not selected for new projects")
 	}
 	resource, ok := ResourceDefinitionByKey(ResourceNotification)
 	if !ok || resource.AppliesTo(Components{}) {
