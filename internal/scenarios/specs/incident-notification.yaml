@@ -1,5 +1,6 @@
 schema_version: 2
 id: incident-notification
+evaluation_only: true
 title: Incident Notification
 description: Add conservative incident alert fallback through injected senders.
 app:

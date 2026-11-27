@@ -1130,3 +1130,35 @@ func TestScenarioGenerateCheckDetectsDrift(t *testing.T) {
 		t.Fatalf("check mode rewrote stale doc:\n%s", body)
 	}
 }
+
+// TestGenerateOmitsEvaluationFixtures keeps benchmark inputs executable without exporting them as tutorials.
+func TestGenerateOmitsEvaluationFixtures(t *testing.T) {
+	out := t.TempDir()
+	fixtures := []string{"catalog-search-domain", "catalog-search", "incident-notification", "tenant-checkout-rollout"}
+	for _, id := range fixtures {
+		if err := Generate(GenerateOptions{OutDir: out, IDs: []string{id}}); err == nil || !strings.Contains(err.Error(), "evaluation fixture") {
+			t.Fatalf("explicit fixture %s: %v", id, err)
+		}
+	}
+	if err := Generate(GenerateOptions{OutDir: out, All: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range fixtures {
+		if _, err := os.Stat(filepath.Join(out, id+".md")); !os.IsNotExist(err) {
+			t.Fatalf("fixture %s was exported: %v", id, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(out, "json-api-route.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Generate(GenerateOptions{OutDir: out, All: true, Check: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, fixtures[0]+".md"), []byte("stale benchmark page"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Generate(GenerateOptions{OutDir: out, All: true, Check: true}); err == nil || !strings.Contains(err.Error(), "unexpected public page") {
+		t.Fatalf("stale fixture page was accepted: %v", err)
+	}
+
+}
