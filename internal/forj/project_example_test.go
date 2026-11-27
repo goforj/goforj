@@ -128,7 +128,7 @@ func TestGopherEatsCreationKeepsVueAndSeparateAppRoles(t *testing.T) {
 	}
 	for _, key := range []project.ResourceKey{project.ResourceQueue, project.ResourceEvents} {
 		selection, exists := preparation.plan.Selection(key)
-		if !exists || selection.Active != "nats" {
+		if !exists || selection.Active != "nats" || len(selection.Supported) != 1 || selection.Supported[0] != "nats" {
 			t.Fatalf("%s selection: %+v", key, selection)
 		}
 	}
@@ -148,6 +148,39 @@ func TestGopherEatsCreationKeepsVueAndSeparateAppRoles(t *testing.T) {
 	wizard.applyExtrasSelection()
 	if len(wizard.config.Apps) != 0 || wizard.config.Render.Example != "" {
 		t.Fatal("disabled example retained extra apps")
+	}
+	preparation, err = wizard.selectedResourcePreparation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, selection := range preparation.plan.Selections {
+		if selection.Active == "nats" {
+			t.Fatal("deselected demo retained its NATS driver")
+		}
+	}
+	if len(preparation.serviceIntent.Modes) != 0 {
+		t.Fatal("deselected demo retained its local broker selection")
+	}
+}
+
+// TestOrdinaryProjectsKeepTheirOwnDrivers ensures demo defaults do not alter otherwise comparable Apps.
+func TestOrdinaryProjectsKeepTheirOwnDrivers(t *testing.T) {
+	wizard := initialModel()
+	wizard.config.Render.Components = project.Components{CLI: true, Docker: true, Jobs: true, Events: true}
+	preparation, err := wizard.selectedResourcePreparation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, driver := range map[project.ResourceKey]string{project.ResourceQueue: "workerpool", project.ResourceEvents: "inproc"} {
+		selection, exists := preparation.plan.Selection(key)
+		if !exists || selection.Active != driver {
+			t.Fatalf("ordinary %s selection = %#v, want %s", key, selection, driver)
+		}
+	}
+	for _, key := range []project.ServiceKey{project.ServiceQueueNATS, project.ServiceEventsNATS} {
+		if _, exists := preparation.servicePlan.Requirement(key); exists {
+			t.Fatalf("ordinary project unexpectedly requested %s", key)
+		}
 	}
 }
 
