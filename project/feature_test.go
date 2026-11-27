@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// TestFeatureResourceIsOptionalAndAppScoped keeps rollout configuration out of existing project defaults.
+// TestFeatureResourceIsOptionalAndAppScoped preserves explicit disablement and App ownership.
 func TestFeatureResourceIsOptionalAndAppScoped(t *testing.T) {
-	if DefaultSelectedComponents().Feature {
-		t.Fatal("feature was enabled by default")
+	if !DefaultSelectedComponents().Feature {
+		t.Fatal("feature was not selected for new projects")
 	}
 	disabled, err := DefaultResourcePlan(Components{})
 	if err != nil {

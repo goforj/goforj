@@ -195,10 +195,13 @@ func TestPrimitiveComponentsAreVisibleRecommendedDefaults(t *testing.T) {
 		visible[definition.Key] = true
 	}
 	for key, label := range map[ComponentKey]string{
-		ComponentCache:   "Cache",
-		ComponentEvents:  "Events",
-		ComponentStorage: "File Storage",
-		ComponentJobs:    "Background Jobs",
+		ComponentFeature:      "Feature Flags",
+		ComponentNotification: "Notifications",
+		ComponentSearch:       "Search",
+		ComponentCache:        "Cache",
+		ComponentEvents:       "Events",
+		ComponentStorage:      "File Storage",
+		ComponentJobs:         "Background Jobs",
 	} {
 		definition, ok := ComponentDefinitionByKey(key)
 		if !ok || definition.Label != label || !definition.DefaultSelected {

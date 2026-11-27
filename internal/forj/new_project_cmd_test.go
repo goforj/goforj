@@ -689,10 +689,13 @@ func TestNewProjectComponentsExposeConcreteDatabaseEngines(t *testing.T) {
 func TestNewProjectExposesPrimitiveDefaultsAsComponents(t *testing.T) {
 	m := initialModel()
 	want := map[project.ComponentKey]string{
-		project.ComponentCache:   "Cache",
-		project.ComponentEvents:  "Events",
-		project.ComponentStorage: "File Storage",
-		project.ComponentJobs:    "Background Jobs",
+		project.ComponentFeature:      "Feature Flags",
+		project.ComponentNotification: "Notifications",
+		project.ComponentSearch:       "Search",
+		project.ComponentCache:        "Cache",
+		project.ComponentEvents:       "Events",
+		project.ComponentStorage:      "File Storage",
+		project.ComponentJobs:         "Background Jobs",
 	}
 	for _, raw := range m.componentList.Items() {
 		item := raw.(ListItem)
@@ -709,8 +712,15 @@ func TestNewProjectExposesPrimitiveDefaultsAsComponents(t *testing.T) {
 		t.Fatalf("new project wizard is missing primitive rows: %#v", want)
 	}
 	m.applyComponentSelection()
-	if !m.config.Render.Components.Cache || !m.config.Render.Components.Events || !m.config.Render.Components.Storage || !m.config.Render.Components.Jobs {
+	if !m.config.Render.Components.Feature || !m.config.Render.Components.Notification || !m.config.Render.Components.Search || !m.config.Render.Components.Cache || !m.config.Render.Components.Events || !m.config.Render.Components.Storage || !m.config.Render.Components.Jobs {
 		t.Fatalf("primitive defaults were lost while applying wizard selections: %#v", m.config.Render.Components)
+	}
+	for _, key := range []project.ComponentKey{project.ComponentFeature, project.ComponentNotification, project.ComponentSearch} {
+		setComponentSelectedByKey(t, &m, key, false)
+	}
+	m.applyComponentSelection()
+	if m.config.Render.Components.Feature || m.config.Render.Components.Notification || m.config.Render.Components.Search {
+		t.Fatalf("explicitly deselected primitives were re-enabled: %#v", m.config.Render.Components)
 	}
 }
 
