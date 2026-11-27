@@ -67,13 +67,16 @@ func TestGenerateStorageFilesSupportsDefaultAndNamedAccessors(t *testing.T) {
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 
 	"github.com/goforj/storage"
 	"github.com/goforj/storage/driver/localstorage"
+	"github.com/goforj/storage/storagecore"
 )
 
 // trackedStorage records generated-manager ownership without reimplementing storage operations.
@@ -87,6 +90,63 @@ type trackedStorage struct {
 func (s *trackedStorage) Close() error {
 	s.closeCalls.Add(1)
 	return s.closeErr
+}
+
+// streamingStorage exposes the optional object API through the existing Storage interface.
+type streamingStorage struct{ storage.Storage }
+
+// WalkObjectsContext supplies a test entry through the observed callback.
+func (streamingStorage) WalkObjectsContext(_ context.Context, prefix string, visit func(storagecore.ObjectInfo) error) error {
+	return visit(storagecore.ObjectInfo{Key: prefix + "/file"})
+}
+
+// OpenObjectContext records the requested key on the returned stream metadata.
+func (streamingStorage) OpenObjectContext(_ context.Context, key string, _ storagecore.OpenObjectOptions) (*storagecore.ObjectReader, error) {
+	return &storagecore.ObjectReader{Info: storagecore.ObjectInfo{Key: key}}, nil
+}
+
+// PutObjectContext reports the explicitly supplied size.
+func (streamingStorage) PutObjectContext(_ context.Context, key string, _ io.Reader, options storagecore.PutObjectOptions) (storagecore.ObjectInfo, error) {
+	return storagecore.ObjectInfo{Key: key, Size: options.Size}, nil
+}
+
+// TestObservedObjectCapability verifies streaming discovery and observer forwarding through a generated decorator.
+func TestObservedObjectCapability(t *testing.T) {
+	var operations []string
+	var contexts []context.Context
+	observer := ObserverFunc(func(ctx context.Context, event StorageOpEvent) {
+		operations = append(operations, event.Operation)
+		contexts = append(contexts, ctx)
+	})
+	wrapped := wrapObservedStorage(streamingStorage{}, "test", "s3", observer)
+	capability := wrapped.(interface{ Objects() (storagecore.ObjectStorage, error) })
+	objects, err := capability.Objects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := objects.WalkObjectsContext(ctx, "test", func(info storagecore.ObjectInfo) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := objects.OpenObjectContext(ctx, "test/file", storagecore.OpenObjectOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := objects.PutObjectContext(ctx, "test/file", nil, storagecore.PutObjectOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(operations, []string{"walk_objects", "open_object", "put_object"}) {
+		t.Fatalf("observer operations = %v", operations)
+	}
+	for _, observed := range contexts {
+		if observed != ctx {
+			t.Fatal("observer lost explicit operation context")
+		}
+	}
+	unsupported := wrapObservedStorage(&trackedStorage{}, "test", "local", observer)
+	if _, err := unsupported.(interface{ Objects() (storagecore.ObjectStorage, error) }).Objects(); !errors.Is(err, storage.ErrUnsupported) {
+		t.Fatalf("unsupported Objects = %v", err)
+	}
 }
 
 func TestGeneratedAccessors(t *testing.T) {
@@ -257,7 +317,7 @@ func TestGeneratedAccessors(t *testing.T) {
 	}
 
 	runFixtureGoModTidy(t, root, nil)
-	runFixtureGoTest(t, root, "./internal/storages", "TestGeneratedAccessors", nil)
+	runFixtureGoTest(t, root, "./internal/storages", "^Test(GeneratedAccessors|ObservedObjectCapability)$", nil)
 }
 
 func TestGenerateStorageFilesUsesSupportedDriverImports(t *testing.T) {
