@@ -1,0 +1,4 @@
+interface:
+  display_name: "GoForj Library Creation"
+  short_description: "Build GoForj libraries with tested docs and drivers"
+  default_prompt: "Use $goforj-library-creation to build a standalone GoForj sibling library using the current repository conventions."

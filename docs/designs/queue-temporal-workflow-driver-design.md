@@ -2,11 +2,50 @@
 
 ## Status
 
-- Proposed architecture, not scheduled for a release.
-- This design replaces the assumption that Temporal requires a separate GoForj
-  component or sibling workflow library.
-- Phase 0 must prove state projection, lifecycle, and compatibility before the
-  framework exposes configuration or generators.
+- Target: a complete, ergonomic, flexible Temporal integration in queue, with
+  ordinary jobs, portable chains/batches, durable named continuations,
+  worker-independent state reads, and native SDK workflows in one supported
+  release. The user clarified this release scope on 2026-11-08.
+- Design is ready for full-scope implementation with the required proof stages
+  first, following fresh independent review and re-review across four scopes.
+- A/B/C are internal implementation stages. A jobs/native-only supported release
+  does not satisfy this design. Earlier A/B review approvals cover only those
+  stages and do not establish complete-scope approval.
+- The complete addition is not implemented or release-qualified. State-journal,
+  continuation atomicity, SDK lifecycle, and real-server integration evidence
+  remain mandatory before declaring it complete.
+- Keep one optional queue driver module, no parallel GoForj Workflows component
+  or sibling workflow library. Preserve existing-driver behavior and APIs.
+
+## Complete Release Contract
+
+The first supported Temporal driver release must deliver all of the following:
+
+| Surface | Required behavior |
+| --- | --- |
+| Ordinary jobs | Public `Queue.Dispatch`, existing handlers, payload bytes, middleware, correlation, explicit retry/timeout/delay policy, and lifecycle |
+| Portable workflows | Public `Chain` and `Batch`, sequential/fan-out execution, `AllowFailures`, exact documented aggregate semantics and bounded recovery |
+| Durable continuations | Named success, failure, progress, and completion jobs, stable invocation identities, immutable trigger snapshots, recovery, and observable exhaustion |
+| State reads | `FindChain`, `FindBatch`, and continuation outcomes before polling, while running, after worker loss, and for retained terminal histories |
+| Native Temporal | Real SDK client, registration, typed activities, signals/queries/updates, timers, children, continue-as-new, and supported versioning/options |
+| Ergonomics | One public Queue facade, one continuation binding helper, explicit ownership, useful unsupported-capability errors, and runnable examples |
+| Integration proof | Real Temporal server, separate producer/worker/read clients, crash recovery, replay/rollback, security, all relevant modules, and complete generated composition |
+
+No release gate may be passed by dropping portable workflows, calling named
+continuations optional, requiring a live worker for state reads, or presenting
+SDK unit tests as real-server evidence. Unsupported process-local closures and
+administrative operations without honest Temporal equivalents remain explicit
+capability limitations; they do not excuse omitting the durable alternatives.
+
+### Implementation Stages Versus Publication
+
+A may land as an independently reviewable queue refactor. B may implement job
+execution and native hosting behind development-only configuration. C completes
+portable coordination, state, and durable continuations. Publish and advertise
+the complete Temporal driver only after A, B, and C pass the combined acceptance
+suite. If a required proof fails, repair the design/implementation; do not
+silently narrow the release to B. Public APIs and durable protocol are frozen
+only after the bounded state-journal and continuation prototypes succeed.
 
 ## Review Record
 
@@ -25,7 +64,7 @@ result of the prior pass rather than the original proposal.
 | 8 | Modules, releases, and SDK compatibility | The optional module has its own tag and downstream resolution proof, and SDK selection cannot raise the minimum Go version silently |
 | 9 | Security boundaries | Direct workflow invocation, generic activity privilege, transport authentication, authorization, codecs, secrets, retention, and audit ownership have fail-closed requirements |
 | 10 | Registration homogeneity | Reserved durable names, local collision checks, deployment fingerprints, and mixed-version task-queue isolation are explicit |
-| 11 | Staged-release authority | The ordinary-jobs milestone declares portable workflows unsupported, preventing accidental fallback to the built-in coordinator |
+| 11 | Historical staged-release authority | Development-only ordinary-job execution declares portable workflows unsupported rather than falling back; the complete-release contract above supersedes the former partial-release plan |
 | 12 | Concurrency and routing | The first release has one activity task queue per resource, and multiple queues remain blocked until total capacity and fairness are proven |
 | 13 | Dispatch idempotency | Ambiguous starts reconcile the original history and immutable input, reject collisions, and never expose payload digests as visible metadata |
 | 14 | Workflow ID semantics | Running conflict, closed-run reuse, and already-started return behavior are set independently and explicitly |
@@ -35,9 +74,96 @@ The reviews found no reason to create a new top-level component or sibling
 library. They did find prerequisites that block an immediate implementation.
 Those prerequisites are represented below as Phase 0 decisions and release
 gates. An unproven gate disables the affected capability; it does not permit a
-silent behavior change. The final cumulative pass found no further major design
-change. Remaining uncertainty is implementation evidence that the gates require,
-not an unowned design decision.
+silent behavior change. The historical cumulative pass reported no further major design change. The
+subsequent comprehensive audit found additional design gaps, including an
+outdated transport premise, retention-bounded deduplication, and insufficiently
+specified native SDK integration. Review counts do not establish correctness.
+
+## Independent Review Passes
+
+Four separate reviewers independently inspected the design and relevant source:
+API/native integration, Temporal semantics, runtime/lifecycle, and security.
+The first pass found concrete gaps; it did not approve implementation closure.
+After those revisions, all four reviewers completed a second pass and reported
+no remaining architecture blocker to starting A, then scoped B implementation.
+The parent review reconciled their findings and retained the implementation
+acceptance gates. Recorded on 2026-11-08.
+
+| Independent review scope | First-pass outcome | Second-pass outcome |
+| --- | --- | --- |
+| Queue API and native SDK integration | Session/tuner capacity and fluent configuration conflicts required resolution | Ready for A, then B; public API and capability boundaries explicit |
+| Temporal semantics | Transport stability, total-attempt recovery, and zero-value policies required decisions | Ready for A/B; no SQL redelivery parity or experimental transport claim |
+| Runtime and lifecycle | Client-only cleanup and native activity routing required correction | Ready for A/B; ownership and routing closed at design level |
+| Security and operations | Pre-entry decoding, SDK logs, and opaque borrowed configuration needed contracts | Ready for A/B; bounded conversion, logging, and authoritative binding contracts explicit |
+
+The reviewed corrections are:
+
+| Finding | Design resolution |
+| --- | --- |
+| Standalone stability versus open transport comparison | Stable wrapper selected; experimental standalone APIs deferred |
+| Worker-loss consumes Temporal retry budget | Explicit total-attempt semantics, failure boundaries, and kill/restart tests |
+| Unset timeout/backoff and replay configuration drift | Required activity timeout, fixed/rounded intervals, resolved immutable start policy |
+| Native SDK session/tuner capacity | Rejected in initial support matrix; deferred fluent errors preserve API signatures |
+| Native default activity routing/local registration | Combined role default, persisted explicit split binding, correct role registries |
+| Client-only/unselected resources and failed construction | Resource cleanup for every queue plus reverse construction rollback |
+| Opaque borrowed client configuration | Module-produced immutable client binding and context-aware reconciliation |
+| Decoding before envelope validation | Bounded conversion/propagation contract and malformed-input tests |
+| SDK diagnostics bypass failure encryption | SDK logger policy and real-log sentinel tests |
+| Shutdown completion/deadlines | Own completion observation and retryable caller timeouts |
+| Production replay artifacts | Synthetic committed fixtures and restricted production capture process |
+
+Runtime experiments remain acceptance gates. Review approval means the
+implementation contract is sufficiently explicit to begin those stages, not
+that SDK/server behavior or release qualification has already been proved.
+These approvals were for the former narrower implementation stages. The user
+subsequently required the complete addition in one supported release. The
+complete-release contract, selected state journal, and mandatory continuations
+below supersede that partial-release plan and require a full-scope review.
+A remains an independently reviewable refactor; B remains an internal stage.
+No earlier review count or A/B approval is complete-release acceptance.
+
+## Complete-Scope Review Follow-Up
+
+After the user clarified the release target, the same four independent review
+scopes assessed the expanded design and its revisions. Their earlier A/B-only
+approval was not carried forward as complete-release approval. The follow-up
+resolved the previously optional state/continuation scope, chose the journal
+protocol and additive binding API, and specified actual batch/drain semantics.
+
+The final review findings were incorporated as explicit contracts: scheduled
+versus physical-running continuation status; interruption versus exhaustion;
+trusted parent/intent association and journal invariants; checked continuation
+amplification/history budgets; and compatible SQL outbox schema/rollout rules.
+The reviewers found the complete architecture coherent for implementation
+prototypes, subject to those corrections and the required empirical proofs.
+
+Implementation proceeds against the full target. Public API/protocol freeze
+still requires successful journal and atomic-continuation prototypes. Release
+requires the complete integration matrix. This record is design evidence only;
+no real-server, outbox, replay or full-composition pass is claimed here.
+
+## Fresh Complete-Design Review
+
+On 2026-11-08, four fresh sub-agents independently reviewed the complete design
+against queue, GoForj runtime sources and versioned SDK/server evidence. They
+were told to ignore historical review counts and approvals. A second pass
+reviewed the revised contract. This review covers the full release scope,
+not only the earlier ordinary-job/native-hosting stages.
+
+| Scope | First-pass findings | Reconciled outcome |
+| --- | --- | --- |
+| API and library integration | Missing SQL recovery-runner owner, unsafe pruning eligibility, circular publication gate | Runtime-hosted fenced runner, continuation-aware retention/prune and two-phase publication specified |
+| Temporal protocol | Memo values not checked by SDK replay, conflicting serial scheduling/atomicity, undefined reset branching | Semantic replay parity, atomic pending intents plus head-only scheduling, explicit unsupported portable reset |
+| Runtime and lifecycle | Jobs client could close during HTTP drain; SDK stop did not prove user-work quiescence | App-owned borrowed bindings, single stop arbiter, distinct stop/drain states and adapter admission/cleanup fencing |
+| Security | Pre-entry propagator panic could retry indefinitely, retained intent authority could disappear, direct starts could add retry/cron | Approved rejection adapters, protected authority lifetime and actual execution-policy validation |
+
+The second-pass reviews clear full-scope implementation with proof stages first.
+The runtime reviewer required the explicit stop/admission/adapter-drain caveats
+now incorporated above. No remaining architecture decision from these findings
+is left to an implicit fallback or a narrowed release. Public API/protocol freeze
+still requires the selected prototype proofs. No implementation, real-server
+integration, shutdown, replay, SQL recovery or publication result is claimed by
+this review record.
 
 ## Summary
 
@@ -52,25 +178,157 @@ The queue library already owns two related but distinct responsibilities:
    callbacks, recovery, testing helpers, and lifecycle events.
 
 Temporal can own both responsibilities when it is the selected driver.
-Ordinary queue jobs run as framework-owned, single-activity workflows. Chains
+The initial supported transport runs ordinary jobs as framework-owned,
+single-activity workflows. Standalone activities remain a future transport until
+the SDK marks the required APIs stable. Chains
 and batches use a driver-native workflow capability so Temporal owns their
 history, replay, and state transitions. Temporal must not implement
 `queue.WorkflowStore`.
 
 The integration has two levels:
 
-- Existing `queue.Chain` and `queue.Batch` operations may run through the
-  Temporal driver's native coordinator when their semantics can be preserved.
+- Existing `queue.Chain` and `queue.Batch` operations run through the
+  Temporal driver's native coordinator with the explicit portable contract
+  defined below; these are required for the complete release.
 - Applications may register native Temporal workflows for capabilities that
   cannot be represented by static chains and batches, including signals,
   updates, durable timers, child workflows, queries, and continue-as-new.
 
 Existing drivers continue to use queue's built-in workflow coordinator.
-Temporal initially declares portable workflows unsupported, then advertises a
-native workflow capability only when that implementation passes its release
-gates. Queue reads the explicit mode during construction. This keeps one driver
+An incomplete development build declares portable workflows unsupported.
+The supported release advertises native portable coordination only after the
+complete implementation passes its gates. Queue reads the explicit mode during construction. This keeps one driver
 selection and one orchestration authority per queue instance without hiding
 Temporal's programming model behind an inaccurate portable abstraction.
+
+## Comprehensive Audit
+
+Reviewed against queue revision `2e01ce48b1d61ae62042044656d7659f3c16cf24`
+and GoForj revision `2ce10b2ada1a814058dd19fd69c4b3588ca55cef`, plus the
+versioned SDK source and official Temporal documentation linked below. These
+revisions identify the source inspected, not released integration support.
+
+### Architectural Verdict
+
+Keeping the optional Temporal integration in queue is sound. Forcing Temporal
+applications through only `Chain`, `Batch`, and `queue.Message` would lose key
+functionality. The public portable API is a convenience subset, not the native
+Temporal programming model. Native SDK workflows must be an independently
+usable, documented path with the same resource configuration and lifecycle.
+Native API design remains independent of the portable facade, while the
+complete supported release requires both paths.
+
+The root queue abstraction remains small. The optional module is both a queue
+driver and a native SDK hosting integration. This is an intentional boundary,
+not a claim that every Temporal feature is portable across queue drivers.
+
+### Findings And Required Changes
+
+| Finding | Consequence | Design change |
+| --- | --- | --- |
+| Native access was described but not specified enough to establish feature preservation | A client alone cannot configure registrations, worker versioning, tracing, or typed result-producing activities | Require SDK client options, worker options, full registration options, and native acceptance scenarios |
+| Ordinary jobs were said to require a workflow wrapper | Temporal has standalone activities, but inspected SDK APIs remain experimental | Select the stable wrapper initially; reconsider standalone only with a stable supported API and migration review |
+| Reject-duplicate was treated as permanent protection | Closed executions stop protecting an ID after retention or deletion | Bound reconciliation to retained executions and prohibit automatic restarts when prior acceptance cannot be established |
+| Same-ID retry was implied through the current public API | Each ordinary, chain, and batch dispatch currently allocates fresh IDs | Separate internal RPC retry from a new public dispatch; leave cross-call idempotency to an explicit future contract or native SDK use |
+| Staging was confused with release scope | Narrow A/B approval did not cover the requested complete driver | Use internal stages, but require portable workflows/state/continuations and native SDK support together before publication |
+| Workflow validation could consult a live application registry | Changing process registrations can change replay decisions; dispatch-only producers may have no handlers | Keep replayed validation deterministic and distinguish a declared producer catalog from the worker execution registry |
+| SDK customization and injected-client ownership were unspecified | An advanced user could need a second client or worker just to regain SDK functionality, or suffer double close | Preserve native options with explicit ownership and validate only actual lifecycle/routing conflicts |
+| Observer uniqueness was underspecified | Stable IDs alone cannot guarantee exactly-once external publication around a crash | Keep telemetry best effort unless an independently proven delivery mechanism exists |
+| One worker count was described too broadly | Local activities and Nexus do not necessarily consume the same remote activity slots | Define the limit as remote activity concurrency per process and resource, with separate native budgets |
+| Cross-driver switching and native workflow upgrades were easy to conflate | Changing a driver does not migrate open histories or make native workflows portable | Require explicit draining, retained workers, and an operator-owned transition plan |
+
+### Native Capability Preservation
+
+| Temporal value | Portable queue path | Native path required from this module |
+| --- | --- | --- |
+| Durable history, retries, worker-loss recovery | Ordinary jobs and the proven chain/batch subset | SDK workflows and activities with their own policies |
+| Typed results and result-dependent branching | Existing queue handlers return only errors; chains do not pipe results | Native activities returning typed results and workflow futures |
+| Human approvals, entity workflows, signals, queries, validated updates | No portable equivalent | SDK message handlers and client APIs, including with-start operations |
+| Durable waits, timers, selectors, compensation, child workflows | Static chains/batches cover only a subset | SDK workflow APIs, cancellation scopes, and parent-close policy |
+| Long-lived execution and bounded history | Portable workflows remain bounded | Explicit continue-as-new with application-owned state and handler completion |
+| Deployment safety | Driver-owned protocol replay tests | SDK registration versioning behavior and worker deployment configuration |
+| Heartbeats, progress recovery, asynchronous completion | Ordinary queue handlers retain their established contract | SDK activity context, client completion APIs, and typed native activity registration |
+| Visibility and operational intervention | Queue capabilities only when their semantics match | SDK visibility, search attributes, history, cancel, terminate, reset, and Temporal Web |
+| Durable recurring starts | Existing GoForj scheduler remains independent | Native Temporal Schedule client with explicit schedule ownership |
+| SDK integrations and cross-service orchestration | No invented portable equivalents | Supported SDK interceptors, propagators, converters, metrics, and Nexus registration |
+
+Feature preservation means these capabilities are reachable through the selected
+SDK without another framework-owned workflow facade. It does not mean every
+feature is implemented or certified by this proposed driver. Each advertised
+native capability needs a tested SDK/server version and an executable example.
+Newer or experimental SDK features remain outside the tested support claim.
+
+Temporal's [Go message-passing guide](https://docs.temporal.io/develop/go/workflows/message-passing)
+provides the native interactive model. Its
+[continue-as-new guide](https://docs.temporal.io/develop/go/workflows/continue-as-new)
+and [child workflow model](https://docs.temporal.io/child-workflows) describe
+execution boundaries the static queue API cannot express. This audit therefore
+rejects any implementation that makes those features contingent on adding
+portable methods to the root queue package.
+
+### Initial Transport Decision
+
+Use a single-activity workflow for ordinary jobs in the initial supported
+Temporal driver. Evaluate SDK v1.45.0 against the selected server without
+increasing queue's Go 1.24.4 floor. Its module declares Go 1.24.0. Exact server
+image, SDK dependency closure, and lifecycle viability are Phase 0 evidence
+outputs; they cannot be guessed from the developer-service template.
+
+Standalone activities are a natural future mapping for ordinary queue jobs,
+but the versioned SDK client interfaces mark `ExecuteActivity` and
+`GetActivityHandle` experimental in both
+[v1.45.0](https://github.com/temporalio/sdk-go/blob/v1.45.0/internal/client.go)
+and [v1.49.0](https://github.com/temporalio/sdk-go/blob/v1.49.0/internal/client.go).
+The [official standalone guide](https://docs.temporal.io/develop/go/activities/standalone-activities)
+describes the capability, but a tutorial does not override SDK stability
+annotations. The v1.49.0
+[module manifest](https://github.com/temporalio/sdk-go/blob/v1.49.0/go.mod)
+also requires Go 1.26.0. That is a consumer toolchain cost, not the reason the
+initial stable portable transport excludes it.
+
+This settles the initial durable protocol. Benchmark wrapper overhead during
+Phase 0 and document its cost, but a faster benchmark cannot make an experimental
+API stable. Reconsider standalone transport only after selecting stable SDK and
+server APIs and reviewing identity, reconciliation, worker topology, security,
+observability, and migration of retained executions together. Do not negotiate
+transport automatically or silently change it in an existing driver release.
+Native callers deliberately using experimental SDK features are outside the
+integration's tested support claim.
+
+### Internal Implementation Stages
+
+| Stage | Required work | Publication rule |
+| --- | --- | --- |
+| A: construction seam | Existing-driver contracts, shared execution, typed options, explicit coordinator modes, compatibility-preserving continuation seam | May land independently as a queue refactor |
+| B: Temporal execution | Wrapper jobs, native SDK access, ownership, routing, lifecycle, security and SDK feasibility tests | Development-only Temporal integration |
+| C: complete portable workflows | Chains, batches, durable continuations, history-journal state reads, shared continuation-store capability and fake support | Required with A/B for the first supported Temporal release |
+| D: framework integration | Named resources, Wire, runtime host, developer services, docs/examples, dependency projection and complete composition | Enabled only against the complete qualified queue driver |
+
+These stages organize changes without splitting the requested product into
+separate promises. Native SDK access is developed early to prevent portability
+work from distorting the SDK model, while complete-release acceptance still
+requires portable coordination. No optional convenience generator substitutes
+for runnable native registration and public Queue examples.
+
+### Audit Evidence And Limits
+
+Queue `runtime.go` routes registration, ordinary dispatch, startup, and shutdown
+through `workflow.Engine`. `internal/driverbridge/bridge.go` adapts backend
+interfaces, and `runtime_hook.go` constructs the high-level queue afterward.
+`internal/workflow/runtime.go`, `chain.go`, and `batch.go` allocate identities
+inside each dispatch. `workflow_models.go` exposes error-only handlers and
+static stored job policy, establishing the portable abstraction's limits.
+
+The candidate SDK's [client contract](https://github.com/temporalio/sdk-go/blob/v1.45.0/internal/client.go)
+contains native with-start, history/service, Schedule, converter, propagator,
+and interceptor surfaces. Its [worker registry](https://github.com/temporalio/sdk-go/blob/v1.45.0/worker/worker.go)
+and [worker options](https://github.com/temporalio/sdk-go/blob/v1.45.0/internal/worker.go)
+provide the native registration and deployment seams to preserve. Source
+presence is not proof that every feature is stable or supported by the chosen
+server. Phase 0 must establish that support matrix.
+
+No Temporal driver exists in this checkout. This audit does not claim a running
+integration, benchmark result, replay proof, or production qualification.
 
 ## Existing Boundary
 
@@ -119,9 +377,9 @@ explicit three-state internal value, not a boolean capability check:
 
 An unspecified mode is valid only for existing driver descriptors migrated to
 the built-in default. A new driver must declare its mode. The ordinary-jobs
-Temporal milestone declares unsupported. It must never fall through to the
-built-in coordinator. The later portable-workflow milestone changes the mode to
-native only after its gates pass.
+development stage declares unsupported. It must never fall through to the
+built-in coordinator. Stage C changes the mode to native after its gates pass;
+that mode is mandatory for the complete supported release.
 
 The built-in and native coordinator paths use the shared registry and executor
 for application jobs. In native mode, `Chain`, `Batch`, `FindChain`,
@@ -306,23 +564,24 @@ inject an ambiguous unqualified `client.Client`.
 | `Delay(d)` | Durable timer before activity scheduling | Clean |
 | `OnQueue(name)` | Activity task queue | Initial release accepts only the instance default; multiple targets require shared-capacity proof |
 | `AllowFailures()` | Collect member failures without early workflow failure | Must pass aggregate and interleaving contracts |
-| Worker restart recovery | Temporal history replay | Clean |
-| `FindChain` and `FindBatch` | Workflow query or derived state projection | Must be proven |
+| Worker restart recovery | Workflow replay resumes orchestration; activity recovery requires remaining total attempt budget | Explicit Temporal driver behavior; not SQL same-attempt redelivery parity |
+| `FindChain` and `FindBatch` | Versioned history-journal reduction without workers | Required; queries alone cannot pass acceptance |
 | `Progress`, `Then`, `Catch`, and `Finally` closures | Process-local functions cannot be replayed | Not durable |
 | `UniqueFor` on individual jobs | No equivalent activity-level uniqueness contract | Not clean |
 | `WorkflowStore` mutation methods | Temporal owns history and transitions | Incompatible |
 | `Prune(before)` | Temporal retention and administrative deletion | Incompatible |
 | Queue middleware | Activity wrapper or Temporal interceptor | Must be proven |
-| Fake queue workflow assertions | Temporal test environment adapter | Separate test path |
+| Fake queue workflow assertions | Portable definitions, metadata and continuation outcomes | Domain tests; SDK and real-server tests remain separate |
 
 The Temporal driver must reject an unsupported option instead of silently
 changing its meaning.
 
 ## Ordinary Jobs On The Temporal Driver
 
-Temporal does not enqueue a standalone activity without workflow ownership in
-the same model used here. `Queue.Dispatch` therefore starts a framework-owned
-job workflow that executes one registered job activity.
+Under the compatibility baseline selected for evaluation above, `Queue.Dispatch`
+starts a framework-owned job workflow that executes one registered job activity.
+This is the selected stable integration policy for the candidate SDK/toolchain,
+not a universal Temporal limitation.
 
 ```text
 Queue.Dispatch(job)
@@ -352,8 +611,10 @@ Every framework-owned workflow start sets three options explicitly:
 - the client returns an already-started error instead of silently returning the
   existing run
 
-The driver must not permit an ordinary job, chain, or batch ID to start a second
-run, and it must not bypass reconciliation by accepting an existing run handle.
+The driver must reject duplicate starts while the original execution remains
+open or retained, and must not bypass reconciliation by accepting an existing
+run handle. This does not prevent administrative reset, which is a separate
+operator action rather than a dispatch retry.
 Application native workflows choose their own reuse and conflict policies
 explicitly and do not inherit this framework default invisibly.
 
@@ -397,6 +658,26 @@ explicit ambiguous error for the caller; the driver must not guess acceptance.
 That reduced-permission mode and its operational recovery procedure must be
 documented separately.
 
+Duplicate rejection is retention-bounded. Temporal's
+[workflow ID policy](https://docs.temporal.io/workflow-execution/workflowid-runid)
+checks retained closed executions; expiry or administrative deletion removes
+that protection. The driver must not claim permanent deduplication. A bounded
+internal retry must retain its original immutable request and identity. An
+operator reconciling an older ambiguous start must not submit another start
+when the original history is no longer available and prior acceptance cannot
+be determined. Return an unresolved outcome for application/operator handling;
+external business idempotency is required beyond the service retention window.
+
+The current public API does not accept a caller-selected dispatch ID. Queue's
+ordinary dispatch and its chain/batch builders allocate new IDs on each call.
+Calling `Dispatch` again, including on the same builder, is a new logical
+submission. Returning an ID beside an ambiguous error provides correlation, not
+a portable same-ID retry API. The driver may retry/reconcile the original
+request internally within its bounded call. Cross-call or post-restart safe
+resubmission needs a separately designed additive contract; it must not be
+implied by this design or implemented by hashing application payloads. Native
+applications can instead use the SDK's explicit ID and conflict/reuse policies.
+
 ## Portable Chain And Batch Workflows
 
 The Temporal integration may register two framework-owned workflow types:
@@ -420,43 +701,93 @@ start QueueChainWorkflow with chain ID
           └── execute registered job activity C
 ```
 
-The adapter must translate policy deliberately:
+The adapter must use the following explicit policy rather than inherit SDK
+or service defaults. It stores original queue policy and resolved Temporal
+policy separately in the immutable start envelope. Replay reads resolved policy
+from that envelope, not current process configuration.
 
-- Queue retry counts retries after the initial attempt. Temporal maximum
-  attempts includes the initial attempt. The adapter must always set the
-  maximum because Temporal otherwise permits unlimited activity retries.
-- Queue backoff is a fixed duration where supported. Temporal defaults to an
-  exponential coefficient, so parity requires a coefficient of `1`.
-- Queue timeout is an execution-attempt boundary. The closest Temporal
-  activity boundary is start-to-close timeout. Temporal requires at least one
-  activity execution timeout, while queue permits an unset timeout. The
-  Temporal coordinator therefore needs a documented engine default and must
-  not inherit an arbitrary SDK or server default.
-- Queue delay should use workflow time, never `time.Sleep` inside replayed
-  workflow code.
-- A job queue name can select an activity task queue. The workflow task queue
-  remains separate configuration because workflow and activity pollers have
-  different operational roles.
+| Input | Initial Temporal driver policy |
+| --- | --- |
+| Unset retry or `Retry(0)` | `MaximumAttempts=1` |
+| `Retry(n)` for positive n | `MaximumAttempts=n+1`; reject values that overflow the SDK field before acceptance |
+| Unset backoff or `Backoff(0)` | Fixed one-second interval |
+| Positive backoff | Round up to whole seconds, with minimum one second; set coefficient `1` and matching maximum interval |
+| Unset timeout or `Timeout(0)` | Resolve from required positive `temporalqueue.Config.DefaultActivityTimeout` |
+| Positive timeout | Start-to-close timeout, rounded up to whole seconds |
+| Unset delay or `Delay(0)` | No workflow timer |
+| Positive delay | One deterministic workflow timer before the first activity, rounded up to whole seconds |
+
+`DefaultActivityTimeout` must be at least one second and representable by the
+SDK. Construction requires this setting even if current callers supply their
+own job timeouts. GoForj must project an explicit value into each Temporal
+resource rather than invent a hidden framework default. Root, named, and
+App-prefixed environment key spelling is a generator-contract output. Zero
+never means unlimited Temporal execution. The one-second minimum/rounding is a
+driver policy, not a claim that every Temporal API has that resolution. Native
+SDK workflows retain their own timeout, timer, and retry policies.
+
+`Retry(n)` on this driver bounds total Temporal activity attempts, including
+worker-loss and heartbeat/start-to-close timeouts. This deliberately differs
+from SQL queue stale-claim recovery and `busruntime.Uncommitted`, which can
+redeliver without consuming an application attempt. At `Retry(0)`, losing the
+worker after an activity starts can leave that activity terminally failed
+without another handler invocation. Workflow replay still recovers orchestration
+state; it does not replenish an exhausted activity budget. Documentation must
+not promise unconditional job recovery, SQL redelivery parity, or at-least-once
+handler invocation under every bounded-failure scenario.
+
+The initial generic executor supports ordinary handler errors and permanent
+errors. An application/middleware `busruntime.Uncommitted` outcome is unsupported
+by this driver and becomes a sanitized non-retryable unsupported-outcome failure;
+it must not be silently interpreted as budget-free redelivery or allowed to
+loop indefinitely. This limitation applies only to the new driver. Existing
+drivers keep their established outcome classification. Apply the Temporal
+unsupported-outcome translation before shared retry/settlement observers classify
+or publish the result. Do not change `busruntime.ClassifyAttempt` globally or
+let the old built-in coordinator emit a conflicting redelivery fact first.
+Contract tests cover the full handler, middleware, translation, and observer
+path. A different logical versus infrastructure retry model would require its
+own design and proof, not an extra retry loop behind the current policy.
+
+Native queue handlers see `Attempt=TemporalAttempt-1`, explicitly the total
+Temporal delivery-attempt index for this driver. Milestone C must prove the
+portable workflow contract accepts this documented driver distinction, or stay
+unsupported. It must not claim full existing-driver parity by narrowing the
+contract silently.
+
+Queue delay uses workflow time, never `time.Sleep` in replayed workflow code.
+`OnQueue` selects the declared activity queue; workflow and activity roles
+remain distinct even when they use the same default task queue name.
 
 Framework-owned workflows must not add a second automatic retry layer around
 activity retries. Ordinary job, chain, and batch workflow executions use no
 workflow-level retry policy unless queue later defines one independently. The
-activity retry policy alone implements `Retry` and `Backoff`; otherwise one
-exhausted activity could cause the entire workflow to run again and exceed the
-queue retry budget.
+activity retry policy alone implements the documented total-attempt bound
+and `Backoff`; otherwise one exhausted activity could cause the entire workflow
+to run again and exceed that bound.
 
-Batch failure behavior needs an interleaving contract. The built-in coordinator
-dispatches members independently and marks the aggregate cancelled after the
-first terminal failure when `AllowFailures` is absent. Work already accepted by
-a backend can still race with that state transition. A Temporal workflow must
-define whether already-started activities are requested to cancel, allowed to
-finish, or ignored after aggregate cancellation, then prove the resulting
-handler calls, counters, callbacks, and events match the established queue
-contract. It must not rely on Temporal's default scope-cancellation behavior.
-Temporal delivers activity cancellation through heartbeats, so a cancellation
-claim must also define whether the generic queue activity emits framework
-heartbeats and at what cost. The driver cannot imply prompt cancellation for a
-handler that does not participate in that mechanism. See the
+Batch behavior follows the existing aggregate contract. Schedule every bounded
+member before awaiting results. On the first terminal member failure without
+`AllowFailures`, set public `Cancelled=true` and `Completed=true` immediately,
+while retaining `Pending>0` for members not yet settled. Do not cancel already
+accepted activities or discard their results. They continue executing and
+updating `Processed`, `Pending`, and `Failed`. With `AllowFailures`, completion
+occurs after every member settles, with `Cancelled=false` even when `Failed>0`.
+
+Portable aggregate completion and Temporal execution completion are different.
+The Temporal workflow remains open until all admitted members and durable
+continuation attempts settle. First failure must not return from the workflow
+and strand remaining activities. Workflow-level failure is reported only after
+that drain, using a safe aggregate outcome; continuation exhaustion remains a
+separate recorded outcome. Explicit operator cancellation/termination is a
+different interruption path and cannot promise remaining business side effects.
+
+Within an activation, collect all ready member outcomes and apply them in a
+stable declared order (input member index), assigning monotonic transition
+sequences. The journal records the actual resulting order. Named continuation
+triggers use that order; replay must not depend on Go map or selector order.
+Cancellation delivery through heartbeats remains cooperative and must not be
+advertised as prompt interruption of a nonparticipating handler. See the
 [Temporal activity timeout and heartbeat contract](https://docs.temporal.io/develop/go/activities/timeouts).
 
 Every selected activity task queue must have a known local poller or be marked
@@ -474,7 +805,8 @@ contract rather than claim behavior that queue does not currently normalize.
 The shared job executor must reconstruct the same `queue.Message` correlation
 fields for a Temporal activity that a physical queue worker supplies. Temporal
 activity attempts are one-based; queue attempts are zero-based. The adapter
-must translate the number before middleware, handlers, or observers see it.
+exposes total Temporal attempt index minus one before middleware, handlers, or
+observers see it. This is not SQL's infrastructure-redelivery index.
 
 Error translation must be bidirectional and tested:
 
@@ -484,7 +816,7 @@ Error translation must be bidirectional and tested:
 | ordinary handler error with retry budget | retryable application failure |
 | `queue.Permanent(err)` | non-retryable application failure |
 | exhausted queue retry budget | final activity failure |
-| handler panic | failure with an explicitly documented retry policy |
+| handler panic | Sanitized application failure under the configured total activity-attempt budget; no implicit unlimited retry |
 | canceled handler context | cancellation only when workflow cancellation owns it |
 | infrastructure uncertainty before acceptance | start failure, not workflow failure |
 
@@ -520,7 +852,7 @@ the existing backends.
 | `WithHandlerContextDecorator` | Supported around activity handler execution |
 | `WithStore` | Rejected because Temporal is the workflow state authority |
 | `WithClock` | Rejected for production execution; SDK workflow time and test-environment time remain authoritative |
-| constructor `WithWorkers` and `Queue.WithWorkers` | Total application activity concurrency for the queue instance; multiple activity task queues require the shared-capacity gate |
+| constructor `WithWorkers` and `Queue.WithWorkers` | Total remote activity concurrency per process and queue instance; local activity and Nexus budgets are separate; multiple activity task queues require the shared-capacity gate |
 | `WithLegacyDirectEnvelope` | Rejected because it selects an obsolete physical-delivery envelope rather than a Temporal execution contract |
 | `WithContext` | Supported for client calls; cancellation after acceptance does not cancel the workflow |
 | `Driver` | Returns `temporal` |
@@ -528,7 +860,7 @@ the existing backends.
 | `StartWorkers` and `Run` | Start the instance's workflow and activity pollers as one lifecycle unit |
 | `Shutdown` | Drains and stops pollers, then closes the client within the supplied context budget |
 | `Ready` | Supported with distinct client and worker states |
-| `Chain` and `Batch` | Dispatch returns unsupported in the ordinary-jobs milestone; native coordination is enabled only after portable workflow gates pass |
+| `Chain` and `Batch` | Dispatch returns unsupported in the internal ordinary-job stage; native coordination is enabled only after portable workflow gates pass |
 | `ListJobs` | Unsupported; visibility results do not satisfy the existing job listing contract without a proven adapter |
 | `RetryJob` | Unsupported; workflow reset and activity retry are not the existing job retry operation |
 | `CancelJob` | Unsupported until the ordinary dispatch identity and cancellation settlement contract are proven |
@@ -544,12 +876,19 @@ the existing backends.
 Temporal needs separate workflow-task and activity-task concurrency settings.
 The established worker option controls concurrent application job execution,
 so the Temporal driver maps it to total concurrent activity execution across
-the queue instance, not a value repeated for every task queue. Workflow-task
+the queue instance, not a value repeated for every task queue or a fleet-wide limit. Native remote
+activities on those workers share the configured slots. SDK local activities
+and Nexus work have separate budgets and must not be included in this claim.
+Milestone B rejects SDK `Tuner` and `EnableSessionWorker` settings at
+construction. Sessions create additional internal task queues and separate
+activity slots, so they are outside the initial capacity/routing claim. A later
+session/tuner capability requires a reviewed budget, routing, and versioning
+contract; preserving SDK options does not imply every combination is supported. Workflow-task
 poller count and concurrency belong in `temporalqueue.Config` because they do
 not represent additional application job handlers. Both values must have
 documented defaults and bounds.
 
-The ordinary-jobs milestone supports one activity task queue per queue resource.
+The internal ordinary-job stage supports one activity task queue per queue resource.
 Additional isolation uses existing named queue resources. Multiple activity
 task queues within one Temporal instance remain disabled until Phase 0 proves a
 fair shared-capacity implementation that preserves the total `WithWorkers`
@@ -558,80 +897,325 @@ schedule-to-start or start-to-close timeouts while waiting for a local slot, and
 cannot starve a low-volume task queue. Repeating the configured worker count for
 each SDK worker is not acceptable.
 
-Every unsupported constructor option must fail during construction. Every
+The root queue currently has admin-specific unsupported errors but no general
+workflow-coordinator unsupported error. Milestone A must add a small domain-neutral
+error contract for unsupported workflow operations, with `errors.Is` tests; do
+not pretend an existing sentinel already covers this case. Existing driver
+behavior remains compatible. Generated Temporal providers must not inject the
+built-in workflow store or clock implicitly and then trigger their rejection.
+
+Every unsupported constructor option must fail during construction. The
+existing `Queue.WithWorkers` fluent signature is preserved: invalid changes
+that cannot be reported immediately are retained as configuration errors and
+reported by `StartWorkers` before any poller starts. A late worker-count change
+must not silently retune a running SDK worker; record the conflict so readiness
+and the next error-returning lifecycle operation report it. Existing drivers
+retain their current worker-count behavior. Every
 unsupported job or workflow option must fail before the service accepts an
 execution. A post-construction operation with an error return must return its
 established unsupported-capability error. Capability helpers must report the
 same result as the operation.
 
-## Callback Migration
+## Durable Continuations And Ergonomics
 
-The existing fluent callbacks hold Go closures in process memory. The queue
-library documents them as ephemeral, and its roadmap already calls for named
-durable continuations.
+Named continuations are required, consistent with queue's existing D-007
+roadmap. Existing closure callbacks remain explicitly ephemeral on existing
+drivers. Temporal rejects closure-bearing workflows before acceptance. Durable
+named jobs provide the supported alternative in the first complete release.
+Observers never schedule continuations or control state.
 
-Temporal cannot persist or replay those closures. The Temporal driver must not
-present them as durable simply because the enclosing workflow is durable.
+### Compatibility-Preserving API
 
-Before portable chains and batches claim Temporal parity, queue should provide
-named continuations for the durable cases:
+`ChainBuilder` and `BatchBuilder` are exported interfaces. Do not add required
+methods to them, change `Queue.Chain`/`Batch` return types, or silently break
+external builders and mocks. Add one domain-neutral binding helper and a
+concrete continuation builder. Proposed API, not an existing executable example:
 
-```text
-chain failure     -> named job or activity
-chain completion  -> named job or activity
-batch progress    -> named job or activity
-batch success     -> named job or activity
-batch failure     -> named job or activity
-batch completion  -> named job or activity
+```go
+workflowID, err := queue.Continue(q.Chain(first, second).OnQueue("reports")).
+    OnFailure(queue.NewJob("reports:failed").PayloadJSON(report)).
+    OnCompletion(queue.NewJob("reports:finished").PayloadJSON(report)).
+    Dispatch(ctx)
 ```
 
-Until that API exists, dispatching a Temporal-backed chain or batch with a
-closure callback must fail before starting the workflow. Silently dropping the
-callback or retaining it only in the starting process would create a false
-durability promise.
+The same helper accepts a configured batch. It exposes `OnSuccess(Job)`,
+`OnFailure(Job)`, `OnCompletion(Job)`, and batch-only `OnProgress(Job)`; repeated
+calls append jobs in declaration order. The existing builder is configured
+before binding. An internal queue-owned capability provides the immutable
+workflow definition, so unsupported custom builders fail at `Dispatch` before
+any acceptance. Mixed ephemeral closures and named hooks on the new wrapper
+also fail there. Existing closure-only behavior on existing drivers is unchanged.
 
-## Workflow State
+Keep each configured Job's type, payload bytes, queue and policy intact. Add
+`Message.Continuation() (Continuation, bool)` as a domain-neutral accessor for
+stable invocation identity, parent correlation, phase/sequence, and an immutable
+safe trigger summary. It does not replace the application's Job payload with a
+new envelope. Trigger summaries omit unrelated node payloads; handlers needing
+full state use an authorized injected read service. Add
+`Queue.FindContinuations(ctx, workflowID)` for pending, scheduled, succeeded,
+exhausted and interrupted invocation outcomes, safe failure categories and
+timestamps, with no Temporal SDK types. Return triggered durable intents only;
+untriggered hook definitions are not phantom pending invocations. Scheduled
+means durably scheduled and unsettled, not proof that a remote handler has
+physically started. Administrative interruption is not retry exhaustion.
+Fakes separately record definitions, invocation metadata and outcomes.
 
-Temporal history is authoritative for a Temporal-backed execution. Queue must
-not mirror imperative transitions into a `WorkflowStore` and then attempt to
-keep two sources of truth synchronized.
+### Trigger And Ordering Contract
 
-The portable workflows should maintain deterministic `ChainState` and
-`BatchState` values and expose them through registered Temporal query handlers.
-Phase 0 must prove that the existing `FindChain` and `FindBatch` expectations
-can be met for:
+| Hook | Durable trigger |
+| --- | --- |
+| Chain success | All business nodes succeed |
+| Chain failure | The first terminal business-node failure |
+| Batch failure | First terminal member failure, including with `AllowFailures` |
+| Batch success | Aggregate `Completed && !Cancelled`, matching existing `Then`; allowed member failures can coexist with this hook |
+| Batch progress | Each first committed member outcome, success or failure, never each retry |
+| Completion | First aggregate terminal transition, not physical execution drain |
 
-- running executions
-- completed executions retained by the namespace
-- worker restart and history replay
-- unknown workflow IDs
-- unavailable workers
-- continued-as-new executions where applicable
+Record each trigger's immutable snapshot at its transition. For one batch
+transition, append progress intents first, then first-failure/success intents
+as applicable, then completion intents. Within a hook use declaration order.
+Drain the continuation ledger in that deterministic order. Business-result
+collection continues through SDK workflow concurrency while a continuation is
+waiting; it must not stop updating admitted members' outcomes. Exhaustion of one
+continuation is recorded and does not suppress later completion work or rewrite
+the parent's business counters. Public aggregate state can be terminal while
+continuation outcomes are still pending or scheduled.
 
-The returned values must preserve every existing field, including dispatch ID,
-queue, node and job IDs, stored job policy, batch name, counters, failure text,
-and created and updated timestamps. Workflow time supplies timestamps while
-workflow code is executing. Wall-clock reads inside workflow code are not
-allowed. Unknown IDs must map to `queue.ErrWorkflowNotFound`; service,
-authorization, history-decoding, and worker-availability failures must remain
-distinguishable from not found.
+Persist definitions and resolved policies in the initial workflow input.
+Invocation identity includes resource/namespace, parent workflow lineage and
+DispatchID, phase, triggering transition/member, and declared job index. Activity
+retries retain that identity. Parent/workflow retry and administrative reset
+semantics must not produce a false exactly-once side-effect promise. Handlers
+receive a stable idempotency key and remain responsible for idempotent external
+effects; replay alone must not create an extra logical continuation intent.
+Every continuation has bounded attempts/timeouts under the same explicit
+Temporal policy as other registered jobs.
 
-If queries cannot satisfy the established availability contract, a derived
-read model may be added. It must be explicitly non-authoritative, rebuildable
-from Temporal history, and never participate in workflow transition ownership.
-The driver must not claim portable state-read support if an active compatible
-worker is required but the existing queue store could answer the same read
-without one. A server-side history decoder or derived projection is required
-for that case, and its upgrade compatibility must be tested with retained old
-histories.
-If neither queries nor a derived read model can preserve the documented read
-contract, Temporal cannot ship as a drop-in coordinator for `Chain` and
-`Batch`. Native Temporal workflow support may still proceed independently.
+### Commit Boundary And Existing Coordinators
 
-Temporal retention replaces queue workflow pruning. `Queue.Prune` should
-return an explicit unsupported-capability error for Temporal-backed executions
-unless a safe and permission-aware translation is proven. Namespace retention
-must remain an operator decision.
+Temporal atomically records the parent transition and all newly triggered
+pending intents in one successful workflow-task commit. It schedules only the
+eligible ledger head: that head's scheduled delta and activity command commit
+together, in the same task if ready or a later task otherwise. Later heads are
+scheduled only after predecessor settlement. Do not schedule every pending hook
+at once and claim serial handler execution. Its execution stays open until all
+admitted business activities and the ledger settle. Record pending, scheduled
+and settlement deltas without observer delivery or mark-before-invoke claims
+as durability evidence.
+
+For existing built-in coordination, implement an additive store capability for
+atomic workflow transition plus continuation intents/outbox rows. Preserve the
+existing `WorkflowStore` interface. A custom store lacking that capability
+rejects named continuation dispatch before acceptance; it must not commit state
+and then try an untracked enqueue. Memory mode is explicitly process-local.
+SQL durable mode commits intents with the parent transition and recovers their
+publication after process death. SQLite, MySQL, and PostgreSQL integration tests
+must prove atomicity and recovery. This shared capability is a prerequisite for
+publishing the new root helper, not a Temporal-only public API.
+
+Continuation schema ownership follows the store's existing auto-managed versus
+externally managed mode. Automatic mode adds versioned continuation/outbox
+relations without changing established rows. Managed mode performs no DDL and
+validates the continuation capability before accepting named-hook workflows.
+Do not require new tables merely to keep existing closure-only workflows or
+ordinary store operations working. Custom stores lacking the capability retain
+all existing behavior while rejecting the new durable binding before acceptance.
+
+Roll out capable workers and the continuation schema before producers emit the
+new durable envelope. Old workers must not consume or misinterpret new
+continuation deliveries. Before rollback to an incapable binary, stop new named
+workflows and drain/complete or explicitly migrate their outstanding intents
+and invocations; retain additive tables and protocol-decoding workers as needed.
+This is an operational/schema and new-envelope rollout, not a change to the
+existing WorkflowStore source contract. Test old-schema upgrades, managed
+no-DDL behavior, worker/producers order and rollback across SQLite/MySQL/Postgres.
+
+### Built-In Recovery Runner And Retention
+
+The built-in coordinator owns continuation state/outbox operations, not physical
+worker lifecycle. A queue resource's shared runtime hosts its selected
+coordinator's continuation runner as an explicit lifecycle participant. Temporal
+uses workflow tasks as that runner and creates no separate SQL recovery process.
+Built-in durable stores use one resource-scoped recovery runner per active
+consumer process; multiple processes compete safely through leased, fenced
+store claims. Dispatch-only producers do not need a runner.
+
+After physical workers start, the shared runtime starts this runner and rolls
+back the worker start if runner startup fails. It scans committed eligible
+intents even when no original business delivery survives. Store operations
+atomically claim the next ordered invocation, confirm publication, record
+settlement, and release a successor. They include resource identity, stable
+invocation identity, lease generation and expiry; stale owners cannot settle
+or advance a newer claim. The recovery loop is bounded and backs off on
+transient errors. Fatal runner errors reach `Queue.Run` alongside physical
+worker errors; readiness reflects a failed runner.
+
+The publisher uses the internal canonical dispatch seam with the preallocated
+invocation metadata, not a new public `Queue.Dispatch` call that allocates
+another identity. Ambiguous enqueue retries keep that invocation identity.
+Delivery checks the authoritative parent intent and claim before application
+code, and commits the outcome through the store capability before releasing
+the next ledger head. Duplicate publication can still produce duplicate
+physical deliveries and effects around acknowledgement loss; invocation keys
+and idempotent handlers remain necessary. Observers do not acknowledge intents.
+
+On shutdown, stop new recovery claims, finish or release in-flight publication,
+drain admitted handlers/settlement within budget, then stop the runner and
+physical runtime. Leases permit another process to recover abandoned work.
+Never wait for every global outbox item to finish before stopping one process.
+Prototype concurrent runners, lost enqueue responses, lease expiry, publisher
+crash with no surviving business delivery, ordered settlement and fatal errors
+before freezing the additive store capability.
+
+For named-hook workflows, business-terminal flags alone never establish prune
+eligibility. Retain the parent definition, admitted member state, trigger
+snapshots, intents and association/deduplication authority until business drain
+and every continuation settles or is explicitly interrupted. Then retain the
+necessary redelivery/recovery authority through the declared backend horizon.
+If no finite safe horizon is configured/proven, do not automatically discard
+that authority; require an explicit quiescent cleanup policy. Document the
+storage and sensitive-data retention cost.
+
+Prune related parent, member, intent, outcome and receipt records atomically
+only when that eligibility is established under the same store synchronization
+as claiming and settling. A claim, late member outcome, retry or unsettled
+publication prevents pruning. Preserve the established pruning behavior for
+workflows without named hooks. Rollback and old binaries must not run an
+incompatible pruning path while named obligations remain. Race prune with
+publication, acknowledgement, late settlement and rollback on all SQL dialects.
+
+## Worker-Independent Workflow State
+
+Select a versioned, history-derived state journal as the authoritative read
+path. Do not depend on live query workers, eventual visibility, a second
+workflow database, or replaying application functions in a read process.
+The same pure transition reducer builds in-workflow state and external reads.
+Queries may be a diagnostic optimization but cannot change the public contract.
+
+### Journal Protocol
+
+The initial accepted envelope contains complete original definitions, IDs,
+metadata, continuation specs, original Job policy, resolved Temporal policy,
+and a protocol version. It supplies initial state immediately after start,
+before any workflow task is polled. Never replace original stored Job policy
+with rounded Temporal values in `ChainState.Nodes`.
+
+Persist compact versioned transition deltas through public SDK
+`workflow.UpsertMemo` under one reserved key. Read the ordered
+`WorkflowPropertiesModified` history events and their workflow-task commit
+association, not the current `Describe.Memo` value. SDK v1.45 exposes
+[UpsertMemo](https://github.com/temporalio/sdk-go/blob/v1.45.0/workflow/workflow.go)
+without an experimental annotation and requires server support from 1.18.
+The selected server still needs explicit compatibility and real-server proof.
+
+A delta contains a monotonic sequence, protocol version, opaque member or
+continuation identity, transition kind, safe outcome category, and workflow-time
+timestamp. It contains no raw job payload, arbitrary handler error, credential,
+or personal data. One delta is constant-sized; do not copy the entire chain
+into every event. Only committed workflow-task deltas advance public state;
+raw activity-completion events alone do not advance it. Workflow replay consumes
+the existing history without repeating business handlers or creating new
+logical deltas. Upsert failures are framework errors, never silent state loss.
+
+A required prototype must prove multiple updates to the same memo key within
+one workflow task retain separate ordered history events, command/intent
+atomicity, worker death before commit, pagination, old histories, and approved
+converter/context/codec behavior. Do not substitute private SideEffect marker
+layouts or a new authoritative database if this proof fails; revisit the design
+before implementing the dependent protocol.
+
+SDK replay is necessary but insufficient for journal compatibility. In the
+candidate SDK, replay matching of ModifyWorkflowProperties verifies the event
+type without comparing memo contents. A worker-code change can therefore alter
+legal deltas while retaining the same command count and pass ordinary SDK
+replay. Add semantic replay fixtures that capture every regenerated delta and
+compare decoded keys, fields, sequence, snapshot/intent identities and ordering
+to the committed history. Include a negative control that changes a delta with
+the same command count and must fail qualification. The in-workflow reducer,
+external history reducer and expected public state must agree at each commit.
+Do not infer protocol safety from SDK replay success alone.
+
+### Public Field And Consistency Contract
+
+| Field | Source and semantics |
+| --- | --- |
+| IDs, queue, batch name/failure policy, chain nodes and original Job policy | Immutable accepted envelope |
+| Chain `NextIndex` | Number of committed successful nodes |
+| Chain `Completed` | All business nodes succeeded |
+| Chain `Failed` / `Failure` | First committed terminal node failure; Completed remains false; Failure is bounded safe category/text, not arbitrary `Error()` preservation |
+| Batch `Total`, `Pending`, `Processed`, `Failed` | Initial members plus each first committed member settlement; Processed includes successes and failures |
+| Batch `Completed`, `Cancelled` | First-failure/AllowFailures contract above; terminal aggregate may still have pending members |
+| `CreatedAt` | Timestamp fixed in accepted input |
+| `UpdatedAt` | Last committed portable state-transition workflow time, not SQL physical-start/retry touch timestamps |
+| Continuation outcomes | Triggered committed intent/scheduling/settlement deltas; untriggered definitions are not invocations |
+
+Resolve the exact RunID and a history watermark, then reduce one bounded history
+prefix for that run. Include only complete committed journal records through
+the watermark; never splice history from different runs. Return the latest
+fully committed portable state in that prefix, without claiming a transaction
+with concurrent external side effects. Bound pages, total encoded/decoded bytes,
+work and deadline. If limits or decoding fail, return an explicit error, not
+partial or invented state. Any read cache is non-authoritative and isolated by
+cluster, namespace, resource, run lineage, protocol and serialization policy.
+Validate workflow type, envelope version, strict transition sequence, member
+membership, legal state transitions, counter invariants and continuation phase
+association. Reject missing/duplicate/out-of-order sequences, unknown transition
+kinds or member/specification IDs, duplicate settlement, impossible phase changes
+and contradictory counters. Unknown or contradictory journal records are protocol errors,
+not permission to skip records or execute compensating application work.
+
+Bounded portable workflows do not continue as new in this release. Native
+workflows retain continue-as-new independently. For operator cancellation,
+termination, or execution timeout before business completion, expose an explicit
+safe interruption outcome: chain Failed=true/Completed=false, or batch
+Completed=true/Cancelled=true with actual committed counters retained. If the
+business aggregate was already terminal, do not rewrite it when continuation
+drain is interrupted; report interruption in continuation outcomes. Never
+fabricate completion of pending members or continuation side effects.
+
+Unknown or expired/deleted histories map to `ErrWorkflowNotFound` when the
+service confirms absence; permission denial, unavailable service, unexpected
+workflow type, unsupported protocol, partial history and unavailable keys remain
+distinct. Reads are resource/namespace-bound authorized decryption surfaces:
+`FindChain` legitimately returns the original stored payloads. Preserve those
+fields for authorized callers while redacting diagnostics; application-facing
+HTTP authorization remains the application's responsibility. Reads never invoke
+handlers, continuations, observers, or workflow commands.
+
+Retention remains operator-owned. `Queue.Prune` returns unsupported for
+Temporal rather than deleting execution history to imitate store pruning.
+
+### Portable Run Identity And Administrative Reset
+
+The first supported portable protocol uses one initial run: no workflow retries,
+cron starts, continue-as-new or administrative reset. Native application
+workflows retain their SDK reset/versioning behavior independently. A privileged
+operator can still force server operations outside the portable contract; the
+module does not claim to prevent arbitrary administration.
+
+For portable reads, resolve the current execution once, pin its exact RunID,
+and compare that run with the service's first-execution-run identity. Require
+the initial-run relationship and workflow attempt before reduction. If a reset
+has created a new run, return an explicit unsupported-recovery-mode error;
+do not silently select an older branch, merge histories, reuse its current
+memo, or report the branch as ordinary retained state. Existing-run replay
+without a reset remains supported.
+
+Portable generic activities and continuation validation likewise verify actual
+parent/run association from service history. A reset-created branch is not an
+approved parent and must not invoke application handlers. Workers and producer
+credentials should not receive reset/cron administration permissions. Document
+that an unsupported reset branch must be terminated or handled by an explicit
+operator migration, not retried by queue. Already-running old activities may
+still have effects; no reset or cancellation promise implies undo or exactly
+once. Invocation identity uses the original parent DispatchID and initial
+service run identity, not an ambiguous latest-run alias. Any future portable
+reset support requires a separate branching/idempotency/intent design.
+
+Test SDK-issued resets before/after intent scheduling and settlement: reads
+report the explicit mode error and new-branch activity validation rejects
+execution. Keep native-reset acceptance tests separate. Do not silently accept
+new branches because normal workflow-ID start reuse is reject-duplicate.
 
 ## Native Temporal Workflows
 
@@ -650,6 +1234,101 @@ GoForj should generate registration and safe file placement, not a second SDK.
 Workflow functions receive `workflow.Context` and no injected I/O dependencies.
 Activities receive ordinary `context.Context` and dependencies through Wire.
 
+### Native SDK Integration Contract
+
+Native applications receive the actual resource-scoped `client.Client` and SDK
+registration interfaces. Preserve `client.Options`, SDK workflow/activity
+registration options, and role-specific `worker.Options` through the optional
+module. Do not reduce this to an environment-only list of settings or a custom
+start/signal/query facade. SDK client methods remain available subject to the
+process credential's permissions; using them does not imply administrative
+privileges are granted by default.
+
+The integration must establish these ownership rules before construction APIs
+are finalized:
+
+- A module-created client is owned and closed once after all its workers stop,
+  including when no worker ever started. Borrowing requires a module-produced
+  client binding with private immutable namespace, converter, failure-converter,
+  propagator, and logger-policy configuration captured from its SDK options.
+  The binding factory creates the actual client; Milestone B does not accept an
+  arbitrary opaque `client.Client` plus separately claimed settings. One owner
+  closes the binding after every borrower stops. Native consumers receive its
+  actual SDK client and never close it. Generated providers expose that same
+  configured client, not a second dial with divergent serialization settings.
+  Queue construction rejects namespace/configuration conflicts with its binding.
+  Original-history decoding uses the binding's authoritative converter and
+  required workflow serialization context, including SDK interceptors/context
+  propagation. Ownership is independent of whether the SDK client is lazy.
+- Application registration receives an SDK-compatible registry before polling
+  starts. It can register native result-producing activities, workflows with
+  registration options, and supported Nexus services. It does not receive
+  ownership of worker `Start`, `Run`, or `Stop`.
+- Apply caller SDK options, then validate actual conflicts with driver-owned
+  routing, lifecycle callbacks, worker roles, and concurrency. Initial session
+  workers and custom tuners are explicitly unsupported for the reasons above.
+  Compose compatible interceptors and metrics hooks. Do not silently overwrite a deployment policy,
+  converter, fatal callback, or tuner. Reject conflicting settings explicitly.
+- A registration fingerprint must describe the final registration set, including
+  struct activity methods and explicit SDK names. Reserved names cannot be
+  replaced with `DisableAlreadyRegisteredCheck` or shadowed by dynamic handlers.
+- Native SDK type registration is completed before polling. Queue's logical
+  `Register` contract is separate: existing code uses stable handler slots and
+  tests replacement during startup and after registration. A generic Temporal
+  activity must resolve the concurrency-safe logical handler registry without
+  re-registering SDK types or reading that registry from workflow code. Preserve
+  replacement behavior in the shared refactor, and test late logical registration
+  separately. Fingerprints must not falsely report an unchanged logical handler
+  catalog after its names change; they still cannot certify remote deployments.
+- A workflow function or dependency-free method uses SDK `workflow.Context`.
+  It never calls `queue.Dispatch`, queue builders, a live client, a database, or
+  a queue clock directly. Those perform ordinary I/O and are not replay-safe.
+  Use workflow activity/child-workflow commands instead.
+- Queue handlers remain error-only. They may share domain service methods with
+  native activities, but native typed results, heartbeat checkpoints, async
+  completion, and Temporal-specific errors must not be forced through
+  `queue.Message` or the portable error translator. Native activity execution
+  retains the SDK activity context and behavior.
+- Queue middleware applies to registered queue handlers. Native activities use
+  SDK interceptors or application wrappers. Do not claim queue observer coverage
+  for every native execution; SDK telemetry remains available independently.
+
+Workflow and activity task queues with different names must register compatible
+worker deployment identities when activities are intended to remain pinned to
+workflow code. Temporal documents
+[versioning behavior across activity task queues](https://docs.temporal.io/worker-versioning).
+The integration must test pinned and auto-upgrade policies and reject or
+document any independent-activity routing. A workflow-only build identity does
+not protect a separately polled activity task queue automatically.
+
+Native Temporal Schedules remain managed through the
+[SDK Schedule client](https://docs.temporal.io/develop/go/workflows/schedules).
+GoForj must not create a second recurring trigger for the same work, delete
+Schedules on worker shutdown, or equate its process-local scheduler lifecycle
+with server-owned scheduling. Native schedule creation is an explicit
+application/deployment action.
+
+### Native Acceptance Scenarios
+
+Before claiming native Temporal support, prove through this module's public
+construction and registration path, without constructing a second worker:
+
+1. An approval workflow waits on a durable timer and signal, exposes a query
+   and validated update, survives worker restart, then returns a typed result.
+2. A result-producing activity controls workflow branching and compensation.
+   A child workflow has explicit cancellation and parent-close behavior.
+3. A long-lived workflow continues as new with state and completed message
+   handlers. Client interaction follows workflow identity across run changes.
+4. Custom data conversion, context propagation, interceptors, and SDK metrics
+   work on both client and worker; native activity heartbeat/checkpoint and
+   asynchronous completion remain available.
+5. The chosen supported deployment versioning policy works across both worker
+   roles during rollout and rollback. Native APIs absent from the selected
+   SDK/server remain explicitly unadvertised.
+6. Dispatch-only use, multiple named resources, borrowed-client shutdown, and a
+   queue worker hosting both portable handlers and native activities retain
+   unambiguous identity and ownership.
+
 ```go
 // PaymentWorkflow has no injected dependencies because replayed code must not perform I/O directly.
 type PaymentWorkflow struct{}
@@ -662,6 +1341,7 @@ func NewPaymentWorkflow() *PaymentWorkflow {
 // Execute coordinates payment through a replay-safe activity call.
 func (w *PaymentWorkflow) Execute(ctx workflow.Context, input PaymentInput) (PaymentResult, error) {
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		TaskQueue:           input.ActivityTaskQueue,
 		StartToCloseTimeout: time.Minute,
 	})
 
@@ -673,9 +1353,33 @@ func (w *PaymentWorkflow) Execute(ctx workflow.Context, input PaymentInput) (Pay
 }
 ```
 
+`PaymentInput.ActivityTaskQueue` is an application-owned, persisted routing
+field supplied by the resource's native starter, not an environment read inside
+the workflow. The starter validates that it is the resolved default activity
+queue or a declared external native target. In the default combined topology,
+the SDK's omitted-task-queue behavior would also route correctly. The explicit
+field keeps this example correct if an application later selects split roles.
+Native SDK routing is never silently rewritten by the queue module.
+
 An empty workflow struct is only a useful default shape. It does not enforce
 determinism. Generated tests and CI must run Temporal's replay and static
 workflow checks against representative histories.
+
+### Driver Changes And Open Executions
+
+Changing `QUEUE_DRIVER` affects new dispatches; it does not migrate open Temporal
+workflows, histories, signals, or native application code to another backend.
+Keep the old namespace, codecs, credentials, and compatible workers available
+until executions drain or an explicit application migration completes. Stop
+new submission to the old resource deliberately, and keep native message APIs
+routed to its retained executions. Unsupported-capability errors must not
+trigger automatic fallback dispatch to another driver.
+
+Native applications intentionally depend on Temporal semantics. Portable jobs
+retain their handler signatures, but durability, state availability, callback
+support, and operational limits still follow the selected driver's capability
+matrix. A driver switch is an operational transition, not a guarantee of
+in-flight portability.
 
 ## History And Scale Limits
 
@@ -689,7 +1393,19 @@ The compatibility adapter must define and validate before workflow start:
 - maximum portable chain length
 - maximum portable batch fan-out
 - maximum individual job payload accepted by the configured Temporal service
+- maximum total potential continuation invocations, including batch member count
+  multiplied by progress binding count plus all potentially triggered hooks
+- a conservative history-event/byte budget for business and continuation work,
+  journal transitions, retries, timeouts and reserved safety headroom
 - behavior when activity results or failure details approach service limits
+
+Use checked arithmetic before acceptance for the complete invocation and
+projected history budgets. Reject overflow and an otherwise-small input whose
+hook multiplication exceeds the measured supported budget. Include the largest
+accepted member/hook/attempt composition and immediate-boundary rejections in
+real-server tests. Portable continue-as-new is excluded, so history headroom
+cannot be delegated to an unimplemented escape path. Unexpected external input
+or failure growth still needs explicit bounded failure handling.
 
 Large batches cannot be declared universally compatible until a real-server
 test proves the selected limit. If the required limit is too restrictive, the
@@ -709,7 +1425,11 @@ prove upgrade safety.
 
 Before production support, the integration must define:
 
-- how representative production histories are captured and replayed in CI
+- synthetic, non-sensitive committed replay fixtures for the default CI path
+- a separate restricted process for production-history capture and replay:
+  approve sanitization, storage, CI access, retention, and key handling first;
+  never commit raw production history or keys, and do not use rewritten histories
+  as proof that an unchanged original history replays
 - when generated examples use SDK version markers
 - how worker deployments or build identities route open executions
 - rollback behavior when a new worker cannot replay old history
@@ -751,9 +1471,12 @@ must not be adopted by silently increasing either module's Go version. If a
 required SDK feature forces an increase, the design must identify that exact
 constraint, its consumer impact, and the migration before implementation.
 
-At this review, queue's root module declares Go 1.24.4. Temporal Go SDK v1.48.0
-declares Go 1.25.4, while v1.45.0 declares Go 1.24.0. Version 1.45.0 is therefore
-the initial compatibility candidate, not an unconditional pin. Phase 0 must
+Queue's root module declares Go 1.24.4. The versioned
+[SDK v1.45.0 manifest](https://github.com/temporalio/sdk-go/blob/v1.45.0/go.mod)
+declares Go 1.24.0. Version 1.45.0 remains the workflow-wrapper compatibility
+candidate, not an unconditional pin. Standalone activities and newer SDK
+requirements are future reconsiderations under the stability policy above.
+Phase 0 must
 prove that it contains every required stable API and is compatible with the
 selected server and local development image. Experimental SDK surfaces are not
 allowed in the portable driver contract.
@@ -834,16 +1557,26 @@ that declared set. A queue resource filter controls ownership of the whole
 Temporal driver instance; it must not start only half of that instance's
 required pollers.
 
-For the initial ordinary-jobs release, that declared activity set contains
+For the initial internal ordinary-job stage, that declared activity set contains
 exactly the queue resource's effective default queue. A different `OnQueue`
 target fails before workflow acceptance. The plural topology below describes a
 later capability that remains behind the shared-capacity and routing gates.
 
 ### Task Queue Topology
 
-One Temporal SDK worker is bound to one task queue. A queue resource that uses
-different workflow and activity task queues therefore owns a set of SDK
-workers, not one worker:
+Milestone B defaults workflow and remote activity roles to the same effective
+application queue name, derived from the queue resource's `NAME`. One SDK worker
+hosts both roles; do not create competing half-registered workers on that name.
+This preserves the SDK's native default that an omitted activity task queue
+uses the workflow task queue. `NAME` retains its existing application queue
+meaning while also supplying the workflow role's default.
+
+An explicit split configuration may use a different workflow task queue, but
+must pass both-role routing and versioning checks before being advertised. Its
+native starter supplies the activity binding in persisted workflow input as in
+the example above. Missing `TaskQueue` then retains the SDK's own behavior and
+may be inappropriate for that application; the module never rewrites it.
+One SDK worker is bound to one task queue, so split roles own a worker set:
 
 ```text
 Temporal queue resource
@@ -856,17 +1589,21 @@ Temporal queue resource
     └── each additional declared `OnQueue` target
 ```
 
-The workflow-task worker disables activity polling unless its task queue is
-also an explicitly declared activity target. Activity-only workers disable
-workflow polling. All activity workers register the same shared queue handler
-executor. Configuration must reject duplicate, empty, or conflicting task
-queue roles and must validate every effective default queue before startup.
+In split mode the workflow-task worker disables remote activity polling unless
+its task queue is also the declared activity target. Activity-only workers
+disable workflow polling. Registration applies native remote activities to the
+remote activity worker and native local activities to the workflow worker's
+registry. If one native activity is used both ways, register it in both
+registries. All remote activity workers register the shared queue handler
+executor. Combined mode performs both registrations on one worker.
+Configuration must reject duplicate, empty, or conflicting task queue roles and
+must validate every effective default queue before startup.
 
 The exact environment keys remain a Phase 0 decision, but the model has four
 distinct values: queue resource identity, Temporal namespace, workflow task
-queue, and the declared set of activity task queues. The initial set has one
-member. `QUEUE_NAME` retains its established meaning as the default application
-job queue; it is not silently repurposed as the workflow task queue.
+queue, and the declared set of activity task queues. The initial activity set
+has one member. `QUEUE_NAME` retains its established meaning as the default application job queue and supplies both role defaults;
+explicit workflow routing remains a separate optional SDK configuration.
 
 ### Registration And Poller Homogeneity
 
@@ -919,7 +1656,8 @@ the queue shutdown budget before it returns the startup error. This correction
 protects every driver, not only Temporal.
 
 Shutdown of the Temporal driver must stop new polling before waiting for
-admitted work and close the client only after its worker has stopped. When the
+admitted work and close an owned client only after all its workers have stopped.
+Borrowed clients remain open for their supplying owner. When the
 Jobs runtime starts several queue instances, a failure to start any instance
 must clean up those already started before returning.
 
@@ -932,21 +1670,54 @@ selected queues through that failure-aware path so a fatal Temporal worker
 causes `RuntimeHost` to cancel sibling runtimes. Readiness and logging alone are
 not sufficient failure propagation.
 
-The SDK worker stop operation is not an idempotent contract and can panic when
-called repeatedly. In the candidate SDK, the fatal-error callback is also
-followed by an SDK-owned stop. A driver that reacts to that callback by calling
-stop again can race the SDK. The Temporal driver therefore needs a proven
-lifecycle adapter that coordinates SDK-owned and driver-owned termination,
-observes when each worker has actually stopped, rolls back an already-started
-subset, and closes the shared client only after the set is terminal. The design
-does not prescribe `Start`, `Run`, or the fatal callback until Phase 0 proves
-one composition without a startup or shutdown race. This follows the
-[Go SDK worker lifecycle contract](https://pkg.go.dev/go.temporal.io/sdk/worker#Worker).
+The SDK worker stop operation is not an idempotent public contract. Use one
+module-owned stop arbiter per SDK worker; all explicit shutdown, rollback and
+fatal paths join the same operation. The module fatal callback first signals
+the runtime error, then synchronously initiates or joins that arbiter before
+returning. The candidate SDK subsequently sees its stop channel closed and
+skips its automatic second Stop. Do not merely signal a goroutine and return
+from the fatal callback while that stop still races SDK ownership.
 
-Concurrent shutdown, startup rollback, fatal worker failure, and repeated
-`Queue.Shutdown` calls must leave each underlying worker stopped and the shared
-client closed exactly once from the queue consumer's perspective. No path may
-depend on recovering an SDK panic or sleeping to infer that shutdown completed.
+The callback can be executing inside the poller that Stop is waiting for. Its
+self-poller wait may consume the configured SDK grace period. Treat that as a
+forced SDK stop, not evidence of graceful drain. This design choice requires a
+real-SDK proof before freezing the adapter; do not depend on panic recovery,
+experimental stop plugins, sleeps or log inspection. User fatal hooks are also
+bounded/drain-tracked application callbacks and cannot erase the fatal signal.
+
+Distinguish three facts: admission has closed, SDK Stop has returned, and tracked
+application work has drained. SDK Stop return is not proof all SDK poller/task
+goroutines have exited. Its internal timeouts can leave cancellation-resistant
+work alive. SDK Run can return earlier still. The arbiter provides its own
+Stop-return result, while module admission/drain guards track application code.
+Only the required combination permits owned dependency cleanup.
+
+The module's admission/drain tracker wraps user activity interceptors outermost,
+including remote and local native activities and portable handlers. Approved
+converter, codec, propagator, failure-converter, logger/metrics callbacks and
+other application adapters have the same protection because SDK decoding may
+precede activity interception and encoding may follow it. If Nexus operations
+are advertised, their handlers are covered too. Construction rejects unsupported
+callback modes rather than pretending activity-handler tracking covers them.
+Application-spawned goroutines and external asynchronous-completion workers are
+application-owned; their lifecycle must be joined by their owner before shared
+bindings/dependencies close.
+
+Close admission and register active entries under one synchronization boundary.
+After cleanup observes zero tracked work, late SDK callbacks must not reenter
+application code or custom conversion dependencies. They receive a safe
+shutdown classification without invoking a closed user adapter. Already-admitted
+work retains its tracked lifetime until it actually returns. A pure SDK cleanup
+callback can unwind later, but cannot reopen admission to user code.
+
+Concurrent shutdown callers may expire while the arbiter or tracked drain is
+still incomplete. Their return is bounded and reports incomplete shutdown; the
+operation/result channel outlives those callers, retains required dependencies,
+and supports later joins. Do not close a client or underlying service merely
+because the first caller timed out. This follows the
+[SDK worker contract](https://github.com/temporalio/sdk-go/blob/v1.45.0/worker/worker.go)
+and requires tests against the candidate implementation, not assumptions about
+an unexposed poller-termination signal.
 
 Phase 0 must test this ordering against the actual GoForj runtime host. It must
 not assume lifecycle hooks that the runtime host does not call.
@@ -958,10 +1729,68 @@ jobs runtime after its run context is canceled. Deferring it to an application
 shutdown hook would make the runtime host wait for a worker that is itself
 waiting for a later hook.
 
-The failure-aware `Queue.Run` path must still honor the queue shutdown budget.
-It cannot call an unbounded background shutdown after cancellation. Phase 0
-must establish where that budget lives for direct queue consumers and generated
-GoForj runtimes without changing the established `Run(ctx)` signature.
+The failure-aware Temporal `Queue.Run` uses required positive
+`temporalqueue.Config.ShutdownTimeout` after cancellation, without changing the
+established `Run(ctx)` signature or other drivers' defaults. Generated providers
+resolve this from the App's queue shutdown budget. An explicit `Shutdown(ctx)`
+uses the earlier of its caller deadline and this resource budget. The worker
+adapter configures SDK drain bounds consistently and bounds caller return.
+SDK Stop itself can continue beyond that deadline because it has sequential
+waits and a shutdown RPC. Equating WorkerStopTimeout with the resource budget
+does not prove an aggregate deadline. Keep its arbiter alive for completion
+and subsequent joins rather than waiting unboundedly in the caller.
+
+A caller deadline expiring does not establish terminal cleanup or authorize
+closing the client while pollers still drain. Subsequent `Shutdown` calls can
+wait for the same in-progress stop and finish cleanup, preserving queue's
+retry-after-timeout behavior. Do not latch a caller-specific timeout as the
+resource's permanent shutdown result. SDK `Run` returning is not drain-complete
+evidence: the candidate SDK closes its stop channel before the drain finishes.
+The stop adapter needs its own completion observation and must not depend on
+experimental stop plugins.
+
+### Generated App Binding Lifetime
+
+Generated Apps own every resource's client binding at the App composition root.
+Queue runtimes borrow those bindings even when only one queue uses them. Jobs
+shutdown stops its workers and recovery participants, but does not close the
+shared client while HTTP, scheduler, CLI, or other native SDK consumers may
+still be draining. After RuntimeHost has joined all runtime consumers and the
+tracked application-adapter/handler drain has completed, final App cleanup
+closes each owned binding once, before its remaining dependency cleanup.
+If a shutdown deadline expires with tracked work still alive, report incomplete
+shutdown and preserve that work's dependencies. Generated process shutdown must
+skip destructive dependency cleanup and take its explicit failure/exit path;
+it must not report graceful completion or close the database/client underneath
+live handlers. Embedded library callers retain responsibility for that process
+policy and may join cleanup later. Go cannot forcibly terminate arbitrary user
+goroutines safely.
+
+A direct library consumer may let the queue own its binding; that consumer
+must stop its other native-client users before `Queue.Shutdown`. Sharing raw SDK
+client access does not create invisible reference counting around arbitrary
+application calls. Borrowing explicitly moves close ownership to the supplying
+owner. Add a barrier test where an admitted HTTP request continues using the
+native client while Jobs has stopped, and verify the binding remains usable
+until the request and the other runtime consumers exit.
+
+### Construction And Client-Only Cleanup
+
+Worker ownership and client-resource ownership are separate lifetimes.
+Generated managers register application cleanup for every constructed queue,
+including dispatch-only HTTP/CLI use and unselected named resources. A later
+queue-constructor failure rolls back all earlier constructed owned resources in
+reverse construction order before returning the original and cleanup errors.
+A module constructor failing after it creates its own client closes that client
+before returning. Borrowed bindings remain the supplying owner's responsibility.
+
+Active worker shutdown still happens inside Jobs `Run` before it returns.
+Final application cleanup then closes never-started resources and retries or
+joins remaining cleanup idempotently, subject to the tracked-work fence above. It must not be the mechanism needed
+to unblock a running Jobs runtime. Generated binding-owner cleanup runs after
+all borrowing queues; partial App construction must have the same rollback
+ownership. Direct consumers must call `Shutdown` even if they never start
+workers. Construction and cleanup tests cover lazy clients that later dial.
 
 Temporal client creation has two modes:
 
@@ -992,8 +1821,10 @@ engines:
 
 Temporal SDK metrics remain the source for poller, workflow-task, activity-task,
 and replay behavior. Queue observer events remain the source for the portable
-job and workflow vocabulary. The bridge must prevent one Temporal event from
-appearing as duplicate queue facts during replay.
+job and workflow vocabulary. The bridge must prevent workflow replay alone
+from invoking observers again.
+It must distinguish physical attempts from logical settlement and must not
+claim exactly-once external event delivery.
 
 Application observers must never execute directly from replayed workflow code.
 Portable events require stable event IDs and an emission path with a documented
@@ -1001,6 +1832,15 @@ delivery guarantee, such as activity-side emission with durable deduplication
 or an external history consumer. If that path cannot preserve an existing
 event kind, the driver reports that event as unsupported rather than emitting a
 plausible duplicate.
+
+Stable event IDs identify duplicates; they do not atomically publish external
+side effects. An activity-side observer can publish twice if the worker dies
+between publication and activity completion, and can lose a fact if completion
+and publication are not atomic. The default observer remains best-effort
+operational telemetry with those limits stated. A durable publication mechanism
+is a separate capability and must not be an implicit requirement for the first
+native SDK milestone. Ordinary activity-attempt telemetry must also distinguish
+retries from workflow replay.
 
 Lighthouse should show:
 
@@ -1045,11 +1885,27 @@ Temporal service acceptance does not make an execution payload trusted. Any
 principal with sufficient namespace write access may be able to start a
 framework-owned workflow type directly instead of entering through
 `Queue.Dispatch`. Before a framework workflow schedules an activity, it must
-validate envelope version, encoded size, queue-owned identity shape, registered
-job type, option bounds, and allowed task queue. The activity repeats the
+validate envelope version, encoded size, queue-owned identity shape, option
+bounds, and allowed task queue using deterministic versioned input/protocol
+rules. It must not read a live application registry, environment, remote
+catalog, or injected service during replay. Dispatch-only producers may use an
+explicit declared job catalog without constructing handlers; they must not be
+required to register runnable handlers merely to dispatch. Where unknown-job
+rejection is advertised before acceptance, the producer catalog must establish
+that claim. The activity always verifies the actual worker handler registry
+before execution; producer validation does not replace this check. It repeats
 security-relevant checks before invoking application code. Unknown versions,
 job types, or task queues fail permanently and must not enter an unlimited
 retry loop.
+
+Reserved framework workflow entry also validates actual service start policy,
+not only fields in its decoded envelope. Read `workflow.GetInfo` and reject
+workflow retry policy, cron schedule, unexpected workflow attempt, queue/type,
+or identity incompatible with the bounded single-run protocol before scheduling
+any application commands. Direct SDK starts can set those values outside the
+input envelope. Return a sanitized non-retryable policy error; do not let a
+caller-supplied workflow retry layer multiply job/continuation attempts. This
+protects the per-execution contract, not service quota against namespace writers.
 
 The generic queue activity is a confused-deputy boundary because it can invoke
 any handler registered in that worker. Deployments with different caller trust
@@ -1082,9 +1938,98 @@ accepted risk. The default permissive authorizer is not an enterprise control.
 This distinction follows Temporal's
 [self-hosted security guidance](https://docs.temporal.io/self-hosted-guide/security).
 
-Error adapters must prevent secrets from being copied into Temporal failure
-messages. Inspection must bound and redact payload previews. Metrics must not
+Portable error adapters must use a bounded, safe error representation rather
+than serializing arbitrary handler error text, stack traces, or nested details.
+Preserve stable categories such as permanent failure separately from diagnostic
+text. Expose the SDK failure-converter setting alongside the payload converter;
+a payload codec alone does not establish safe failure-message handling. Native
+application errors remain subject to the application's configured converter
+and redaction policy, which must be documented and tested. Inspection must bound and redact payload previews. Metrics must not
 use workflow IDs, payload values, or other unbounded identifiers as labels.
+
+### Continuation Association And Read Permissions
+
+Before a continuation handler runs, validate its immutable declared Job spec,
+index, type, exact payload, resolved policy, applicable phase, trigger member
+and sequence against the parent workflow's committed intent. Derive the actual
+parent WorkflowID, RunID, workflow type and ActivityID from SDK activity
+execution context, not caller payload or propagated headers. Require a reserved
+framework workflow type and matching parent/lineage identity.
+
+The authoritative association is reconstructed from that exact parent run's
+accepted envelope and committed journal through the scheduling intent. Compare
+the stable invocation identity and actual scheduled ActivityID to that intent.
+The worker therefore needs bounded history-read/decode permission through its
+resource binding in addition to activity polling permission. An incremental
+cache may reuse an already validated prefix under the same resource/run/codec
+identity; it must not substitute caller assertions or current mutable memo.
+If association cannot be established because the service/key is temporarily
+unavailable, do not run application code; return a sanitized infrastructure
+failure under the explicit bounded attempt policy. A definite mismatch is a
+terminal rejected invocation.
+
+Direct standalone invocation, unrelated native-workflow invocation, cross-parent
+substitution, undeclared specification and false phase/member/sequence claims
+must fail before application code. A namespace writer that legitimately starts
+a framework workflow can still exercise that namespace's allowed jobs; these
+checks do not create caller authentication or replace privilege isolation.
+Apply the same validation and confidentiality rules to durable outbox delivery
+from existing coordinators, using their atomically committed parent intent.
+
+### Decoding And SDK Logging Boundaries
+
+Typed workflow/activity validation runs after SDK argument decoding. The module
+must bound payload count and encoded bytes before converter/propagator work,
+and enforce expanded-byte and decoding-work limits inside any decompression,
+decryption, or custom converter path. Checking the decoded envelope afterward
+is insufficient. The candidate SDK's stock zlib codec reads expanded bytes
+without a bound; it is not an approved untrusted-input codec for this driver.
+Custom converter/codec/propagator support requires an explicit bounded-input
+contract and direct-invocation tests, not a blanket claim that wrappers can
+make arbitrary user code safe. Caller headers are untrusted too.
+
+Deterministically malformed inputs fail with a sanitized terminal category
+without invoking application handlers. Transient key-service/decryption-service
+availability failures remain distinguishable and follow a bounded recovery
+policy. The selected pre-entry mechanism must preserve native panic policy. SDK
+propagator extraction can otherwise panic before workflow entry and retry
+workflow tasks indefinitely under BlockWorkflow. Do not switch every native
+workflow to global FailWorkflow to solve this. Approved module adapters bound
+extraction and translate deterministic malformed-header rejection into a
+sanitized context marker while returning a valid SDK context. A module-owned
+workflow execution interceptor checks that marker before framework or native
+application entry and returns the safe non-retryable rejection. No application
+function executes for that marker. Actual application panics/nondeterminism
+retain the selected native SDK policy.
+
+Unadapted propagators/converters that can throw pre-entry panics, bypass the
+bounds, or cannot provide this rejection contract are unsupported configuration
+and fail construction. Arbitrary third-party callbacks are not made safe merely
+by passing their SDK interface through. Transient extraction/key-service errors
+also receive a bounded, explicit classification; they are not secretly retried
+forever as malformed workflow tasks. Verify the exact SDK converter and
+propagator paths independently, including native registrations. If the adapter
+cannot satisfy the contract, do not freeze that mode or the dependent API. Test both framework entrypoints and native
+registrations, including attacker-selected retry policies. This does not claim
+protection against an authorized namespace writer consuming service quota by
+starting arbitrary executions.
+
+The SDK can log handler errors, panic values, stacks, and late activity output
+before applying a failure converter. History encryption and portable error
+translation therefore do not secure those logs. The module's client binding
+must install or validate an SDK logger policy that drops unsafe values and
+stacks by default, preserves safe categories and correlation, and bounds every
+message and field. A caller-supplied logger must meet that contract; do not
+silently route raw SDK diagnostics around it. Apply the same policy to borrowed
+bindings, converter errors, native activities, and completion after timeout.
+Sentinel tests must inspect actual SDK log output as well as history payloads.
+
+An error-only portable handler can preserve permanent/retryable categories
+without retaining arbitrary Go error strings. Native application error details
+remain available only under the explicit safe failure-converter/codec policy.
+Propagated actor/tenant headers and workflow input are caller-controlled claims,
+not authenticated caller identity. Any deployment-owned authorization must
+obtain trusted identity from an independently verified boundary.
 
 Enterprise deployment guidance must identify:
 
@@ -1120,6 +2065,52 @@ The deployment owner must document availability, retention, integrity, access,
 and export of those records. GoForj documentation must not claim an audit
 control merely because it emits queue events.
 
+## Complete Integration Acceptance Matrix
+
+Real-server tests must use the public Queue construction/registration path.
+SDK mocks and the in-memory workflow test environment supplement these tests;
+they cannot pass lifecycle, persistence or worker-loss acceptance alone.
+
+Use a pinned retained Temporal server, separate producer and reader processes,
+a killable worker subprocess, and an external side-effect witness with explicit
+barriers. Kill after handler start, after an external effect but before SDK
+completion, before/after journal commit, and during continuation execution.
+Restart without the original producer or its memory. Avoid timing-only sleeps.
+
+| Area | Required real integration cases |
+| --- | --- |
+| Ordinary jobs | Payload bytes, middleware/context, all zero/explicit policies, permanent error/panic, actual attempt budgets and delay |
+| Chains | Order, predecessor replay safety, first/final node failure, timeout, restart, original state fields and durable hooks |
+| Batches | Every success/failure interleaving, AllowFailures, first-failure aggregate completion, late member settlement, bounded fan-out and execution drain |
+| Continuations | Every hook, concurrent progress, stable identity/snapshot, declaration order, scheduled versus physical-start distinction, exhaustion/interruption, later completion hook, crash at each scheduling/effect/ack boundary |
+| State journal | Multiple same-key deltas per task, commit loss, pagination, bounded decoding, malformed transition mutations and semantic replay parity including a same-command-count negative control |
+| No-worker reads | Immediately after acceptance before polling, running/retry/delay state, all workers stopped, retained terminal histories and continuation outcomes |
+| Native coexistence | Typed results, signals, queries, validated updates/with-start, timers, children, continue-as-new and the supported versioning policy beside portable work |
+| Resource isolation | Default/named resources, identical IDs in different namespaces, owned/borrowed bindings, combined/split roles and actual activity capacity |
+| Lifecycle | Constructor/start rollback, HTTP client use after Jobs stop, recovery-runner failure, self-poller fatal stop, separate SDK/admission/adapter drain, late callback fencing, resistant handlers, bounded caller return and later joins |
+| Service outages | Start-response loss, reconciled acceptance, service loss during reads and continuation settlement, ambiguous outcomes and expired/deleted history |
+| Security | Direct malformed job/chain/batch/continuation input, false phase/association, expansion/header abuse, authorization failure and safe SDK logs/failures |
+| Serialization | Default plus approved encrypted/context-aware conversion, key unavailability/rotation, backward decoding, read/continuation confidentiality and sentinel secrets |
+| Evolution | Prior synthetic histories, semantic replay parity, deploy/rollback, registry/version routing, codecs, portable-reset rejection and independent native reset support |
+| Built-in stores | Real SQL transition/outbox atomicity, competing/fenced runner recovery with no business delivery, prune races, schema upgrade, managed no-DDL, worker-first rollout/rollback and custom-store rejection |
+| Framework composition | Largest supported multi-App composition with jobs, workflows, continuations, HTTP, schedules, metrics, named resources and client cleanup |
+| Scale | Largest supported member/hook/attempt composition, continuation multiplication, history budgets, checked arithmetic and immediate-boundary pre-acceptance rejection |
+| Modules and release | Independent root/driver/integration/examples checks, race/vet, generation idempotence and published consumer without workspace/replacements |
+
+Extend the existing `integration/root/workflow_contract_integration_test.go`
+public contract suite and its capability expectations. Add Temporal to backend
+factories, required CI matrices, matrix guards, coverage inventories and test
+orchestration; do not hide it in a driver-only opt-in suite. Use the existing
+nested integration module command surface (`go -C integration test
+-tags=integration ./...`), and validate root, driver, integration and examples
+with `GOWORK=off`. The existing root-oriented integration script needs adjustment
+if it does not enter that nested module; do not claim root `./...` covered it.
+
+For every required case, retain exact module/SDK/server versions, command,
+result and artifact identity. A skipped scenario, unsupported temporary stage,
+SDK-only fixture or documentation example is not full integration evidence.
+There is no claim that these future tests have already passed.
+
 ## Testing Strategy
 
 ### Queue repository
@@ -1135,9 +2126,31 @@ control merely because it emits queue events.
   retry defaults are fully overridden, and heartbeat behavior matches every
   cancellation claim.
 - Prove no application activity is repeated by workflow replay.
-- Prove worker restart resumes an execution.
-- Prove state queries for running and retained terminal executions.
-- Prove shutdown ordering and bounded activity drain.
+- Run the native acceptance scenarios through the module's actual public
+  construction and registration path, including SDK configuration and client
+  ownership, not only against standalone SDK test code.
+- Preserve logical handler replacement during concurrent startup and execution
+  without attempting SDK activity re-registration. Distinguish the logical
+  handler catalog from native SDK type registration and replayed protocol data.
+- Verify the unsupported workflow error contract with `errors.Is`, and prove
+  generated Temporal providers do not add rejected built-in store/clock options.
+- Prove workflow replay resumes orchestration and independently test activity
+  recovery with remaining/exhausted budgets. Kill workers after task acceptance
+  and during handlers under `Retry(0)` and `Retry(1)`; assert attempts, state,
+  and observer facts without claiming SQL same-attempt recovery.
+- Prove journal-derived state reads for running and retained terminal
+  executions with every worker stopped; optional queries do not pass this gate.
+- Prove shutdown ordering and bounded activity drain, including retrying a
+  caller-timed-out shutdown and observing actual completion rather than SDK
+  `Run` return. Test shutdown before worker startup and client-only use.
+- Prove manager and module constructor rollback, cleanup of unselected queues,
+  and binding-owner close ordering after all borrowers stop.
+- Reject sessions/custom tuners, test deferred fluent configuration errors,
+  and verify native activity routing in combined and explicitly split roles.
+- Test corrupt encodings, compressed expansion, malicious propagation headers,
+  and bounded converter work before framework validation. Verify sentinel
+  secrets are absent from SDK errors, panic/stack logs, converter failures,
+  late output, and encrypted context-aware borrowed-binding reconciliation.
 - Inject a fatal poller error after successful startup and prove `Queue.Run`
   returns it, GoForj cancels sibling runtimes, and shutdown remains bounded.
 - Race concurrent startup failure, caller cancellation, fatal worker failure,
@@ -1181,8 +2194,9 @@ control merely because it emits queue events.
 - Verify the Temporal entry in `ResourceQueue` round-trips through project
   configuration, named and App-prefixed environment reconciliation, service
   planning, project description, and compile-time driver manifests.
-- Verify the jobs runtime performs Temporal shutdown before returning and does
-  not depend on later application lifecycle hooks.
+- Verify the jobs runtime performs active Temporal worker shutdown before
+  returning. Separately verify final App cleanup for all constructed queues,
+  including dispatch-only/unselected resources and constructor rollback.
 - Verify a later queue startup failure shuts down every earlier queue that
   started successfully, in reverse start order and within the shared budget.
 - Verify existing `queue:work` queue-resource filters select Temporal instances
@@ -1194,7 +2208,9 @@ control merely because it emits queue events.
 
 ## Phase 0 Decision Spikes
 
-No public configuration or generator should land before these spikes complete:
+The stages organize this backlog. State reads and durable continuations may be
+implemented after internal ordinary-job work, but their proofs block complete
+release and public configuration. No existing A/B approval waives these gates:
 
 1. Split shared handler execution from workflow coordination without changing
    public queue behavior. Prove `Register`, ordinary `Dispatch`, worker start,
@@ -1258,37 +2274,51 @@ No public configuration or generator should land before these spikes complete:
     prefetch timeout or starvation.
 23. Prove ambiguous-start reconciliation before and after fast workflow
     completion, with matching input, mismatched input, inaccessible history,
-    encrypted payloads, and namespace authorization failures.
+    encrypted payloads, namespace authorization failures, and expired/deleted
+    history. Prove separate public dispatch calls produce separate identities.
+24. Validate the chosen wrapper transport with a version-specific SDK/server
+    matrix, real-server acceptance behavior, toolchain impact, and measured
+    overhead. Standalone activity APIs remain excluded while experimental.
+25. Prove the native acceptance scenarios with custom SDK options, reserved-name
+    enforcement, declared producer catalogs, borrowed-client ownership, and
+    replay-safe validation.
 
 ## Release Gates
 
-The Temporal option remains hidden and unsupported until every major boundary
-has one outcome recorded in this design:
+The complete supported Temporal driver remains hidden and unqualified until
+all required ordinary, portable, continuation, native and cross-cutting boundaries
+have recorded evidence. Internal A/B progress does not bypass C acceptance.
+Behavioral, protocol, schema, build and local-consumer rows are prepublication
+qualification. The module-publication row is postpublication verification that
+blocks advertising/consuming the release as supported, not the tag operation
+needed to perform that verification:
 
 | Boundary | Required outcome |
 | --- | --- |
 | Existing driver isolation | Every existing driver contract passes unchanged when the Temporal module is available but not selected |
-| Coordinator selection | Existing drivers select built-in, ordinary-only Temporal selects unsupported, and workflow-capable Temporal selects native with no implicit fallback |
+| Coordinator selection | Existing drivers select built-in, incomplete development builds select unsupported, and workflow-capable Temporal selects native with no implicit fallback |
 | Public surface | Every existing method and option is supported with tested semantics or returns an established unsupported-capability error at the earliest possible boundary |
-| Native driver ownership | Root and named Temporal queues construct one unambiguous client, registry, worker set, and native coordinator without root-module Temporal types |
+| Native driver ownership | Root and named Temporal queues have unambiguous client, registry, worker-set, and owned/borrowed lifecycle rules without root-module Temporal types; only Milestone C requires a native portable coordinator |
+| Native capability preservation | Milestone B passes the native acceptance scenarios through the same resource, with SDK options and registration preserved |
+| Transport selection | Initial wrapper transport passes SDK/server/toolchain evidence and measured overhead; experimental standalone APIs and automatic fallback remain excluded |
 | Temporal ordinary dispatch | `Queue.Dispatch` starts one framework-owned workflow and reports acceptance consistently |
-| Dispatch idempotency | Framework workflow starts explicitly reject running conflicts and closed-run reuse, return already-started errors for reconciliation, and verify the original start before reporting acceptance |
+| Dispatch idempotency | Framework starts reject conflicts and retained duplicate IDs, verify original immutable input during reconciliation, and document retention/deletion limits and fresh IDs on each public dispatch |
 | Portable handler execution | The same registered handler and middleware execute through an existing driver and a Temporal activity |
-| Callback durability | Named continuations land, or callback-bearing portable workflows fail before acceptance |
-| State reads | `FindChain` and `FindBatch` meet their contract, or portable Temporal coordination does not ship |
+| Callback durability | Durable named continuations, immutable trigger snapshots, outcome reads and recovery pass; closure callbacks still fail before Temporal acceptance |
+| State reads | History-journal `FindChain`, `FindBatch`, and continuation outcomes meet the no-worker contract; failure blocks the complete supported driver release |
 | Uniqueness | Exact `UniqueFor` parity is proven, or the option fails before acceptance |
-| Retry and timeout policy | Every zero value and explicit value has a tested translation |
+| Retry and timeout policy | The explicit policy table, immutable resolved values, required activity timeout, and total-attempt worker-loss behavior are tested; no SQL redelivery parity is claimed |
 | Retry ownership | Activity policy is the only automatic retry layer for framework workflows and never exceeds queue's attempt budget |
 | Batch cancellation | Failure interleavings preserve established handler, counter, callback, and event behavior |
 | Task routing | Every accepted task queue has a known local or declared external poller |
 | Registry homogeneity | Shared task queues have compatible type and handler registrations, with reserved-name collisions rejected before polling |
-| Activity capacity | `WithWorkers` remains a total instance limit; multiple activity task queues stay disabled until fair capacity and bounded polling are proven |
+| Activity capacity | Remote activity slots obey the per-process/resource limit; session workers/custom tuners are rejected initially; additional activity queues require fair capacity and bounded polling |
 | History limits | Payload and fan-out limits are measured and enforced before acceptance |
 | Evolution | Previous-version histories replay on forward deploy and rollback |
 | Driver protocol | Persisted framework envelopes are versioned and every supported prior driver history replays under the proposed release |
 | Lifecycle | Partial startup, cancellation, timeout, and repeated shutdown converge safely |
 | Fatal worker failure | A post-start poller failure reaches `Queue.Run` and the GoForj runtime host without polling or log inspection |
-| Stop idempotency | Concurrent lifecycle paths call the underlying worker stop and client close at most once and return one stable result |
+| Stop idempotency | Concurrent lifecycle paths stop each worker and close each owned client at most once, never close a borrowed client, and return one stable result |
 | Worker selection | Existing `queue:work` filters select whole queue resources, and a Temporal resource owns all pollers required by its declared task queues |
 | Observer delivery | Portable events have stable identities and workflow replay cannot create duplicates |
 | Security | Authentication modes, server identity, authorization boundaries, encryption, key rotation, redaction, retention, and audit ownership are documented and tested |
@@ -1298,44 +2328,53 @@ has one outcome recorded in this design:
 | Toolchain compatibility | The selected Temporal SDK supports the established minimum Go version, or an unavoidable increase has an explicit migration |
 | Module publication | The driver has its own planned tag, release-time sibling pin, proxy-resolvable module, and `GOWORK=off` downstream proof |
 
-An unresolved row blocks the affected portable feature. It does not justify a
-silent semantic downgrade, a second source of truth, or a new top-level
+An unresolved row blocks the affected advertised capability, portable or native.
+It does not justify a silent semantic downgrade, a second source of truth, or a new top-level
 component.
 
 ## Implementation Sequence
 
-1. Complete Phase 0 without changing generated applications.
-2. Add the internal queue responsibility split, native-workflow driver
-   capability, and compatibility contracts.
-3. Add the optional `driver/temporalqueue` module with ordinary job dispatch,
-   handler execution, worker lifecycle, and readiness only.
-4. Release ordinary Temporal queue support only after its own gates pass. Do
-   not wait for portable chain and batch support if ordinary jobs are sound.
-5. Add portable chain and batch coordination behind the private native
-   capability only after state, callback, cancellation, event, and replay gates
-   pass.
-6. Release and consume those queue modules using their established multi-module
-   tag convention.
-7. Add GoForj environment and compile-time dependency projection under
-   Background Jobs.
-8. Connect the existing Temporal developer service to that consumer.
-9. Add generated worker registration and runtime hosting.
-10. Add native workflow and activity generators with determinism tests as a
-    separate optional milestone after the driver lifecycle is proven.
-11. Add inspection, metrics, security guidance, and transition guards.
-12. Enable each capability in the interactive project flow only after its
-    specific release gates and the largest generated composition pass.
+1. Prove the complete-scope protocol prerequisites: history journal, continuation
+   atomicity, SDK stop adapter, bounded serialization and selected server/SDK.
+   These are prototypes, not a supported partial driver.
+2. Land the compatibility-preserving shared execution/construction seam and
+   continuation/store capability with unchanged existing-driver contracts.
+3. Build ordinary Temporal jobs and native hosting internally, including
+   resource-scoped clients, registration, routing, security and lifecycle.
+4. Complete portable chains/batches, journal reads and durable continuations;
+   implement root helper, fake support and built-in store atomicity together.
+5. Pass the complete real-server matrix, relevant module/race/vet checks,
+   synthetic replay fixtures, forward/rollback tests, and runnable examples.
+6. Validate the largest GoForj composition with default/named queue resources,
+   native and portable workflows, continuations, jobs, schedules, HTTP, metrics
+   and multiple Apps. Framework renders stay under `/tmp`.
+7. Review the full diff and compatibility/migration notes. Pass complete
+   prepublication qualification against the exact intended artifact family,
+   then publish synchronized root/driver tags with the repository scripts.
+   Independently verify every published module through downstream resolution
+   with `GOWORK=off` and no local replacements before advertising support.
+   Publication is not claimed verified merely because tag creation succeeded.
+8. Enable framework configuration/generators/docs against the qualified module.
+   Stages may remain independently reviewable; they are not separate reduced
+   product releases. Experimental SDK transports require a later explicit design.
 
 ## Decision
 
 Temporal belongs in the queue driver catalog and must not implement
 `WorkflowStore`.
 
-The existing chain and batch primitives provide a useful portable subset. A
-Temporal driver can implement that subset through an optional native-workflow
-capability after callback durability, state queries, policy translation, and
-lifecycle behavior are proven. Native Temporal workflows remain available for
-capabilities beyond that subset.
+The complete supported addition includes ordinary jobs, portable chains and
+batches, worker-independent state reads, durable named continuations, and native
+SDK access. Native capabilities remain directly usable without forcing richer
+Temporal behavior into a portable facade. Internal implementation sequencing
+does not permit a jobs/native-only release. Completion requires the combined
+integration, replay, security, lifecycle and module-publication evidence.
+
+The initial supported ordinary-job transport is the workflow wrapper.
+Standalone activities remain a natural future mapping but are excluded while
+the required SDK APIs are experimental. Duplicate suppression is bounded by
+retention, and each public dispatch currently creates a new identity. These
+limits must remain visible in implementation and documentation.
 
 This design preserves one owner for workflow concepts, one authoritative state
 system per execution, and one honest boundary between portable queue workflows
