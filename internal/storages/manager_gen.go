@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,6 +17,7 @@ import (
 	"github.com/goforj/env/v2"
 	"github.com/goforj/storage"
 	"github.com/goforj/storage/driver/localstorage"
+	"github.com/goforj/storage/storagecore"
 	"github.com/goforj/str/v2"
 )
 
@@ -358,7 +360,8 @@ func storageDriverNameFromScope(scope env.Scope) string {
 }
 
 // buildDiskConfig rejects backends outside the generated manifest before endpoint configuration is constructed.
-// The manifest comes from STORAGE_SUPPORTED_DRIVERS, falling back to active root and named Storage scopes when that list is unset.
+// The local driver is always compiled; optional drivers come from STORAGE_SUPPORTED_DRIVERS,
+// falling back to active root and named Storage scopes when that list is unset.
 func buildDiskConfig(name storage.DiskName, scope env.Scope) (storage.DriverConfig, error) {
 	driver := str.Of(scope.Get("DRIVER", driverLocal)).Trim().ToLower().String()
 	if driver == "" {
@@ -588,6 +591,44 @@ func (s *observedStorage) URL(p string) (string, error) {
 	url, err := s.inner.WithContext(ctx).URL(p)
 	s.observe(ctx, "url", p, start, err)
 	return url, err
+}
+
+// Objects forwards streaming discovery through the observation wrapper.
+func (s *observedStorage) Objects() (storagecore.ObjectStorage, error) {
+	objects, err := storage.Objects(s.inner)
+	if err != nil {
+		return nil, err
+	}
+	return observedObjects{disk: s, inner: objects}, nil
+}
+
+type observedObjects struct {
+	disk  *observedStorage
+	inner storagecore.ObjectStorage
+}
+
+// WalkObjectsContext observes the paged walk without collecting its entries.
+func (s observedObjects) WalkObjectsContext(ctx context.Context, prefix string, visit func(storagecore.ObjectInfo) error) error {
+	start := time.Now()
+	err := s.inner.WalkObjectsContext(ctx, prefix, visit)
+	s.disk.observe(ctx, "walk_objects", prefix, start, err)
+	return err
+}
+
+// OpenObjectContext observes opening the stream without consuming the caller's response body.
+func (s observedObjects) OpenObjectContext(ctx context.Context, key string, options storagecore.OpenObjectOptions) (*storagecore.ObjectReader, error) {
+	start := time.Now()
+	reader, err := s.inner.OpenObjectContext(ctx, key, options)
+	s.disk.observe(ctx, "open_object", key, start, err)
+	return reader, err
+}
+
+// PutObjectContext observes an upload while preserving the caller's context and reader ownership.
+func (s observedObjects) PutObjectContext(ctx context.Context, key string, body io.Reader, options storagecore.PutObjectOptions) (storagecore.ObjectInfo, error) {
+	start := time.Now()
+	info, err := s.inner.PutObjectContext(ctx, key, body, options)
+	s.disk.observe(ctx, "put_object", key, start, err)
+	return info, err
 }
 
 // ListPage preserves paged-storage capability checks while recording the result uniformly.
