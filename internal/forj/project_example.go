@@ -29,6 +29,16 @@ func configureGopherEats(config *project.Config) {
 	}
 }
 
+// gopherEatsServiceIntent defaults the demo broker to local while preserving explicit service placement.
+func gopherEatsServiceIntent(intent project.LocalServiceIntent) project.LocalServiceIntent {
+	for _, key := range []project.ServiceKey{project.ServiceQueueNATS, project.ServiceEventsNATS} {
+		if _, selected := intent.Mode(key); !selected {
+			intent = intent.WithMode(key, project.LocalServiceModeLocal)
+		}
+	}
+	return intent
+}
+
 // scaffoldGopherEats creates editable example code without replacing application-owned changes on rerender.
 func (p *ProjectRenderer) scaffoldGopherEats() error {
 	return fs.WalkDir(templatesFS, "gopher_eats/internal", func(path string, entry fs.DirEntry, err error) error {
@@ -109,6 +119,7 @@ func (p *ProjectRenderer) prepareExample(input *ComponentRenderInput) error {
 			plan = plan.WithSelection(key, project.DriverSelection{Active: "nats", Supported: []string{"nats"}})
 		}
 		input.resourcePlan = plan
+		input.localServiceIntent = gopherEatsServiceIntent(input.localServiceIntent)
 	}
 	return nil
 }

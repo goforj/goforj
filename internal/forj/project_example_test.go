@@ -1,11 +1,14 @@
 package forj
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"charm.land/bubbletea/v2"
+	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/logger"
 	"github.com/goforj/goforj/project"
 )
@@ -109,17 +112,17 @@ func TestGopherEatsKeepsCustomTeardown(t *testing.T) {
 func TestGopherEatsCreationKeepsVueAndSeparateAppRoles(t *testing.T) {
 	command := validCreationCommand(t)
 	command.Example = "gopher_eats"
-	model, err := command.noninteractiveModel()
+	wizard, err := command.noninteractiveModel()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if model.config.Render.StarterKit != project.StarterKitVue || !model.config.Render.Components.WebUI || model.config.Render.Components.Jobs || model.config.Render.Components.DemoApp {
-		t.Fatalf("storefront: %+v", model.config.Render)
+	if wizard.config.Render.StarterKit != project.StarterKitVue || !wizard.config.Render.Components.WebUI || wizard.config.Render.Components.Jobs || wizard.config.Render.Components.DemoApp {
+		t.Fatalf("storefront: %+v", wizard.config.Render)
 	}
-	if !model.config.Apps["kitchen"].Components.Jobs || model.config.Apps["delivery"].Components.Jobs || !model.config.Apps["delivery"].Components.Events {
-		t.Fatalf("app roles: %+v", model.config.Apps)
+	if !wizard.config.Apps["kitchen"].Components.Jobs || wizard.config.Apps["delivery"].Components.Jobs || !wizard.config.Apps["delivery"].Components.Events {
+		t.Fatalf("app roles: %+v", wizard.config.Apps)
 	}
-	preparation, err := model.selectedResourcePreparation()
+	preparation, err := wizard.selectedResourcePreparation()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,10 +132,106 @@ func TestGopherEatsCreationKeepsVueAndSeparateAppRoles(t *testing.T) {
 			t.Fatalf("%s selection: %+v", key, selection)
 		}
 	}
-	model.extrasIndex = 0
-	model.applyExtrasSelection()
-	if len(model.config.Apps) != 0 || model.config.Render.Example != "" {
+	assertGopherEatsLocalNATS(t, project.ProjectComponents(&wizard.config), preparation.plan, preparation.serviceIntent)
+	wizard.stage = StageProjectPath
+	next, _ := wizard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	wizard = next.(model)
+	if wizard.stage != StageConfirm {
+		t.Fatalf("Gopher Eats did not reach confirmation: %s", wizard.errorMsg)
+	}
+	preparation, err = wizard.selectedResourcePreparation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGopherEatsLocalNATS(t, project.ProjectComponents(&wizard.config), preparation.plan, preparation.serviceIntent)
+	wizard.extrasIndex = 0
+	wizard.applyExtrasSelection()
+	if len(wizard.config.Apps) != 0 || wizard.config.Render.Example != "" {
 		t.Fatal("disabled example retained extra apps")
+	}
+}
+
+// TestGopherEatsRenderSelectsLocalNATS covers direct rendering without wizard resource preparation.
+func TestGopherEatsRenderSelectsLocalNATS(t *testing.T) {
+	renderer := unitProjectRenderer(t)
+	if err := renderer.beginRenderInvocation(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	renderer.config = &project.Config{GoModuleName: "example.com/eats", Render: project.RenderConfig{Example: "gopher_eats"}}
+	input := ComponentRenderInput{}
+	if err := renderer.prepareExample(&input); err != nil {
+		t.Fatal(err)
+	}
+	assertGopherEatsLocalNATS(t, project.ProjectComponents(renderer.config), input.resourcePlan, input.localServiceIntent)
+}
+
+// TestGopherEatsPreservesServicePlacement keeps explicit external brokers and existing owner configuration intact.
+func TestGopherEatsPreservesServicePlacement(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing=%t", existing), func(t *testing.T) {
+			root := t.TempDir()
+			renderer := unitProjectRenderer(t)
+			if err := renderer.beginRenderInvocation(root); err != nil {
+				t.Fatal(err)
+			}
+			renderer.config = &project.Config{GoModuleName: "example.com/eats", Render: project.RenderConfig{Example: "gopher_eats"}}
+			source := "EVENTS_URL=nats://broker.example:4222\nCOMPOSE_PROFILES=\n"
+			if existing {
+				if err := os.WriteFile(filepath.Join(root, ".env"), []byte(source), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			intent := project.LocalServiceIntent{}.WithMode(project.ServiceEventsNATS, project.LocalServiceModeExternal)
+			input := ComponentRenderInput{localServiceIntent: intent}
+			if err := renderer.prepareExample(&input); err != nil {
+				t.Fatal(err)
+			}
+			if mode, _ := input.localServiceIntent.Mode(project.ServiceEventsNATS); mode != project.LocalServiceModeExternal {
+				t.Fatal("external Events broker was replaced")
+			}
+			if _, selected := intent.Mode(project.ServiceQueueNATS); selected {
+				t.Fatal("caller service intent was mutated")
+			}
+			mode, selected := input.localServiceIntent.Mode(project.ServiceQueueNATS)
+			if existing && (selected || len(input.resourcePlan.Selections) != 0) {
+				t.Fatal("existing owner configuration received fresh demo defaults")
+			}
+			if !existing && (!selected || mode != project.LocalServiceModeLocal) {
+				t.Fatal("fresh demo did not default its kitchen queue to local NATS")
+			}
+			if existing {
+				body, err := os.ReadFile(filepath.Join(root, ".env"))
+				if err != nil || string(body) != source {
+					t.Fatalf("owner environment changed: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// assertGopherEatsLocalNATS checks service activation and both container and host connection details together.
+func assertGopherEatsLocalNATS(t *testing.T, components project.Components, plan project.ResourcePlan, intent project.LocalServiceIntent) {
+	t.Helper()
+	services, err := project.ResolveServicePlan(plan, components, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []project.ServiceKey{project.ServiceQueueNATS, project.ServiceEventsNATS} {
+		requirement, exists := services.Requirement(key)
+		if !exists || requirement.State != project.ServiceStateActiveLocal {
+			t.Fatalf("%s service = %#v, exists=%t; want active local NATS", key, requirement, exists)
+		}
+	}
+	environment, compose := renderResourceTemplates(t, components, plan, intent)
+	profiles, _ := envfile.Lookup(strings.Split(environment, "\n"), "COMPOSE_PROFILES")
+	if !exactCSVToken(profiles, "nats") || !strings.Contains(compose, "profiles: [nats]") {
+		t.Fatalf("NATS was not activated in generated Compose: profiles=%q", profiles)
+	}
+	host := renderResourceHostEnvironment(t, components, plan, intent)
+	for _, key := range []string{"QUEUE_URL", "EVENTS_URL"} {
+		if !strings.Contains(environment, key+"=nats://goforj:goforj@nats:4222\n") || !strings.Contains(host, key+"=nats://goforj:goforj@localhost:4222\n") {
+			t.Fatalf("%s does not match the authenticated local NATS service", key)
+		}
 	}
 }
 

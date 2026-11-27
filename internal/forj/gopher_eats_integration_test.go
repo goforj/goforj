@@ -6,35 +6,31 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/goforj/goforj/internal/envfile"
 	"github.com/goforj/goforj/internal/testkit"
 	"github.com/goforj/goforj/project"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // TestRenderedGopherEats exercises the selectable Vue example as three real generated app binaries.
 func TestRenderedGopherEats(t *testing.T) {
-	broker, err := testkit.StartTestcontainer(t.Logf, testcontainers.ContainerRequest{Image: "nats:2.14.3-alpine", ExposedPorts: []string{"4222/tcp"}, WaitingFor: wait.ForListeningPort("4222/tcp")}, "4222/tcp", 30*time.Second, "Gopher Eats NATS")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(broker.Stop)
 	root, err := os.MkdirTemp("/tmp", "gopher-eats-acceptance-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	endpoint := "nats://" + net.JoinHostPort(broker.Host, broker.Port)
-	env := map[string]string{"GOWORK": "off", "TMPDIR": "/tmp", "QUEUE_DRIVER": "nats", "QUEUE_SUPPORTED_DRIVERS": "nats", "QUEUE_URL": endpoint, "EVENTS_DRIVER": "nats", "EVENTS_SUPPORTED_DRIVERS": "nats", "EVENTS_URL": endpoint, "EATS_TEST_BROKER_URL": endpoint}
+	env := map[string]string{"GOWORK": "off", "TMPDIR": "/tmp"}
 	testkit.RenderProjectWithForj(t, root, testkit.RenderProjectRequest{Config: project.Config{ProjectName: "Gopher Eats", GoModuleName: "example.com/gophereats", Render: project.RenderConfig{Example: "gopher_eats", Components: project.Components{CLI: true}, AgentGuidance: project.AgentGuidanceNone}}, EnvOverrides: env})
+	env["EATS_TEST_BROKER_URL"] = startGopherEatsComposeNATS(t, root)
 	commands := []struct {
 		dir  string
 		name string
@@ -87,4 +83,58 @@ func TestRenderedGopherEats(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// startGopherEatsComposeNATS exercises the generated local broker instead of concealing missing setup with an external fixture.
+func startGopherEatsComposeNATS(t *testing.T, root string) string {
+	t.Helper()
+	for _, filename := range []string{".env", ".env.host"} {
+		body, err := os.ReadFile(filepath.Join(root, filename))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(string(body), "\n")
+		if filename == ".env" {
+			profiles, _ := envfile.Lookup(lines, "COMPOSE_PROFILES")
+			if !exactCSVToken(profiles, "nats") {
+				t.Fatal("generated demo did not activate the NATS Compose profile")
+			}
+		}
+		host := "nats"
+		if filename == ".env.host" {
+			host = "localhost"
+		}
+		for _, key := range []string{"QUEUE_URL", "EVENTS_URL"} {
+			value, _ := envfile.Lookup(lines, key)
+			if value != "nats://goforj:goforj@"+host+":4222" {
+				t.Fatalf("%s %s does not point to the generated authenticated broker", filename, key)
+			}
+		}
+	}
+	overrides := map[string]string{}
+	for _, key := range []string{"NATS_CLIENT_PORT", "NATS_MONITORING_PORT"} {
+		port, err := testkit.AllocateRenderedComposePort()
+		if err != nil {
+			t.Fatal(err)
+		}
+		overrides[key] = strconv.Itoa(port)
+	}
+	projectName := filepath.Base(root)
+	run := func(args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, "docker", append([]string{"compose", "-p", projectName}, args...)...)
+		command.Dir = root
+		command.Env = testkit.IntegrationGoProcessEnv(t, overrides)
+		return command.CombinedOutput()
+	}
+	t.Cleanup(func() {
+		if output, err := run("--profile", "*", "down", "--volumes", "--remove-orphans"); err != nil {
+			t.Errorf("clean up demo broker: %v\n%s", err, output)
+		}
+	})
+	if output, err := run("up", "-d", "--wait", "--wait-timeout", "60", "nats"); err != nil {
+		t.Fatalf("start generated NATS service: %v\n%s", err, output)
+	}
+	return fmt.Sprintf("nats://goforj:goforj@127.0.0.1:%s", overrides["NATS_CLIENT_PORT"])
 }
